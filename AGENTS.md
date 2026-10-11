@@ -52,6 +52,19 @@ PassionCode Relay: carries sessions, sealed secret envelopes and package blobs b
 - Tests start workerd through Miniflare and dispose of it when they finish.
 - The hosted relay runs on Cloudflare once RLY-05 deploys it. Its idle cost is a Durable Object per open session.
 
+## Organisation
+
+This repository is one of the `passioncode-ai` repositories. **The org map and onboarding live in
+[passioncode-ai/org-index](https://github.com/passioncode-ai/org-index)** (private; readable by
+every org member); the shared rules live in the knowledge base:
+
+- [README](https://github.com/passioncode-ai/org-index#repositories): which repository owns what, and how they connect
+- [rules](https://github.com/passioncode-ai/fabric-workspace/blob/main/knowledge/rules.md): branches, commits, CI, leases, secrets, handoffs
+- [ONBOARDING.md](https://github.com/passioncode-ai/org-index/blob/main/ONBOARDING.md): setting up a new contributor's machine
+
+Where this file is stricter than the rules, this file wins. A change to this repository's
+role, dependencies or test command updates its row in `org-index/repositories.json` in the same change.
+
 ## Backlog ownership
 
 Read [the common backlog contract](https://github.com/passioncode-ai/fabric-workspace/blob/main/knowledge/backlog.md). Declare canonical task boards and context in `docs/backlog-sources.json`; edit status only in the local owner, keep stable IDs and evidence, and publish after landing. Missing coverage is an error, not an empty queue.
