@@ -1,0 +1,16 @@
+// The hosted relay (D1: PassionCode-hosted). No deployment's values live here: no account id, no routes,
+// no secrets. A self-hoster uses the portable build instead (src/portable/, docs/adr/0001-relay-repository.md).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "relay",
+  "main": "src/cloudflare/worker.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "durable_objects": {
+    "bindings": [{ "name": "SESSIONS", "class_name": "RelaySession" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RelaySession"] }],
+  "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "relay-blobs" }],
+  "observability": { "enabled": true }
+}

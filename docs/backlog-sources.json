@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "repository": "https://github.com/passioncode-ai/relay",
+  "sources": [
+    {
+      "path": "docs/backlog.md",
+      "goal": "interoperability",
+      "kind": "tasks",
+      "format": "table",
+      "idColumn": "ID",
+      "titleColumn": "Item",
+      "statusColumn": "Status"
+    },
+    {
+      "path": "docs/HANDOFF.md",
+      "goal": "shared-context",
+      "kind": "context"
+    }
+  ]
+}

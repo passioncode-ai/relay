@@ -1,0 +1,92 @@
+# ADR-0001 — The relay: its own repository, one core with two builds, its protocol in the contract
+
+- **Date:** 2026-10-12
+- **Status:** accepted. The operator confirmed on 2026-10-12: own repository, Observatory as code owner, and the
+  self-hosted relay stays.
+- **Agreed by:**
+  - Project Observatory: code owner.
+  - Fabric: owner of ADR-0088, where the relay began.
+  - The PassionCode.ai knowledge base: plans and roadmap.
+  - The fabric-agent-contract owner: the protocol, DEC-0047.
+
+## Context
+
+- Fabric ADR-0088 decided that one relay carries every remote surface of a person's machines: desktop, headset,
+  phone. The relay is an always-on endpoint the machines connect out to. It holds a projection cache and a command
+  queue, and **no authority**: policy, journal and grants stay on the machine.
+- The organization's agent network (roadmap RM-21) needs the same relay between a person's own machines, and later
+  between colleagues.
+- The knowledge base (plans, D1) settled where it runs:
+  - by default, a PassionCode-hosted Cloudflare Worker;
+  - for a customer that requires it, a relay they run themselves.
+- Machines authenticate to the relay with their device key inside the WebSocket connection. Access-style login
+  protects only people's web pages.
+
+## Decision
+
+1. **Own repository, `passioncode-ai/relay`**, rather than inside Fabric or Project Observatory:
+   - it deploys on its own cadence with its own configuration;
+   - several products are its clients;
+   - the self-hosted build comes from exactly one place.
+2. **Licence:** `AGPL-3.0-only OR LicenseRef-PassionCode-Commercial`. The relay and its protocol are an open
+   component. Nothing here depends on a closed module.
+3. **The protocol is fabric-agent-contract DEC-0047, not this code.** It covers:
+   - frames;
+   - device-key authentication inside the WebSocket;
+   - the secret-envelope format;
+   - trust tiers;
+   - revocation, with vectors.
+
+   No client depends on this server's code. Until DEC-0047 is accepted, the relay refuses every session
+   (`protocol-not-ready`): an endpoint that accepted connections before machines could prove themselves would be
+   an open relay.
+4. **Owners:**
+   - Project Observatory owns the server code: its node is a relay client that opens envelopes into its vault.
+   - Fabric owns its remote surfaces' client side (ADR-0088).
+   - Other products are clients.
+
+### Two builds
+
+The core (`src/core/`) uses only web-standard APIs: `Request`, `Response`, `crypto.subtle`. Two adapters route
+every request through it and add no route of their own:
+
+| Build | Where | Sessions | Blobs |
+|---|---|---|---|
+| Hosted (`src/cloudflare/`) | Cloudflare Worker, run by PassionCode.ai | Durable Objects (SQLite) | R2 |
+| Portable (`src/portable/`) | one Node server, for self-hosting | (with DEC-0047) | files under `RELAY_DATA_DIR`, owner-only |
+
+Packaging the portable build as a single executable is a backlog item (RLY-04).
+
+### What the relay holds
+
+- It holds sessions, sealed envelopes and package blobs, the last two by the SHA-256 digest of their bytes.
+- It recomputes the digest of every blob on write and on read. It refuses bytes that do not match their name, so a
+  corrupted file or an edited bucket is refused, never served.
+- It never holds plaintext content at rest.
+- It makes no trust decision and serves no signing page.
+
+### The security model DEC-0047 pins
+
+- **Who connects:** a machine proves itself with its device key inside the WebSocket connection. No bearer token
+  travels in a URL or in a header a proxy could log.
+- **Envelopes:** a secret is sealed to the target machine's device key by the service that issued it, carried by
+  the relay, and opened only in the target's vault.
+- **Trust tiers:** relay traffic is cross-machine by definition.
+  - A call between one owner's enrolled machines is T1.
+  - A call from another person's machine is T2, under the full delegation model.
+  - Work on a single machine (T0) never touches the relay.
+  - The tier follows where the call came from, not the connection.
+- **Revocation:** the revocation delta rides the relay. A machine that has not applied it up to the signed head
+  refuses the tokens that delta governs. The relay can delay revocation but cannot forge it.
+- **The contract owner's review conditions:**
+  - everything signed or hashed uses RFC 8785 canonical form;
+  - every Ed25519 key passes the small-order check, the envelope's target device keys included;
+  - the revocation delta ships vectors.
+
+## Consequences
+
+- The org-index `repositories.json` gains a `relay` row. The roadmap's RM-21 names this repository.
+- Fabric amends ADR-0088 to say where the relay lives: server `passioncode-ai/relay`, owner Project Observatory,
+  protocol DEC-0047, Fabric a client.
+- The next work is the DEC-0047 draft, then the handshake and session (RLY-01, RLY-02); see
+  [the backlog](../backlog.md).
