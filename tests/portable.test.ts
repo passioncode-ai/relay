@@ -59,7 +59,7 @@ test("the file store will not build a path from anything but a digest", async ()
 
 test("the portable server routes through the same core: health, a non-upgrade connect refused, typed 404", async () => {
   const events: Record<string, unknown>[] = [];
-  const server = await serve(
+  const { server } = await serve(
     { runtime: "portable", blobs: new FsBlobStore(await dataDir()) },
     { host: "127.0.0.1", port: 0, log: (event) => events.push(event) },
   );
@@ -77,7 +77,7 @@ test("the portable server routes through the same core: health, a non-upgrade co
     assert.equal(missing.status, 404);
     await missing.body?.cancel();
 
-    assert.deepEqual(events.map((event) => [event.path, event.status]), [["/healthz", 200], ["/v1/connect", 405], ["/nope", 404]]);
+    assert.deepEqual(events.filter((event) => event.event === "request").map((event) => [event.path, event.status]), [["/healthz", 200], ["/v1/connect", 405], ["/nope", 404]]);
     assert.ok(events.every((event) => !JSON.stringify(event).includes("hello")), "a request body never reaches the log");
   } finally {
     await new Promise((resolve) => server.close(resolve));
@@ -85,7 +85,7 @@ test("the portable server routes through the same core: health, a non-upgrade co
 });
 
 test("the portable server refuses a declared body over its limit before reading it", async () => {
-  const server = await serve({ runtime: "portable", blobs: new FsBlobStore(await dataDir()) }, { host: "127.0.0.1", port: 0 });
+  const { server } = await serve({ runtime: "portable", blobs: new FsBlobStore(await dataDir()) }, { host: "127.0.0.1", port: 0 });
   try {
     const { port } = server.address() as AddressInfo;
     const response = await new Promise<{ status: number; body: string }>((resolve, reject) => {
@@ -132,7 +132,7 @@ async function relayWithEstate(withEstate = true) {
     await writeFile(join(root, "estate", "revisions", "1.json"), JSON.stringify(e.record));
   }
   const events: Record<string, unknown>[] = [];
-  const server = await serve({ runtime: "portable", blobs: new FsBlobStore(root) }, { host: "127.0.0.1", port: 0, estate: new FsEstateSource(root), mailbox: new SqliteMailbox(join(root, "mailbox.sqlite")), lastSeen: new SqliteLastSeen(join(root, "presence.sqlite")), log: (event) => events.push(event) });
+  const { server } = await serve({ runtime: "portable", blobs: new FsBlobStore(root) }, { host: "127.0.0.1", port: 0, estate: new FsEstateSource(root), mailbox: new SqliteMailbox(join(root, "mailbox.sqlite")), lastSeen: new SqliteLastSeen(join(root, "presence.sqlite")), log: (event) => events.push(event) });
   const port = (server.address() as AddressInfo).port;
   return { server, e, events, root, url: `ws://127.0.0.1:${port}/v1/connect`, origin: `http://127.0.0.1:${port}` };
 }

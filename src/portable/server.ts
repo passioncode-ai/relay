@@ -4,6 +4,7 @@
 
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { Readable } from "node:stream";
 import { WebSocketServer } from "ws";
 import validateEstateRecord from "../contract/estate-record.validate.js";
@@ -13,6 +14,7 @@ import { CONNECT_PATH, handle, SUBPROTOCOL, upgradeRefusal, type RelayDeps } fro
 import type { MailboxStore } from "../core/mailbox.ts";
 import type { BlobIndex } from "../core/blobs.ts";
 import { EstateHub } from "../core/hub.ts";
+import { OriginRefused, relayOrigin } from "./origin.ts";
 import type { LastSeenStore } from "../core/presence.ts";
 /** A frame over 1 MiB closes the connection (1009) in the session; `ws` stops reading at a little more. */
 const MAX_PAYLOAD = 1_048_576 + 1;
@@ -45,7 +47,10 @@ async function send(response: Response, reply: ServerResponse): Promise<void> {
 export interface ServeOptions {
   host: string;
   port: number;
-  /** The public origin machines sign into relay-auth/1 (behind a TLS terminator, its https:// URL). */
+  /**
+   * The public origin machines sign into relay-auth/1 and relay-blob/1 (behind a TLS terminator, its https:// URL).
+   * Normalised or refused by `relayOrigin` (origin.ts); unset, only a loopback literal host gets the http default.
+   */
   origin?: string;
   /** Where the estate the relay admits from is kept; without one the relay admits nobody. */
   estate?: EstateSource;
@@ -58,16 +63,21 @@ export interface ServeOptions {
   log?: (event: Record<string, unknown>) => void;
 }
 
-export function serve(deps: RelayDeps, options: ServeOptions): Promise<Server> {
-  // With an estate, the blob routes are served too: the same admission as sessions, read when each request comes.
-  if (options.estate && options.blobIndex && !deps.blobAccess) {
-    const estate = options.estate;
-    deps = { ...deps, blobAccess: {
-      origin: options.origin ?? `http://${options.host}:${options.port}`,
-      index: options.blobIndex,
-      admission: async () => (await loadAdmission(estate, (record) => validateEstateRecord(record), () => new Date())).holder.current(),
-    } };
-  }
+export interface Served {
+  server: Server;
+  /** The one origin sessions and blob routes verify against, computed after listen. */
+  origin: string;
+}
+
+/** Starts the portable relay. Rejects with `OriginRefused` before listening when the origin rules refuse it. */
+export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Served> {
+  const rule = relayOrigin(options.origin, options.host);
+  if (!rule.ok) throw new OriginRefused(rule.reason);
+  deps = { ...deps };
+  // The base for turning a Node request into a web Request; an IPv6 literal needs its brackets in a URL.
+  const base = `http://${options.host.includes(":") ? `[${options.host}]` : options.host}`;
+  // Set once the server listens: the bound port is part of a defaulted origin.
+  let origin = "";
   const log = options.log ?? (() => {});
   const server = createServer(async (message, reply) => {
     const started = Date.now();
@@ -80,7 +90,7 @@ export function serve(deps: RelayDeps, options: ServeOptions): Promise<Server> {
       return;
     }
     try {
-      const response = await handle(toRequest(message, `http://${options.host}`), deps);
+      const response = await handle(toRequest(message, base), deps);
       await send(response, reply);
       log({ event: "request", method: message.method, path: new URL(message.url ?? "/", "http://x").pathname, status: response.status, ms: Date.now() - started });
     } catch (error) {
@@ -113,7 +123,7 @@ export function serve(deps: RelayDeps, options: ServeOptions): Promise<Server> {
   });
   const sockets = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD, handleProtocols: (offered) => (offered.has(SUBPROTOCOL) ? SUBPROTOCOL : false) });
   server.on("upgrade", (message, socket, head) => {
-    const request = toRequest(message, `http://${options.host}`);
+    const request = toRequest(message, base);
     const refusal = new URL(request.url).pathname === CONNECT_PATH ? upgradeRefusal(request) : new Response(null, { status: 404 });
     if (refusal) {
       socket.end(`HTTP/1.1 ${refusal.status} ${refusal.status === 404 ? "Not Found" : "Refused"}\r\nconnection: close\r\ncontent-length: 0\r\n\r\n`);
@@ -128,13 +138,25 @@ export function serve(deps: RelayDeps, options: ServeOptions): Promise<Server> {
       ws.on("message", (data, isBinary) => void hub.receive(ws, isBinary ? new Uint8Array(data as Buffer) : (data as Buffer).toString("utf8")));
       ws.on("close", () => hub.closed(ws));
       ws.on("error", (error) => log({ event: "socket-error", error: error.name }));
-      hub.connect(ws, { send: (text) => ws.send(text), close: (code, reason) => ws.close(code, reason) },
-        options.origin ?? `http://${options.host}:${(server.address() as { port: number }).port}`);
+      hub.connect(ws, { send: (text) => ws.send(text), close: (code, reason) => ws.close(code, reason) }, origin);
     });
   });
-  return new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(options.port, options.host, () => resolve(server));
+    server.listen(options.port, options.host, () => resolve());
   });
+  origin = rule.at((server.address() as AddressInfo).port);
+  if (rule.defaulted) log({ event: "origin-defaulted", origin, reason: "RELAY_ORIGIN is not set: only a local machine can authenticate" });
+  // With an estate, the blob routes are served too, against the same origin as sessions: the same admission, read when
+  // each request comes.
+  if (options.estate && options.blobIndex && !deps.blobAccess) {
+    const estate = options.estate;
+    deps.blobAccess = {
+      origin,
+      index: options.blobIndex,
+      admission: async () => (await loadAdmission(estate, (record) => validateEstateRecord(record), () => new Date())).holder.current(),
+    };
+  }
+  return { server, origin };
 }
 // #endregion portable-server
