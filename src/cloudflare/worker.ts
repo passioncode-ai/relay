@@ -16,7 +16,7 @@ export interface Env {
 }
 
 /** Key prefix of the estate in the bucket; blobs are keyed by `sha256:…`, so the two never meet. */
-export const ESTATE_PREFIX = "estate/";
+const ESTATE_PREFIX = "estate/";
 /** How often a session checks its 10 s auth deadline and its 90 s idle close. */
 const TICK_MS = 1000;
 
@@ -64,6 +64,8 @@ export class RelaySession extends DurableObject<Env> {
     if (refusal) return refusal;
     const { holder, refused } = await loadAdmission(new R2EstateSource(this.env.BLOBS), (record) => validateEstateRecord(record), () => new Date());
     if (refused.length > 0) log({ event: "estate-revision-refused", refused });
+    const admission = holder.current();
+    log({ event: "admission", ...(admission.ok ? { revision: admission.revision, machines: admission.set.size } : { refusal: admission.refusal }) });
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
     server.accept();
@@ -85,7 +87,16 @@ export class RelaySession extends DurableObject<Env> {
         log,
       },
     );
-    server.addEventListener("message", (event) => session.receive(event.data as string | ArrayBuffer));
+    server.addEventListener("message", (event) => {
+      try {
+        session.receive(event.data as string | ArrayBuffer);
+      } catch (error) {
+        // A fault in the relay is reported and closes the connection as an internal error, never silently.
+        log({ event: "session-fault", error: (error as Error).name, message: String((error as Error).message).slice(0, 200) });
+        if (timer) clearInterval(timer);
+        server.close(1011, "internal error");
+      }
+    });
     server.addEventListener("close", () => {
       if (timer) clearInterval(timer);
     });

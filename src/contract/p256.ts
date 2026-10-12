@@ -95,13 +95,19 @@ export function p256Point(key: P256Key): Buffer {
   return Buffer.concat([Buffer.from([0x04]), Buffer.from(x, "base64url"), Buffer.from(y, "base64url")]);
 }
 
-/** A Node public `KeyObject` for a valid key in either form (through its JWK), for ES256 verification and ECDH. */
-export function p256PublicKey(key: P256Key): KeyObject {
+/**
+ * The JWK (RFC 7518 §6.2.1) of a valid key in either form. Verifiers hand Node's `verify` this object with
+ * `format: "jwk"`: the one key form both Node and a Cloudflare Worker's `node:crypto` (nodejs_compat) accept inside
+ * the options with `dsaEncoding`, where a `KeyObject` throws in the Worker — measured by the relay's Worker tests.
+ */
+export function p256Jwk(key: P256Key): { kty: "EC"; crv: "P-256"; x: string; y: string } {
   const point = p256Point(key);
-  return createPublicKey({
-    key: { kty: "EC", crv: "P-256", x: point.subarray(1, 33).toString("base64url"), y: point.subarray(33).toString("base64url") },
-    format: "jwk"
-  });
+  return { kty: "EC", crv: "P-256", x: point.subarray(1, 33).toString("base64url"), y: point.subarray(33).toString("base64url") };
+}
+
+/** A Node public `KeyObject` for a valid key in either form (through its JWK). */
+export function p256PublicKey(key: P256Key): KeyObject {
+  return createPublicKey({ key: p256Jwk(key), format: "jwk" });
 }
 
 /**

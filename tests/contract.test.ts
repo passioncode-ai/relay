@@ -50,7 +50,7 @@ test("secret-envelope.json: the vector envelope opens with what its recipient ho
     ownKemKid: v.open.ownKemKid, ownKemPrivateKey: Buffer.from(v.recipientKemPrivateKey, "hex"),
     senderKey: (kid) => (kid === envelope.header.sender ? v.senderKey : undefined),
     mayHold: (kid, agentRef, slot) => kid === envelope.header.sender && agentRef === envelope.header.agentRef && slot === envelope.header.slot,
-    currentPlacement: () => v.open.placement, now: new Date(v.open.now)
+    currentPlacement: () => v.open.placement, appliedRevision: () => v.open.placement, now: new Date(v.open.now)
   });
   assert.deepEqual(result, { ok: true, secret: Buffer.from(v.open.secret) });
 });

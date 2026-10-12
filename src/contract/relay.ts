@@ -13,7 +13,7 @@
  */
 import { verify as nodeVerify } from "node:crypto";
 import { rfc8785 } from "./canonical.js";
-import { isEd25519Key, p256KeyRefusal, p256PublicKey, type P256Key } from "./p256.js";
+import { isEd25519Key, p256Jwk, p256KeyRefusal, type P256Key } from "./p256.js";
 import { verifyEstateRecord, type EstateRecordProblem } from "./estate-record-rules.js";
 import { isObject, type JsonObject } from "./findings.js";
 
@@ -87,7 +87,7 @@ export function verifyEs256(key: P256Key, bytes: string, sig: string): boolean |
   if (p256KeyRefusal(key) !== null) return "bad-key";
   const raw = Buffer.from(sig, "base64url");
   if (raw.length !== 64 || raw.toString("base64url") !== sig) return false;
-  return nodeVerify("sha256", Buffer.from(bytes, "utf8"), { key: p256PublicKey(key), dsaEncoding: "ieee-p1363" }, raw);
+  return nodeVerify("sha256", Buffer.from(bytes, "utf8"), { key: p256Jwk(key), format: "jwk", dsaEncoding: "ieee-p1363" }, raw);
 }
 
 /**

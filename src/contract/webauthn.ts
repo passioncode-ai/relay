@@ -1,4 +1,4 @@
-import { createHash, createPublicKey, verify as verifySignature, type KeyObject } from "node:crypto";
+import { createHash, createPublicKey, verify as verifySignature, type JsonWebKey, type KeyObject } from "node:crypto";
 import { isSmallOrderKey } from "./ed25519.js";
 import { type JsonObject, isObject } from "./findings.js";
 import { isValidP256Key } from "./p256.js";
@@ -66,7 +66,7 @@ export const FLAGS = { UP: 0x01, UV: 0x04, BE: 0x08, BS: 0x10, AT: 0x40, ED: 0x8
  * The credential's public key, validated before use: a P-256 point valid by SEC 1 §3.2.2 (`isValidP256Key`) for ES256,
  * an Ed25519 key of full order (`isSmallOrderKey`, DEC-0045) for EdDSA.
  */
-export function credentialKey(publicKey: unknown, alg: string): { key: KeyObject } | { problem: "unusable-key" | "small-order-key" } {
+export function credentialKey(publicKey: unknown, alg: string): { key: KeyObject; jwk: JsonWebKey } | { problem: "unusable-key" | "small-order-key" } {
   if (!ASSERTION_ALGORITHMS.includes(alg)) return { problem: "unusable-key" };
   if (!isObject(publicKey) || publicKey.d !== undefined || !isString(publicKey.x) || !B64URL.test(publicKey.x) || !canonical(publicKey.x)) return { problem: "unusable-key" };
   if (alg === "ES256") {
@@ -74,14 +74,16 @@ export function credentialKey(publicKey: unknown, alg: string): { key: KeyObject
     const x = bytes(publicKey.x);
     const y = bytes(publicKey.y);
     if (x.length !== 32 || y.length !== 32 || !isValidP256Key(Buffer.concat([Buffer.from([4]), x, y]))) return { problem: "unusable-key" };
-    return { key: createPublicKey({ key: { kty: "EC", crv: "P-256", x: publicKey.x, y: publicKey.y }, format: "jwk" }) };
+    const jwk = { kty: "EC", crv: "P-256", x: publicKey.x, y: publicKey.y };
+    return { key: createPublicKey({ key: jwk, format: "jwk" }), jwk };
   }
   if (publicKey.kty !== "OKP" || publicKey.crv !== "Ed25519") return { problem: "unusable-key" };
   const raw = bytes(publicKey.x);
   if (raw.length !== 32) return { problem: "unusable-key" };
   // DEC-0045 (CT-29): a small-order key verifies forged signatures on Node 20 and 22; it is refused before any use.
   if (isSmallOrderKey(raw)) return { problem: "small-order-key" };
-  return { key: createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x: publicKey.x }, format: "jwk" }) };
+  const jwk = { kty: "OKP", crv: "Ed25519", x: publicKey.x };
+  return { key: createPublicKey({ key: jwk, format: "jwk" }), jwk };
 }
 
 /**
@@ -133,7 +135,9 @@ export function verifyAssertion(assertion: unknown, credential: PasskeyCredentia
   let good: boolean;
   try {
     good = alg === "ES256"
-      ? verifySignature("sha256", signed, { key: found.key, dsaEncoding: "der" }, signature)
+      // The key as a JWK with `format: "jwk"`: a Cloudflare Worker's node:crypto throws on a KeyObject in these
+      // options (and the catch below would turn that into bad-signature for every ES256 passkey).
+      ? verifySignature("sha256", signed, { key: found.jwk, format: "jwk", dsaEncoding: "der" }, signature)
       // Node's verify also refuses other lengths; the check keeps the rule independent of the runtime.
       : signature.length === 64 && verifySignature(null, signed, found.key, signature);
   } catch {
