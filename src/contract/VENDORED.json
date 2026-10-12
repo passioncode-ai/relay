@@ -1,5 +1,5 @@
 {
-  "commit": "ef7573adebb190918f2c04552c2e91b2c0b60612",
+  "commit": "c00a0c374cb3985c53a6556e83539b8245f179d0",
   "files": {
     "src/contract/canonical.ts": "930f7cb8445a842abf094b970f936271bff8449e3163c744680c3457224585fe",
     "src/contract/ed25519.ts": "0b22a24d5f26795176465dd18ed6e885993231dff6ff6f8442a10bf37b638d33",
@@ -31,6 +31,6 @@
     "src/contract/schemas/governance.schema.json": "f8af842c0cb180836722e04182c8b1131b2e23aca9e69d8ded75245c906d5963",
     "src/contract/schemas/registry-models.schema.json": "29a1b3ea8e0d67fe7115c79e14d4f9f103533a634e65bdb8cff6da7db768b5ce",
     "src/contract/schemas/relay-frame.schema.json": "c658a1c7f0edeee3fac439d3d033a6dcb3751492c0018b11dbcd51795cf1faca",
-    "src/contract/estate-record.validate.js": "b886449892075e2bf80e186a51536d09ba25ffad52f0f359ed84bba8732f3be5"
+    "src/contract/estate-record.validate.js": "77c0c99234ae1f75cde7c9a72dd8c5575d718b5407d7ab1052b16fcaea9dc2cd"
   }
 }
