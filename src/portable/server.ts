@@ -57,9 +57,9 @@ export interface ServeOptions {
   /** Each blob's recipients and fetches (RLY-03); with an estate, the blob routes are served. */
   blobIndex?: BlobIndex;
   /** Where queued messages are kept (RLY-03); without one, messages are answered "not served yet". */
-  mailbox?: MailboxStore;
+  mailbox?: MailboxStore & { close?(): void };
   /** When each machine was last seen (RLY-06); without one, presence is answered "not served yet". */
-  lastSeen?: LastSeenStore;
+  lastSeen?: LastSeenStore & { close?(): void };
   log?: (event: Record<string, unknown>) => void;
 }
 
@@ -67,6 +67,13 @@ export interface Served {
   server: Server;
   /** The one origin sessions and blob routes verify against, computed after listen. */
   origin: string;
+  /**
+   * A graceful stop (RLY-010): new upgrades get 503 and HTTP answers `connection: close`; every session is closed 1001
+   * through the estate hub, so each machine's `lastSeen` is written; a socket still open after `graceMs` is
+   * terminated; then the listener and every connection close, and so do the mailbox and `lastSeen` stores (closing
+   * SQLite checkpoints its WAL). Logs `stopped {sessions, forced, ms}`. A second call returns the first one's promise.
+   */
+  stop(options?: { graceMs?: number }): Promise<{ sessions: number; forced: number }>;
 }
 
 /** Starts the portable relay. Rejects with `OriginRefused` before listening when the origin rules refuse it. */
@@ -79,8 +86,10 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
   // Set once the server listens: the bound port is part of a defaulted origin.
   let origin = "";
   const log = options.log ?? (() => {});
+  let stopping: Promise<{ sessions: number; forced: number }> | undefined;
   const server = createServer(async (message, reply) => {
     const started = Date.now();
+    if (stopping) reply.setHeader("connection", "close");
     const declared = Number(message.headers["content-length"] ?? 0);
     if (declared > MAX_BODY_BYTES) {
       reply.statusCode = 413;
@@ -123,6 +132,11 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
   });
   const sockets = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD, handleProtocols: (offered) => (offered.has(SUBPROTOCOL) ? SUBPROTOCOL : false) });
   server.on("upgrade", (message, socket, head) => {
+    if (stopping) {
+      socket.end("HTTP/1.1 503 Service Unavailable\r\nconnection: close\r\nretry-after: 5\r\ncontent-length: 0\r\n\r\n");
+      log({ event: "upgrade-refused", status: 503 });
+      return;
+    }
     const request = toRequest(message, base);
     const refusal = new URL(request.url).pathname === CONNECT_PATH ? upgradeRefusal(request) : new Response(null, { status: 404 });
     if (refusal) {
@@ -135,6 +149,10 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
       const loaded = await loadAdmission(options.estate ?? empty, (record) => validateEstateRecord(record), () => new Date());
       if (loaded.refused.length > 0) log({ event: "estate-revision-refused", refused: loaded.refused });
       holder = loaded.holder;
+      if (stopping) {
+        ws.close(1001, "relay stopping");
+        return;
+      }
       ws.on("message", (data, isBinary) => void hub.receive(ws, isBinary ? new Uint8Array(data as Buffer) : (data as Buffer).toString("utf8")));
       ws.on("close", () => hub.closed(ws));
       ws.on("error", (error) => log({ event: "socket-error", error: error.name }));
@@ -157,6 +175,27 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
       admission: async () => (await loadAdmission(estate, (record) => validateEstateRecord(record), () => new Date())).holder.current(),
     };
   }
-  return { server, origin };
+  const stop = async ({ graceMs = 5000 }: { graceMs?: number } = {}) => {
+    const started = Date.now();
+    const result = await hub.stop({ code: 1001, reason: "relay stopping", graceMs });
+    for (const ws of result.unclosed) ws.terminate();
+    clearTimeout(timer);
+    await new Promise<void>((resolve) => {
+      sockets.close();
+      server.close(() => resolve());
+      server.closeAllConnections();
+    });
+    for (const store of [options.mailbox, options.lastSeen]) {
+      try {
+        store?.close?.();
+      } catch (error) {
+        log({ event: "store-close-fault", error: (error as Error).name });
+      }
+    }
+    const outcome = { sessions: result.sessions, forced: result.unclosed.length };
+    log({ event: "stopped", ...outcome, ms: Date.now() - started });
+    return outcome;
+  };
+  return { server, origin, stop: (stopOptions) => (stopping ??= stop(stopOptions)) };
 }
 // #endregion portable-server
