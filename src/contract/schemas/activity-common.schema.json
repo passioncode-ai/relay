@@ -56,7 +56,7 @@
         }
       },
       "additionalProperties": false,
-      "description": "Opaque: an organization membership id or a local profile id. A receiver sets it from the client certificate (FAC-SEM-045)."
+      "description": "Opaque: an organization membership id or a local profile id. A receiver sets it from the client certificate, or the certificate a verified request signature names (FAC-SEM-045, DEC-0056)."
     },
     "device": {
       "type": "object",

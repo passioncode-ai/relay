@@ -9,6 +9,8 @@ import { WebSocketServer } from "ws";
 import validateEstateRecord from "../contract/estate-record.validate.js";
 import { loadAdmission, type EstateSource } from "../core/admission.ts";
 import { CONNECT_PATH, handle, SUBPROTOCOL, upgradeRefusal, type RelayDeps } from "../core/relay.ts";
+import { MemoryHub, type MailboxStore } from "../core/mailbox.ts";
+import type { BlobIndex } from "../core/blobs.ts";
 import { RelaySession } from "../core/session.ts";
 
 /** How often a session checks its 10 s auth deadline and its 90 s idle close. */
@@ -48,10 +50,23 @@ export interface ServeOptions {
   origin?: string;
   /** Where the estate the relay admits from is kept; without one the relay admits nobody. */
   estate?: EstateSource;
+  /** Each blob's recipients and fetches (RLY-03); with an estate, the blob routes are served. */
+  blobIndex?: BlobIndex;
+  /** Where queued messages are kept (RLY-03); without one, messages are answered "not served yet". */
+  mailbox?: MailboxStore;
   log?: (event: Record<string, unknown>) => void;
 }
 
 export function serve(deps: RelayDeps, options: ServeOptions): Promise<Server> {
+  // With an estate, the blob routes are served too: the same admission as sessions, read when each request comes.
+  if (options.estate && options.blobIndex && !deps.blobAccess) {
+    const estate = options.estate;
+    deps = { ...deps, blobAccess: {
+      origin: options.origin ?? `http://${options.host}:${options.port}`,
+      index: options.blobIndex,
+      admission: async () => (await loadAdmission(estate, (record) => validateEstateRecord(record), () => new Date())).holder.current(),
+    } };
+  }
   const log = options.log ?? (() => {});
   const server = createServer(async (message, reply) => {
     const started = Date.now();
@@ -76,6 +91,8 @@ export function serve(deps: RelayDeps, options: ServeOptions): Promise<Server> {
       reply.end(JSON.stringify({ error: { code: "internal", message: "the relay could not answer" } }));
     }
   });
+  // One hub per server: every connection of a machine is woken when a message for it is queued.
+  const hub = new MemoryHub();
   const sockets = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD, handleProtocols: (offered) => (offered.has(SUBPROTOCOL) ? SUBPROTOCOL : false) });
   server.on("upgrade", (message, socket, head) => {
     const request = toRequest(message, `http://${options.host}`);
@@ -104,12 +121,19 @@ export function serve(deps: RelayDeps, options: ServeOptions): Promise<Server> {
           nonce: () => randomBytes(32).toString("base64url"),
           sessionId: () => randomUUID(),
           admission: () => holder.current(),
+          ...(options.mailbox ? { mailbox: options.mailbox, hub } : {}),
           log,
         },
       );
-      ws.on("message", (data, isBinary) => session.receive(isBinary ? new Uint8Array(data as Buffer) : (data as Buffer).toString("utf8")));
+      ws.on("message", (data, isBinary) => {
+        session.receive(isBinary ? new Uint8Array(data as Buffer) : (data as Buffer).toString("utf8")).catch((error: unknown) => {
+          log({ event: "session-fault", error: (error as Error).name, message: String((error as Error).message).slice(0, 200) });
+          ws.close(1011, "internal error");
+        });
+      });
       ws.on("close", () => {
         if (timer) clearInterval(timer);
+        session.disconnected();
       });
       ws.on("error", (error) => log({ event: "socket-error", error: error.name }));
       session.open();

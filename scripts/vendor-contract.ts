@@ -18,10 +18,10 @@ const Ajv2020 = require("ajv/dist/2020").default as new (options: object) => {
 const addFormats = require("ajv-formats").default as (ajv: unknown) => unknown;
 const standaloneCode = require("ajv/dist/standalone").default as (ajv: unknown, validate: unknown) => string;
 
-/** The relay's closure of the contract: `src/relay.ts` and `src/secret-envelope.ts` and what they import. */
+/** The relay's closure of the contract: `src/relay.ts`, `src/secret-envelope.ts`, `src/relay-rules.ts` (FAC-SEM-070/071) and what they import. */
 export const SOURCES = [
   "canonical.ts", "ed25519.ts", "estate-record-rules.ts", "findings.ts", "p256.ts", "package-rules.ts",
-  "relay.ts", "secret-envelope.ts", "secret-shape.ts", "webauthn.ts",
+  "relay.ts", "relay-rules.ts", "secret-envelope.ts", "secret-shape.ts", "webauthn.ts",
 ] as const;
 export const VECTORS = ["relay.json", "secret-envelope.json", "estate-record.json", "p256.json"] as const;
 /** The estate record's schema and every schema it reaches by `$ref`: a relay applies a revision only when it is valid. */

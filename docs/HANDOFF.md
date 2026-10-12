@@ -22,8 +22,8 @@
 - the hosted relay is run by PassionCode.ai;
 - the self-hosted relay stays, as the portable build.
 
-**The exact next task.** RLY-03: envelope and blob routes
-and the mailbox (`send` → `accepted` → `deliver` → `ack`), with its durable store; see the [backlog](backlog.md).
+**The exact next task.** RLY-06: presence and "last seen" for machines of the same owner, and the offline rule
+(a queued command never reported done); deltas and heartbeats wait for DEC-0054. RLY-03 (mailboxes and blobs) is done.
 
 **Prerequisites nobody here can skip:** a Cloudflare account and route for the hosted deployment (RLY-05). Until
 then, the hosted build is tested locally only.

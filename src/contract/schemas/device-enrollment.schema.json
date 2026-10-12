@@ -99,7 +99,7 @@
           "items": {
             "$ref": "#/$defs/deviceKey"
           },
-          "description": "The device's public keys by role (DEC-0053): a signing key listed as `<device.id>#sig` and a key-agreement key as `<device.id>#kem`, never one key in both roles (FAC-SEM-044). The relay protocol (DEC-0047) seals to the kem key."
+          "description": "The device's public keys by role (DEC-0053): exactly one signing key, listed as `<device.id>#sig`, and at most one key-agreement key, `<device.id>#kem`, never one key in both roles (FAC-SEM-044, DEC-0056). The #sig key signs the device's requests (devices.md, transport). The relay protocol (DEC-0047) seals to the kem key."
         },
         "csr": {
           "$ref": "device-common.schema.json#/$defs/base64",

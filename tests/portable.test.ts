@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { DigestMismatch, getVerified, putVerified, sha256Digest } from "../src/core/digest.ts";
 import { FsBlobStore, FsEstateSource } from "../src/portable/fs-store.ts";
+import { SqliteMailbox } from "../src/portable/sqlite-mailbox.ts";
 import { mkdir } from "node:fs/promises";
 import { sign } from "node:crypto";
 import { relayAuthSigningInput } from "../src/contract/relay.ts";
@@ -130,15 +131,15 @@ async function relayWithEstate(withEstate = true) {
     await writeFile(join(root, "estate", "revisions", "1.json"), JSON.stringify(e.record));
   }
   const events: Record<string, unknown>[] = [];
-  const server = await serve({ runtime: "portable", blobs: new FsBlobStore(root) }, { host: "127.0.0.1", port: 0, estate: new FsEstateSource(root), log: (event) => events.push(event) });
+  const server = await serve({ runtime: "portable", blobs: new FsBlobStore(root) }, { host: "127.0.0.1", port: 0, estate: new FsEstateSource(root), mailbox: new SqliteMailbox(join(root, "mailbox.sqlite")), log: (event) => events.push(event) });
   const port = (server.address() as AddressInfo).port;
-  return { server, e, events, url: `ws://127.0.0.1:${port}/v1/connect`, origin: `http://127.0.0.1:${port}` };
+  return { server, e, events, root, url: `ws://127.0.0.1:${port}/v1/connect`, origin: `http://127.0.0.1:${port}` };
 }
 
-const authFrame = (e: ReturnType<typeof estate>, origin: string, nonce: string, kid = e.machine.kid) => {
+const authFrame = (e: ReturnType<typeof estate>, origin: string, nonce: string, kid = e.machine.kid, privateKey = e.machine.privateKey) => {
   const iat = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
   const fields = { relay: origin, nonce, estate: "estate-5d0f1a", kid, iat };
-  const sig = sign("sha256", Buffer.from(relayAuthSigningInput(fields)), { key: e.machine.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
+  const sig = sign("sha256", Buffer.from(relayAuthSigningInput(fields)), { key: privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
   return JSON.stringify({ v: 1, type: "auth", id: "a1", protocol: "fabric-relay/0.1", alg: "ES256", ...fields, sig });
 };
 
@@ -190,3 +191,29 @@ test("an upgrade that does not offer fabric-relay.v1 is refused before any sessi
   }
 });
 
+
+test("two machines of the record exchange a message through the portable relay: send, accepted, deliver, ack", async () => {
+  const relay = await relayWithEstate();
+  try {
+    const a = connect(relay.url), b = connect(relay.url);
+    await a.until(() => a.frames.length >= 1);
+    await b.until(() => b.frames.length >= 1);
+    a.ws.send(authFrame(relay.e, relay.origin, a.frames[0]!.nonce));
+    b.ws.send(authFrame(relay.e, relay.origin, b.frames[0]!.nonce, relay.e.second.kid, relay.e.second.privateKey));
+    await a.until(() => a.frames.some((f) => f.type === "welcome"));
+    await b.until(() => b.frames.some((f) => f.type === "welcome"));
+    a.ws.send(JSON.stringify({ v: 1, type: "send", id: "s1", to: relay.e.second.kid, msgId: "m-1", body: "eyJoaSI6MX0", ttl: 600 }));
+    await a.until(() => a.frames.some((f) => f.type === "accepted"));
+    await b.until(() => b.frames.some((f) => f.type === "deliver"));
+    const deliver = b.frames.find((f) => f.type === "deliver")!;
+    assert.deepEqual([deliver.from, deliver.msgId, deliver.body], [relay.e.machine.kid, "m-1", "eyJoaSI6MX0"]);
+    b.ws.send(JSON.stringify({ v: 1, type: "ack", id: "k1", seq: deliver.seq }));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const box = new SqliteMailbox(join(relay.root, "mailbox.sqlite"));
+    assert.deepEqual(await box.pending(relay.e.second.kid, new Date()), []);
+    box.close();
+    a.ws.close(); b.ws.close();
+  } finally {
+    await new Promise((resolve) => relay.server.close(resolve));
+  }
+});

@@ -43,7 +43,8 @@ export type FrameType = (typeof FRAME_TYPES)[number];
 
 export const RELAY_ERROR_CODES = [
   "protocol-unsupported", "unauthenticated", "not-admitted", "bad-key", "unsupported-alg", "not-yet-valid", "replay",
-  "unknown-type", "unknown-recipient", "too-large", "rate-limited", "mailbox-full", "expired", "digest-mismatch", "internal"
+  "unknown-type", "unknown-recipient", "too-large", "rate-limited", "mailbox-full", "expired", "digest-mismatch", "internal",
+  "malformed", "recipients-mismatch"
 ] as const;
 export type RelayErrorCode = (typeof RELAY_ERROR_CODES)[number];
 
@@ -208,5 +209,99 @@ export function relayAdmissionSet(input: AdmissionInput): AdmissionResult {
     }
   }
   return { ok: true, held: record, revision: Number(record.revision), set };
+}
+
+// ---- Fabric-Relay-Request: the blob request's wire form (annotated under DEC-0047, 2026-10-12) ----------------------
+
+/** The header a blob request carries; its value is base64url (no padding) of RFC 8785 `{alg, kid, recipients, iat, sig}`. */
+export const RELAY_REQUEST_HEADER = "Fabric-Relay-Request";
+/** The header value's limit, in bytes; a longer one is refused 431 `too-large` before it is decoded. */
+export const MAX_RELAY_REQUEST_BYTES = 8192;
+/** Recipients of one blob: 1 to 64 `#sig` kids, each at most 256 characters. */
+export const MAX_BLOB_RECIPIENTS = 64;
+export const MAX_KID_CHARS = 256;
+
+export interface RelayRequest { alg: string; kid: string; recipients: string[]; iat: string; sig: string }
+export type BlobRefusal = { ok: false; status: number; code: RelayErrorCode };
+
+const REQUEST_MEMBERS = ["alg", "iat", "kid", "recipients", "sig"];
+const isSigKid = (value: unknown) => typeof value === "string" && value.length > 0 && value.length <= MAX_KID_CHARS && value.endsWith("#sig");
+
+/**
+ * Reads a `Fabric-Relay-Request` value strictly: at most 8192 bytes; canonical base64url without padding (re-encoding
+ * the bytes gives the same string); a JSON object whose RFC 8785 serialisation is those exact bytes; exactly the members
+ * `alg`, `kid`, `recipients`, `iat`, `sig`, all strings except `recipients`, an array. Anything else is 400 `malformed`.
+ */
+export function parseRelayRequest(value: string | null | undefined): { ok: true; request: RelayRequest } | BlobRefusal {
+  if (typeof value !== "string" || value.length === 0) return { ok: false, status: 400, code: "malformed" };
+  if (Buffer.byteLength(value, "utf8") > MAX_RELAY_REQUEST_BYTES) return { ok: false, status: 431, code: "too-large" };
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) return { ok: false, status: 400, code: "malformed" };
+  const bytes = Buffer.from(value, "base64url");
+  if (bytes.toString("base64url") !== value) return { ok: false, status: 400, code: "malformed" };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    return { ok: false, status: 400, code: "malformed" };
+  }
+  if (!isRecord(parsed) || JSON.stringify(Object.keys(parsed).sort()) !== JSON.stringify(REQUEST_MEMBERS)) return { ok: false, status: 400, code: "malformed" };
+  // Whatever JSON.parse returns has an RFC 8785 form, so this cannot throw; the bytes must be that form exactly.
+  if (rfc8785(parsed) !== bytes.toString("utf8")) return { ok: false, status: 400, code: "malformed" };
+  const { alg, kid, recipients, iat, sig } = parsed;
+  if (typeof alg !== "string" || typeof kid !== "string" || typeof iat !== "string" || typeof sig !== "string" || !Array.isArray(recipients)) {
+    return { ok: false, status: 400, code: "malformed" };
+  }
+  return { ok: true, request: { alg, kid, recipients: recipients as string[], iat, sig } };
+}
+
+/** What a relay knows when it checks a blob request. */
+export interface BlobRequestContext {
+  relay: string; // this relay's origin
+  method: "PUT" | "GET";
+  digest: string; // from the path
+  now: Date;
+  admittedKey: (kid: string) => P256Key | undefined; // the current verified admission set (relayAdmissionSet)
+  stored?: { recipients: string[] }; // the blob's recipient list, when the relay already holds the blob
+}
+
+/**
+ * The relay's check of a blob request (DEC-0047 item 8 and its 2026-10-12 annotation), in order: the header's form;
+ * `alg`; the recipients (1–64 `#sig` kids, each ≤ 256 characters) and the signer's kid; `iat` (60 s either way); who may
+ * ask — a PUT's signer and every recipient in the admission set, a GET's signer in the admission set and in the stored
+ * recipients, with the signed list equal to the stored one letter for letter; a PUT of a held blob with another list
+ * is 409 `recipients-mismatch`; then the signature. A GET signature reused within its 60 s fetches the same blob for
+ * the same machine again, which reveals nothing new.
+ */
+export function verifyBlobRequest(header: string | null | undefined, ctx: BlobRequestContext): { ok: true; kid: string; recipients: string[]; repeat: boolean } | BlobRefusal {
+  const parsed = parseRelayRequest(header);
+  if (!parsed.ok) return parsed;
+  const { alg, kid, recipients, iat, sig } = parsed.request;
+  if (alg !== RELAY_ALG) return { ok: false, status: 401, code: "unsupported-alg" };
+  if (!isSigKid(kid) || recipients.length < 1 || recipients.length > MAX_BLOB_RECIPIENTS || !recipients.every(isSigKid)) {
+    return { ok: false, status: 400, code: "malformed" };
+  }
+  const t = instant(iat);
+  if (t === undefined) return { ok: false, status: 400, code: "malformed" };
+  if (t - ctx.now.getTime() > CLOCK_SKEW_SECONDS * 1000) return { ok: false, status: 401, code: "not-yet-valid" };
+  if (ctx.now.getTime() - t > AUTH_WINDOW_SECONDS * 1000) return { ok: false, status: 401, code: "unauthenticated" };
+  const key = ctx.admittedKey(kid);
+  if (!key) return { ok: false, status: 403, code: "not-admitted" };
+  const same = ctx.stored !== undefined && JSON.stringify(ctx.stored.recipients) === JSON.stringify(recipients);
+  if (ctx.method === "PUT") {
+    if (!recipients.every((recipient) => ctx.admittedKey(recipient) !== undefined)) return { ok: false, status: 403, code: "unknown-recipient" };
+    if (ctx.stored !== undefined && !same) return { ok: false, status: 409, code: "recipients-mismatch" };
+  } else if (ctx.stored === undefined || !ctx.stored.recipients.includes(kid) || !same) {
+    return { ok: false, status: 403, code: "not-admitted" };
+  }
+  const verdict = verifyEs256(key, relayBlobSigningInput({ relay: ctx.relay, method: ctx.method, digest: ctx.digest, recipients, iat }), sig);
+  if (verdict === "bad-key") return { ok: false, status: 403, code: "bad-key" };
+  if (verdict === "unsupported-alg") return { ok: false, status: 401, code: "unsupported-alg" };
+  if (!verdict) return { ok: false, status: 401, code: "unauthenticated" };
+  return { ok: true, kid, recipients, repeat: ctx.method === "PUT" && same };
+}
+
+/** A `Fabric-Relay-Request` value from its fields: base64url of the RFC 8785 bytes (for senders and vectors). */
+export function relayRequestHeader(request: RelayRequest): string {
+  return Buffer.from(rfc8785({ alg: request.alg, kid: request.kid, recipients: request.recipients, iat: request.iat, sig: request.sig }), "utf8").toString("base64url");
 }
 // #endregion relay

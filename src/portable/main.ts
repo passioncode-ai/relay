@@ -4,13 +4,15 @@
 //   RELAY_PORT      port (default 8787)
 //   RELAY_ORIGIN    the public origin machines sign into relay-auth/1 (behind a TLS terminator: its https:// URL;
 //                   default http://RELAY_HOST:RELAY_PORT, which only a local machine can reach)
-// The estate the relay admits from is kept under RELAY_DATA_DIR/estate/ (pinned.json, revisions/<n>.json); without it
+// Queued messages are kept in RELAY_DATA_DIR/mailbox.sqlite (owner-only). The estate the relay admits from is kept under RELAY_DATA_DIR/estate/ (pinned.json, revisions/<n>.json); without it
 // the relay admits nobody.
 // Logs are one JSON object per line on stdout.
 
 import type { AddressInfo } from "node:net";
 import { serve } from "./server.ts";
-import { FsBlobStore, FsEstateSource } from "./fs-store.ts";
+import { FsBlobIndex, FsBlobStore, FsEstateSource } from "./fs-store.ts";
+import { SqliteMailbox } from "./sqlite-mailbox.ts";
+import { join } from "node:path";
 import { PROTOCOL, VERSION } from "../core/relay.ts";
 
 const log = (event: Record<string, unknown>) => console.log(JSON.stringify({ at: new Date().toISOString(), ...event }));
@@ -29,7 +31,7 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
 
 const origin = process.env.RELAY_ORIGIN;
 if (!origin) log({ event: "origin-defaulted", reason: "RELAY_ORIGIN is not set: machines must sign the http:// address, so only a local machine can authenticate" });
-const server = await serve({ runtime: "portable", blobs: new FsBlobStore(dataDir) }, { host, port, log, estate: new FsEstateSource(dataDir), ...(origin ? { origin } : {}) });
+const server = await serve({ runtime: "portable", blobs: new FsBlobStore(dataDir) }, { host, port, log, estate: new FsEstateSource(dataDir), mailbox: new SqliteMailbox(join(dataDir, "mailbox.sqlite")), blobIndex: new FsBlobIndex(dataDir), ...(origin ? { origin } : {}) });
 const address = server.address() as AddressInfo;
 log({ event: "listening", host: address.address, port: address.port, version: VERSION, protocol: PROTOCOL });
 
