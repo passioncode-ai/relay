@@ -71,7 +71,7 @@ connections was a separate store reached by message:
 - **Isolation moves from the connection to the estate.** One hub holds only machines of one estate record, all of one
   owner (DEC-0047 item 4). Each session still writes only to its own socket and acts only for its own kid.
 - **Keys go through one `contextKey()`** (relay RLY-08; CX-REL-01): the hub's and the mailboxes' Durable Object names
-  are derived from it. It is a constant while one relay origin serves one context; in a multi-context relay it becomes
+  and every R2 key are derived from it in `src/cloudflare/context.ts`. It is a constant while one relay origin serves one context; in a multi-context relay it becomes
   the per-context pseudonymous id, **never the estate id**.
 - The protocol `ping` carries a varying id, so the runtime's exact-match auto-response cannot answer it: each ping wakes
   the hub for one event, and duration is billed only while an event runs.

@@ -78,29 +78,54 @@ export class RelayEstate extends DurableObject<Env> {
     };
   }
 
-  /** After a hibernation wake the object is new: the sockets the runtime kept, and their records, are the hub's set. */
+  /**
+   * After a hibernation wake the object is new: the sockets the runtime kept, and their records, are the hub's set. A
+   * socket with no record cannot be continued: it is answered `error internal`, then closed 1011 (ADR-0002 item 3).
+   */
   #rebuild(): void {
     if (this.#rebuilt) return;
     this.#rebuilt = true;
+    let restored = 0;
     for (const ws of this.ctx.getWebSockets()) {
       const record = ws.deserializeAttachment() as SessionRecord | null;
-      if (record?.v === 1) this.#hub.restore(ws, this.#io(ws), record);
-      else ws.close(1011, "internal error");
+      if (record?.v === 1) {
+        this.#hub.restore(ws, this.#io(ws), record);
+        restored += 1;
+        continue;
+      }
+      try {
+        ws.send(JSON.stringify({ v: 1, id: "r0", type: "error", code: "internal", message: "the relay lost this session" }));
+        ws.close(1011, "internal error");
+      } catch (error) {
+        log({ event: "close-fault", code: 1011, ...errorFields(error) });
+      }
     }
+    if (restored > 0) log({ event: "hub-woke", sessions: restored });
   }
 
   /**
-   * The estate as R2 holds it now. Read when a connection opens (as each connection always has) and when the object
-   * wakes with nothing held; one read at a time, so events that wait on it go on in the order they arrived.
+   * The estate as R2 holds it now: read when a connection opens (as each connection always has) and when the object
+   * wakes holding nothing. One read at a time, so events that wait on it go on in the order they arrived. It never
+   * rejects: a read that fails is logged `estate-unreadable` and the hub keeps what it held (nothing after a wake, which
+   * admits nobody: fail closed). A read that would hold an older revision than the one held is not applied, so a slow or
+   * partial read never rolls open sessions back.
    */
   #load(): Promise<void> {
     this.#loading ??= (async () => {
       try {
         const { holder, refused } = await loadAdmission(new R2EstateSource(this.env.BLOBS), (record) => validateEstateRecord(record), () => new Date());
         if (refused.length > 0) log({ event: "estate-revision-refused", refused });
+        const held = Number(this.#holder?.revision?.revision ?? 0);
+        const read = Number(holder.revision?.revision ?? 0);
+        if (read < held) {
+          log({ event: "estate-rollback-refused", held, read });
+          return;
+        }
         this.#holder = holder;
         const admission = holder.current();
         log({ event: "admission", ...(admission.ok ? { revision: admission.revision, machines: admission.set.size } : { refusal: admission.refusal }) });
+      } catch (error) {
+        log({ event: "estate-unreadable", ...errorFields(error), held: this.#holder?.revision?.revision ?? null });
       } finally {
         this.#loading = undefined;
       }
@@ -108,6 +133,11 @@ export class RelayEstate extends DurableObject<Env> {
     return this.#loading;
   }
 
+  /**
+   * Every event first rebuilds the hub's set, then, if the object holds no estate (a fresh object after a wake), reads
+   * it. The read never fails the event: a frame still reaches its session, an alarm still ticks, a close still ends the
+   * session and is announced, a wake still delivers. With no usable estate the sessions admit nobody.
+   */
   async #ready(reload = false): Promise<void> {
     this.#rebuild();
     if (reload || !this.#holder || this.#loading) await this.#load();
@@ -142,7 +172,7 @@ export class RelayEstate extends DurableObject<Env> {
 
   override async alarm(): Promise<void> {
     await this.#ready();
-    this.#hub.onWake();
+    await this.#hub.onWake();
   }
 
   /** Called by a recipient's mailbox object once a message for `kid` is stored: that machine's sessions deliver it. */

@@ -8,7 +8,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { test } from "node:test";
 import { relayAuthSigningInput, type AdmissionResult } from "../src/contract/relay.ts";
-import { EstateHub } from "../src/core/hub.ts";
+import { EstateHub, REFRESH_RETRY_MS, type HubDeps } from "../src/core/hub.ts";
 import { MemoryMailbox, type MailboxStore } from "../src/core/mailbox.ts";
 import { MemoryLastSeen } from "../src/core/presence.ts";
 import type { SessionIo } from "../src/core/session.ts";
@@ -29,7 +29,7 @@ function machine(kid: string) {
 const A = machine("urn:fabric:machine:a#sig"), B = machine("urn:fabric:machine:b#sig");
 const admission = (): AdmissionResult => ({ ok: true, held: {}, revision: 1, set: new Map([[A.kid, A.jwk], [B.kid, B.jwk]]) as unknown as Map<string, Uint8Array> });
 
-function rig(options: { mailbox?: MailboxStore } = {}) {
+function rig(options: { mailbox?: MailboxStore; refresh?: HubDeps["refresh"] } = {}) {
   let now = T0;
   const armed: Array<number | undefined> = [];
   const log: Array<Record<string, unknown>> = [];
@@ -38,6 +38,7 @@ function rig(options: { mailbox?: MailboxStore } = {}) {
   const hub = new EstateHub<object>({
     now: () => new Date(now), nonce: () => NONCE, sessionId: () => `s${++ids}`, admission, lastSeen,
     mailbox: options.mailbox ?? new MemoryMailbox(), arm: (at) => armed.push(at), log: (e) => log.push(e),
+    ...(options.refresh ? { refresh: options.refresh } : {}),
   });
   const open = () => {
     const conn = {};
@@ -69,12 +70,12 @@ test("hub.nextWake() is the earliest session deadline, the adapter's one timer i
   assert.equal(r.hub.nextWake(), T0 + 10_001, "the unauthenticated session is due first");
   assert.equal(r.armed.at(-1), T0 + 10_001);
   r.at(10_001);
-  r.hub.onWake();
+  await r.hub.onWake();
   assert.deepEqual([silent.closed, silent.sent.at(-1)!.code, a.closed], [[4401], "unauthenticated", []]);
   assert.equal(r.hub.nextWake(), T0 + 5000 + 90_001);
   assert.equal(r.armed.at(-1), T0 + 5000 + 90_001);
   r.at(5000 + 90_001);
-  r.hub.onWake();
+  await r.hub.onWake();
   assert.deepEqual(a.closed, [1001]);
   assert.equal(r.hub.nextWake(), undefined);
   assert.equal(r.armed.at(-1), undefined, "nothing is due: the timer is cleared");
@@ -204,4 +205,50 @@ test("stop() closes every session 1001, records lastSeen, announces nothing, and
   assert.deepEqual([result.sessions, result.unclosed], [3, [silent.conn]]);
   const late = r.open();
   assert.deepEqual(late.closed, [1001], "a connection after stop is closed at once");
+});
+
+test("a machine that idles out while its transport never reports the close goes offline for the others", async () => {
+  const r = rig();
+  const b = r.open();
+  await b.auth(B);
+  const a = r.open();
+  await a.auth(A);
+  r.at(80_000);
+  await b.frame({ type: "ping", id: "keep-b" }); // B keeps talking; A falls silent
+  r.at(90_001);
+  await r.hub.onWake();
+  assert.deepEqual(a.closed, [1001]); // A's transport is told to close, and never reports back
+  assert.deepEqual(b.presenceOf(), [[A.kid, "online"], [A.kid, "offline"]]);
+  assert.equal(r.hub.size, 2, "A's transport is still in the set; its closed session is not online");
+});
+
+test("lastSeen never moves back, even when the clock does", async () => {
+  const r = rig();
+  const b = r.open();
+  await b.auth(B);
+  r.at(100_000);
+  const a = r.open();
+  await a.auth(A);
+  r.at(50_000); // the clock steps back
+  a.gone();
+  const offline = b.sent.filter((f) => f.type === "presence").at(-1)!;
+  assert.deepEqual([offline.state, offline.lastSeen], ["offline", new Date(T0 + 100_000).toISOString()]);
+  assert.equal(r.lastSeen.get(A.kid), new Date(T0 + 100_000).toISOString());
+});
+
+test("an admission refresh that rejects is logged refresh-fault, and the next wake moves forward instead of spinning", async () => {
+  let runs = 0;
+  const r = rig({ refresh: { deadline: () => T0 + 1000, run: async () => { runs += 1; throw new Error("estate unreadable"); } } });
+  assert.equal(r.hub.nextWake(), T0 + 1000);
+  r.at(1000);
+  await r.hub.onWake();
+  assert.equal(runs, 1);
+  assert.ok(r.log.some((e) => e.event === "refresh-fault" && e.message === "estate unreadable"));
+  assert.equal(r.hub.nextWake(), T0 + 1000 + REFRESH_RETRY_MS);
+  assert.equal(r.armed.at(-1), T0 + 1000 + REFRESH_RETRY_MS);
+  await r.hub.onWake(); // too early for a retry
+  assert.equal(runs, 1);
+  r.at(1000 + REFRESH_RETRY_MS);
+  await r.hub.onWake();
+  assert.equal(runs, 2);
 });

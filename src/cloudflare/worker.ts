@@ -13,7 +13,8 @@ import type { RelayEstate } from "./estate.ts";
 import { R2EstateSource } from "./estate-source.ts";
 import type { RelayMailbox } from "./mailbox.ts";
 
-// Every Durable Object class a binding names is exported by the Worker's main module.
+// Every Durable Object class a binding names is exported by the Worker's main module. Every Durable Object name and
+// R2 key comes from context.ts.
 export { R2BlobIndex, R2BlobStore } from "./blob-store.ts";
 export { RelayEstate } from "./estate.ts";
 export { R2EstateSource } from "./estate-source.ts";

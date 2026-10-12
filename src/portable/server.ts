@@ -106,7 +106,7 @@ export function serve(deps: RelayDeps, options: ServeOptions): Promise<Server> {
     ...(options.lastSeen ? { lastSeen: options.lastSeen } : {}),
     arm: (at) => {
       clearTimeout(timer);
-      timer = at === undefined ? undefined : setTimeout(() => hub.onWake(), Math.max(0, at - Date.now()));
+      timer = at === undefined ? undefined : setTimeout(() => void hub.onWake(), Math.max(0, at - Date.now()));
       timer?.unref();
     },
     log,

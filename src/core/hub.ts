@@ -39,10 +39,17 @@ export interface HubDeps {
    * object calls the hub's `wake(kid)` itself once the message is stored.
    */
   wakeOnQueued?: boolean;
-  /** A hook for the admission refresh (RLY-001): its deadline joins `nextWake()`, and `onWake()` runs it when due. */
-  refresh?: { deadline(): number | undefined; run(now: Date): void };
+  /**
+   * A hook for the admission refresh (RLY-001): its deadline joins `nextWake()`, and `onWake()` runs it when due and
+   * awaits it. A run that throws or rejects is logged `refresh-fault`, and the hub retries it no sooner than
+   * `REFRESH_RETRY_MS` later, so a failing refresh never spins the timer.
+   */
+  refresh?: { deadline(): number | undefined; run(now: Date): void | Promise<void> };
   log?: Log;
 }
+
+/** How long the hub waits before running a refresh again after one failed. */
+export const REFRESH_RETRY_MS = 5000;
 
 export interface StopOptions {
   code?: number;
@@ -56,6 +63,7 @@ export class EstateHub<C = unknown> implements SessionHub {
   #stopping = false;
   #armed: number | undefined;
   #drained: (() => void) | undefined;
+  #refreshRetryAt: number | undefined;
   readonly presence: SessionHub["presence"];
 
   constructor(private readonly deps: HubDeps) {
@@ -142,6 +150,7 @@ export class EstateHub<C = unknown> implements SessionHub {
   /** The earliest instant (epoch ms) at which a session or the admission refresh needs the hub; undefined for none. */
   nextWake(): number | undefined {
     let at = this.deps.refresh?.deadline();
+    if (at !== undefined && this.#refreshRetryAt !== undefined && at < this.#refreshRetryAt) at = this.#refreshRetryAt;
     for (const session of this.#entries.values()) {
       const due = session.nextDeadline();
       if (due !== undefined && (at === undefined || due < at)) at = due;
@@ -149,8 +158,11 @@ export class EstateHub<C = unknown> implements SessionHub {
     return at;
   }
 
-  /** The adapter's timer fired: every due session acts on its deadline, the refresh runs if due, the timer is re-armed. */
-  onWake(): void {
+  /**
+   * The adapter's timer fired: every due session acts on its deadline, the refresh runs (awaited) if due, and the timer
+   * is armed again for whatever is due next. It never rejects.
+   */
+  async onWake(): Promise<void> {
     const now = this.deps.now();
     for (const session of [...this.#entries.values()]) {
       const due = session.nextDeadline();
@@ -158,11 +170,14 @@ export class EstateHub<C = unknown> implements SessionHub {
     }
     const refresh = this.deps.refresh;
     const due = refresh?.deadline();
-    if (refresh && due !== undefined && due <= now.getTime()) {
+    const retryOk = this.#refreshRetryAt === undefined || this.#refreshRetryAt <= now.getTime();
+    if (refresh && due !== undefined && due <= now.getTime() && retryOk) {
       try {
-        refresh.run(now);
+        await refresh.run(now);
+        this.#refreshRetryAt = undefined;
       } catch (error) {
         this.deps.log?.({ event: "refresh-fault", ...errorFields(error) });
+        this.#refreshRetryAt = now.getTime() + REFRESH_RETRY_MS;
       }
     }
     this.#armed = Number.NaN; // the timer that fired is spent: arm again whatever is due next

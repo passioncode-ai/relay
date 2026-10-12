@@ -51,6 +51,7 @@ test("a deploy drops every socket without a close: after the restart, a machine 
     await a0.until(() => a0.frames.length >= 1);
     a0.ws.send(auth(e.machine, a0.frames[0]!.nonce));
     await b0.until(() => b0.frames.some((f) => f.type === "presence" && f.kid === e.machine.kid && f.state === "online"));
+    const seen = b0.frames.find((f) => f.type === "presence" && f.kid === e.machine.kid)!.lastSeen;
     await workers.pop()!.dispose(); // every object restarts, every socket drops, no close event reaches the relay
     const second = await startWorker(persist);
     workers.push(second);
@@ -58,6 +59,11 @@ test("a deploy drops every socket without a close: after the restart, a machine 
     await b.until(() => b.frames.length >= 1);
     b.ws.send(auth(e.second, b.frames[0]!.nonce));
     await b.until(() => b.frames.some((f) => f.type === "welcome"));
+    // lastSeen survived the restart in the hub's storage; who was connected did not.
+    b.ws.send(JSON.stringify({ v: 1, type: "presence-query", id: "q1", kids: [e.machine.kid] }));
+    await b.until(() => b.frames.some((f) => f.type === "presence"));
+    const answered = b.frames.find((f) => f.type === "presence")!;
+    assert.deepEqual([answered.kid, answered.state, answered.lastSeen], [e.machine.kid, "offline", seen]);
     const a = await session(second);
     await a.until(() => a.frames.length >= 1);
     a.ws.send(auth(e.machine, a.frames[0]!.nonce));

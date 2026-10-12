@@ -12,7 +12,7 @@ Its wire protocol belongs to [fabric-agent-contract](https://github.com/passionc
 
 **Install.** Node 22.13 or newer, then `npm ci`.
 
-**Configure.** The hosted build reads three bindings from [`wrangler.jsonc`](wrangler.jsonc): `ESTATE` (the estate hub, one hibernating Durable Object per estate), `MAILBOX` (one Durable Object per recipient) and `BLOBS` (an R2 bucket). It needs no keys. Deployment values (account, routes) are not kept in this repository. The portable build reads four environment variables:
+**Configure.** The hosted build reads three bindings from [`wrangler.jsonc`](wrangler.jsonc): `ESTATE` (the estate hub), `MAILBOX` (one Durable Object per recipient) and `BLOBS` (an R2 bucket). One deployment serves one estate, one context per origin in this release, and its hub is one hibernating Durable Object ([ADR-0002](docs/adr/0002-estate-hub.md)). It needs no keys. Deployment values (account, routes) are not kept in this repository. The portable build reads four environment variables:
 - `RELAY_DATA_DIR` (required)
 - `RELAY_HOST` (default `127.0.0.1`)
 - `RELAY_PORT` (default `8787`)

@@ -35,8 +35,12 @@ is the authority on every rule.
 - **Where the estate is kept.** It is never in this repository:
   - hosted: R2 `estate/pinned.json` and `estate/revisions/<n>.json`;
   - portable: `RELAY_DATA_DIR/estate/pinned.json` and `revisions/<n>.json`.
-- **When it is read.** The estate is read again whenever a connection opens. Every open session of the estate hub
-  (below) admits from what was read last; re-checking open sessions when the set changes is RLY-001's.
+- **When it is read.** The estate is read whenever a connection opens and, on the hosted relay, when the hub object
+  wakes from hibernation holding nothing. Every open session of the estate hub (below) admits from what was read last.
+  A read never rolls back to an older revision than the one held. A revision file that does not parse is refused by the
+  contract like any other bad revision, so the revisions before it still hold. A read that fails is logged
+  `estate-unreadable` and loses no event: the hub keeps what it held, which after a wake is nothing, and then admits
+  nobody (fail closed). Re-checking open sessions when the set changes is iteration node A-4's.
 
 ## One session
 
@@ -99,8 +103,9 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
 - **`ack {seq}`.** It deletes the message for every connection.
 - **Expiry.** An expired message is deleted when it is met.
 - **Where mail is kept.**
-  - Hosted: one Durable Object per recipient (`MAILBOX`, SQLite storage). Once a message is stored it calls the estate
-    hub's `wake(kid)`; it keeps no list of sessions.
+  - Hosted: one Durable Object per recipient (`MAILBOX`, SQLite storage), named `<context>/<kid>`. Once a message is
+    stored it wakes the estate hub in the background (`ctx.waitUntil`), so the sender's `accepted` never waits on
+    another machine's delivery; it keeps no list of sessions.
   - Portable: `RELAY_DATA_DIR/mailbox.sqlite` (owner-only).
 
 ## Presence

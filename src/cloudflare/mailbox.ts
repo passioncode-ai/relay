@@ -3,7 +3,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { MAILBOX_LIMIT, type AppendResult, type MailboxStore, type MailEntry } from "../core/mailbox.ts";
 import { errorFields, jsonLog } from "../core/log.ts";
-import { hubName, mailboxName } from "./context.ts";
+import { contextKey, hubName, mailboxName } from "./context.ts";
 import type { Env } from "./worker.ts";
 
 const log = jsonLog("cloudflare");
@@ -25,7 +25,12 @@ export class RelayMailbox extends DurableObject<Env> {
     this.ctx.storage.sql.exec("DELETE FROM mail WHERE expires_at <= ?", now);
   }
 
-  async append(to: string, from: string, msgId: string, body: string, ttlSeconds: number, nowMs: number): Promise<AppendResult> {
+  /**
+   * Stores a message for `to`, a recipient of the context `context` (one mailbox object per recipient and context).
+   * Once it is stored, the context's hub is woken in the background: the sender's `accepted` never waits on another
+   * machine's delivery.
+   */
+  async append(context: string, to: string, from: string, msgId: string, body: string, ttlSeconds: number, nowMs: number): Promise<AppendResult> {
     this.#purge(nowMs);
     const same = this.ctx.storage.sql.exec<{ seq: number }>("SELECT seq FROM mail WHERE sender = ? AND msg_id = ?", from, msgId).toArray()[0];
     if (same) return { seq: same.seq, duplicate: true };
@@ -36,8 +41,8 @@ export class RelayMailbox extends DurableObject<Env> {
     this.ctx.storage.sql.exec("INSERT INTO mail (seq, sender, msg_id, body, sent_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
       next, from, msgId, body, new Date(nowMs).toISOString(), nowMs + ttlSeconds * 1000);
     // A wake that fails costs nothing queued: the recipient gets the message when its next session opens.
-    await this.env.ESTATE.get(this.env.ESTATE.idFromName(hubName())).wake(to)
-      .catch((error: unknown) => log({ event: "wake-fault", ...errorFields(error) }));
+    this.ctx.waitUntil(this.env.ESTATE.get(this.env.ESTATE.idFromName(hubName(context))).wake(to)
+      .catch((error: unknown) => log({ event: "wake-fault", ...errorFields(error) })));
     return { seq: next, duplicate: false };
   }
 
@@ -55,12 +60,12 @@ export class RelayMailbox extends DurableObject<Env> {
 
 /** The core's MailboxStore over the per-recipient mailbox objects. */
 export class DurableMailbox implements MailboxStore {
-  constructor(private readonly env: Env) {}
+  constructor(private readonly env: Env, private readonly context = contextKey()) {}
   #box(to: string) {
-    return this.env.MAILBOX.get(this.env.MAILBOX.idFromName(mailboxName(to)));
+    return this.env.MAILBOX.get(this.env.MAILBOX.idFromName(mailboxName(to, this.context)));
   }
   append(to: string, from: string, msgId: string, body: string, ttlSeconds: number, now: Date): Promise<AppendResult> {
-    return this.#box(to).append(to, from, msgId, body, ttlSeconds, now.getTime());
+    return this.#box(to).append(this.context, to, from, msgId, body, ttlSeconds, now.getTime());
   }
   pending(to: string, now: Date, afterSeq = 0): Promise<MailEntry[]> {
     return this.#box(to).pending(to, now.getTime(), afterSeq);
