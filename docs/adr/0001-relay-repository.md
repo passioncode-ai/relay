@@ -37,9 +37,9 @@
    - trust tiers;
    - revocation, with vectors.
 
-   No client depends on this server's code. Until DEC-0047 is accepted, the relay refuses every session with a
-   not-ready refusal: an endpoint that accepted connections before machines could prove themselves would be an open
-   relay. *(Superseded: DEC-0047 was accepted on 2026-10-12; see [Amendment 1](#amendment-1-2026-10-12).)*
+   No client depends on this server's code. Until DEC-0047 is accepted, the relay refuses every session
+   (`protocol-not-ready`): an endpoint that accepted connections before machines could prove themselves would be
+   an open relay. *(Superseded: DEC-0047 was accepted on 2026-10-12; see [Amendment 1](#amendment-1-2026-10-12).)*
 4. **Owners:**
    - Project Observatory owns the server code: its node is a relay client that opens envelopes into its vault.
    - Fabric owns its remote surfaces' client side (ADR-0088).
@@ -52,7 +52,7 @@ every request through it and add no route of their own:
 
 | Build | Where | Sessions | Blobs |
 |---|---|---|---|
-| Hosted (`src/cloudflare/`) | Cloudflare Worker, run by PassionCode.ai | Durable Objects (SQLite) | R2 |
+| Hosted (`src/cloudflare/`) | Cloudflare Worker, run by PassionCode.ai | Durable Objects (SQLite) *(amended: one hibernating Durable Object per estate, the estate hub; [ADR-0002](0002-estate-hub.md))* | R2 |
 | Portable (`src/portable/`) | one Node server, for self-hosting | (with DEC-0047) *(amended: in memory; mailboxes and `lastSeen` in SQLite)* | files under `RELAY_DATA_DIR`, owner-only |
 
 Packaging the portable build as a single executable is a backlog item (RLY-04).

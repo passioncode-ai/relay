@@ -18,7 +18,7 @@ Its wire protocol belongs to [fabric-agent-contract](https://github.com/passionc
 - `RELAY_PORT` (default `8787`)
 - `RELAY_ORIGIN` (the public `https://` origin machines sign, normalised; a path, query, fragment or credentials refuse to start. `http://` only on a loopback literal, `127.0.0.0/8` or `[::1]`, never `localhost`. Unset, it is allowed only when `RELAY_HOST` is a loopback literal, and defaults to `http://RELAY_HOST:<bound port>`, local machines only)
 
-None of them is a secret. The estate the relay admits from (the pinned passkeys and the record's revisions) is kept
+None of them is a secret. Logs: one JSON object per line on stdout, `{at, service, runtime, event, …}`. The estate the relay admits from (the pinned passkeys and the record's revisions) is kept
 under `RELAY_DATA_DIR/estate/` in the portable build and under `estate/` in the R2 bucket in the hosted one.
 
 **MCP.** None: the relay is not an MCP server. Fabric's remote surfaces reach it as a client (Fabric ADR-0088). `GET /healthz` proves it is up; a session proves admission works.

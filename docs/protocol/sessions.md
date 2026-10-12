@@ -1,5 +1,9 @@
 # Sessions and admission (RLY-02, RLY-03, RLY-06)
 
+Ids: `RLY-0n` (two digits) are this repository's backlog rows (`docs/backlog.md`). `RLY-0nn` (three digits) are
+findings in release iteration 1's inventory (Project Observatory `docs/runs/2026-10-12-release-iteration-1/`), and
+letter-number ids such as A-4 are that iteration's nodes.
+
 How this relay runs a `fabric-relay/0.1` session. The protocol is fabric-agent-contract's DEC-0047 (merged at
 `8060254`), on top of DEC-0055's estate record. This page says how the code applies it; the contract's
 [relay specification at the pinned commit `51719e4`](https://github.com/passioncode-ai/fabric-agent-contract/blob/51719e4/docs/specification/relay.md)
@@ -67,7 +71,8 @@ this link moves with the pin.
 6. **Transport closes:**
    - a binary frame closes with 1003;
    - a frame over 1 MiB gets `too-large`, then 1009;
-   - 90 s of silence closes with 1001;
+   - 90 s of silence closes with 1001 ("going away"); a portable relay that stops closes every session with the
+     same 1001. A client reconnects; when the upgrade is answered 503, it waits for the `retry-after` seconds first;
    - a fault in the relay while handling a frame is logged as `session-fault`, answered `error` `internal`, and closes
      with 1011 (`RelaySession.fault`).
 
@@ -121,6 +126,9 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
   - `presence {kid, state: online, lastSeen}` is sent when a machine's first connection is admitted.
   - `presence {kid, state: offline, lastSeen}` is sent when its last connection ends.
   - A second connection of a machine that is already online changes nothing anyone is told.
+  - These pushes report changes that happen after this session's `welcome`. For the state at `welcome`, a node asks
+    once it is admitted: one presence query for the kids it cares about (`presence-query` below). A machine that
+    came online while this session was still authenticating is not pushed to it.
 - **`lastSeen`** is when the relay last heard from the machine: a connection admitted, a frame, or a connection
   ended.
   - Frames move it at most once per 30 s (`TOUCH_INTERVAL_SECONDS`).
@@ -181,8 +189,14 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
     `connection: close`. Every session is closed 1001 through the estate hub, so each machine's `lastSeen` is written.
     A socket still open after 5 s is terminated. Then the listener, the connections and both SQLite stores close, and
     the relay logs `stopped {sessions, forced, ms}` and exits 0. Past a 10 s ceiling it logs `stop-timeout` and exits 1;
-    a second signal logs `stop-forced` and exits 1 at once. A supervisor waits longer than the ceiling (systemd
-    `TimeoutStopSec=20`, launchd `ExitTimeOut=20`).
+    a stop that fails logs `stop-failed` and exits 1. A second press (a different signal, or the same one more than
+    1 s after the first) logs `stop-forced` and exits 1 at once; the same signal within 1 s is the same press
+    (`npm run portable` forwards the terminal's SIGINT, so the relay sees one Ctrl-C twice) and is logged
+    `signal-repeated`. A supervisor waits longer than the ceiling (systemd `TimeoutStopSec=20`, launchd
+    `ExitTimeOut=20`).
+    - The 503 carries `retry-after: 5`. An upgrade that was already past that gate when the stop began is closed 1001,
+      and terminated with the others at the grace period if it has not closed.
+    - `/healthz` keeps answering 200 while the relay stops, until iteration node A-6 makes health report it.
 
 ## Found on the way
 

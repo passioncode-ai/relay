@@ -154,3 +154,75 @@ test("an upgrade that arrives while the relay stops is refused 503", async () =>
   await stopping;
   await a.closed;
 });
+
+/**
+ * Starts the relay, either directly (`node src/portable/main.ts`) or as an operator does, through `npm run portable`,
+ * which forwards the signals it receives to the relay. Through npm the tree leads its own process group, so a signal to
+ * the group reaches npm and the relay, as a terminal's Ctrl-C does. Lines are the relay's log, one JSON object each.
+ */
+async function launch(root: string, throughNpm: boolean) {
+  const env = { ...process.env, RELAY_DATA_DIR: root, RELAY_PORT: "0", RELAY_HOST: "127.0.0.1", RELAY_ORIGIN: "https://relay.test" };
+  const forwarded = throughNpm;
+  const child = throughNpm
+    ? spawn("npm", ["run", "--silent", "portable"], { env, stdio: ["ignore", "pipe", "inherit"], detached: true })
+    : spawn(process.execPath, ["--import", "tsx", "src/portable/main.ts"], { env, stdio: ["ignore", "pipe", "inherit"] });
+  const lines: Array<Record<string, any>> = [];
+  let buffered = "";
+  child.stdout!.on("data", (chunk: Buffer) => {
+    buffered += chunk.toString("utf8");
+    for (let i = buffered.indexOf("\n"); i >= 0; i = buffered.indexOf("\n")) {
+      lines.push(JSON.parse(buffered.slice(0, i)));
+      buffered = buffered.slice(i + 1);
+    }
+  });
+  const exited = new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
+  const end = Date.now() + 10_000;
+  while (!lines.some((l) => l.event === "listening") && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50));
+  const port = lines.find((l) => l.event === "listening")?.port as number;
+  assert.ok(port, JSON.stringify(lines));
+  const kill = () => { try { forwarded ? process.kill(-child.pid!, "SIGKILL") : child.kill("SIGKILL"); } catch { /* gone */ } };
+  return { child, lines, exited, port, kill, signalGroup: (signal: NodeJS.Signals) => process.kill(-child.pid!, signal) };
+}
+
+const within = <T>(promise: Promise<T>, ms: number) => Promise.race([promise, new Promise<undefined>((resolve) => setTimeout(resolve, ms))]);
+
+test("Ctrl-C on `npm run portable` with a session open: the forwarded SIGINT is the same press, the stop is clean, exit 0", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const relay = await launch(root, true);
+  try {
+    const a = await admitted(`ws://127.0.0.1:${relay.port}/v1/connect`, e.machine, "https://relay.test");
+    relay.signalGroup("SIGINT"); // the terminal's Ctrl-C reaches the parent and the relay; the parent forwards it again
+    const close = await within(a.closed, 5000);
+    assert.equal(close?.code, 1001);
+    assert.equal(await within(relay.exited, 8000), 0, JSON.stringify(relay.lines.map((l) => l.event)));
+    assert.ok(relay.lines.some((l) => l.event === "stopped"), JSON.stringify(relay.lines.map((l) => l.event)));
+    assert.ok(!relay.lines.some((l) => l.event === "stop-forced"));
+  } finally {
+    relay.kill();
+  }
+});
+
+test("a distinct second press, over a second after the first, forces the stop: stop-forced, exit 1", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const relay = await launch(root, false);
+  try {
+    // A socket that never answers a close keeps the graceful stop waiting for its grace period.
+    const stubborn = tcp(relay.port, "127.0.0.1");
+    await new Promise<void>((resolve) => stubborn.on("connect", () => resolve()));
+    stubborn.write(["GET /v1/connect HTTP/1.1", "Host: 127.0.0.1", "Upgrade: websocket", "Connection: Upgrade", "Sec-WebSocket-Version: 13",
+      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Protocol: fabric-relay.v1", "", ""].join("\r\n"));
+    stubborn.on("data", () => {});
+    stubborn.on("error", () => {});
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    relay.child.kill("SIGINT");
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    relay.child.kill("SIGINT");
+    assert.equal(await within(relay.exited, 3000), 1);
+    assert.deepEqual(relay.lines.filter((l) => ["stopping", "stop-forced"].includes(l.event)).map((l) => l.event), ["stopping", "stop-forced"]);
+    stubborn.destroy();
+  } finally {
+    relay.kill();
+  }
+});

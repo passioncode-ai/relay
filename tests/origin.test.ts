@@ -44,6 +44,9 @@ test("a set origin is refused, with the exact problem, when it is not a bare htt
     assert.equal(rule.ok, false, raw);
     if (!rule.ok) assert.match(rule.reason, problem, raw);
   }
+  const exposed = relayOrigin("http://127.0.0.1:8787", "0.0.0.0");
+  assert.equal(exposed.ok, false, "a local-only origin served on every interface");
+  if (!exposed.ok) assert.match(exposed.reason, /RELAY_HOST 0\.0\.0\.0 is not a loopback literal/);
   const loopback = relayOrigin("http://127.0.0.1:9000/", "127.0.0.1");
   assert.ok(loopback.ok && loopback.at(1) === "http://127.0.0.1:9000" && loopback.localOnly);
   const v6 = relayOrigin("http://[::1]:9000", "::1");
@@ -79,7 +82,8 @@ async function relay(origin: string | undefined) {
   await writeFile(join(root, "estate", "revisions", "1.json"), JSON.stringify(e.record));
   const served = await serve({ runtime: "portable", blobs: new FsBlobStore(root) }, { host: "127.0.0.1", port: 0, estate: new FsEstateSource(root), blobIndex: new FsBlobIndex(root), ...(origin ? { origin } : {}) });
   const port = (served.server.address() as AddressInfo).port;
-  const stop = () => new Promise<void>((resolve) => served.server.close(() => resolve()));
+  // A failing assertion must fail the test, never hang it on an open socket.
+  const stop = () => served.stop({ graceMs: 100 });
   return { ...served, e, port, stop };
 }
 

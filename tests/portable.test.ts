@@ -242,3 +242,18 @@ test("through the portable relay a machine sees another come online and go offli
     await new Promise((resolve) => relay.server.close(resolve));
   }
 });
+
+test("the portable hub's one timer refuses a machine that never authenticates, 10 to 12 s after it opened", async () => {
+  const relay = await relayWithEstate();
+  try {
+    const opened = Date.now(); // before the upgrade: the relay opens the session (and its 10 s deadline) after this
+    const c = connect(relay.url);
+    await c.until(() => c.frames.length >= 1);
+    await c.until(() => c.closed() !== undefined, 15_000);
+    const waited = Date.now() - opened;
+    assert.deepEqual([c.frames.at(-1)!.code, c.closed()!.code], ["unauthenticated", 4401]);
+    assert.ok(waited >= 10_000 && waited <= 12_000, `refused after ${waited} ms`);
+  } finally {
+    await new Promise((resolve) => relay.server.close(resolve));
+  }
+});

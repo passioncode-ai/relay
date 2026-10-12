@@ -35,9 +35,8 @@
 **The exact next task.** Wave 2 of release iteration 1, after relay#8 and its stacked pull request merge:
 - RP: re-pin the contract at N19's merge;
 - then, in the order of the iteration's `workgraph.json`:
-  - A-3 (`EstateCache`; it reuses `tests/estate-fixture.ts` `revise()`/`forge()`);
-  - A-4 (revalidating open sessions through the hub);
-  - A-5, A-6, A-7;
+  - A-3 (`EstateCache`; it reuses `tests/estate-fixture.ts` `revise()`/`forge()`), A-6 (`/healthz` reports
+    admission), A-4 (revalidating open sessions through the hub), then A-5 and A-7;
   - D-1, D-2;
   - G-4.
 - RLY-07 (deltas and heartbeats) is unblocked and is wave 4 (H-1, H-2).

@@ -115,6 +115,7 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
   // every session admits from, and one timer for every session's deadline.
   const empty: EstateSource = { pinned: async () => [], revisions: async () => [] };
   let holder = new AdmissionHolder({ pinned: [], schemaValid: () => false, now: () => new Date() });
+  const refusing = new Set<WebSocket>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const hub: EstateHub<WebSocket> = new EstateHub<WebSocket>({
     now: () => new Date(),
@@ -148,8 +149,15 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
       // The estate is read again when a connection opens, and what verifies is what every session of the hub admits from.
       const loaded = await loadAdmission(options.estate ?? empty, (record) => validateEstateRecord(record), () => new Date());
       if (loaded.refused.length > 0) log({ event: "estate-revision-refused", refused: loaded.refused });
-      holder = loaded.holder;
+      // A read never rolls open sessions back to an older revision than the one the hub holds.
+      const held = Number(holder.revision?.revision ?? 0), read = Number(loaded.holder.revision?.revision ?? 0);
+      if (read >= held) holder = loaded.holder;
+      else log({ event: "estate-rollback-refused", held, read });
       if (stopping) {
+        // The stop began while the estate was read: this socket is refused, and terminated at the grace period if it
+        // has not closed by then.
+        refusing.add(ws);
+        ws.on("close", () => refusing.delete(ws));
         ws.close(1001, "relay stopping");
         return;
       }
@@ -178,7 +186,16 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
   const stop = async ({ graceMs = 5000 }: { graceMs?: number } = {}) => {
     const started = Date.now();
     const result = await hub.stop({ code: 1001, reason: "relay stopping", graceMs });
-    for (const ws of result.unclosed) ws.terminate();
+    // Sockets refused while the stop began get what is left of the grace period, then are terminated with the rest.
+    const left = graceMs - (Date.now() - started);
+    if (refusing.size > 0 && left > 0) {
+      await new Promise<void>((resolve) => {
+        const check = setInterval(() => { if (refusing.size === 0) { clearInterval(check); resolve(); } }, 20);
+        setTimeout(() => { clearInterval(check); resolve(); }, left);
+      });
+    }
+    const unclosed = [...result.unclosed, ...refusing];
+    for (const ws of unclosed) ws.terminate();
     clearTimeout(timer);
     await new Promise<void>((resolve) => {
       sockets.close();
@@ -192,7 +209,7 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
         log({ event: "store-close-fault", error: (error as Error).name });
       }
     }
-    const outcome = { sessions: result.sessions, forced: result.unclosed.length };
+    const outcome = { sessions: result.sessions, forced: unclosed.length };
     log({ event: "stopped", ...outcome, ms: Date.now() - started });
     return outcome;
   };
