@@ -53,7 +53,7 @@ this link moves with the pin.
    `kid`.
 3. **`welcome`** answers a successful `auth` with `{session, estateRevision, deltaHead, heartbeat: null}`.
    - `estateRevision` is the verified revision.
-   - Until DEC-0054 defines the revocation delta, `deltaHead` is `{sequence: 0, sha256: <SHA-256 of no bytes>}`.
+   - Until RLY-07 carries DEC-0054's revocation delta, `deltaHead` is `{sequence: 0, sha256: <SHA-256 of no bytes>}`.
 4. **Refusals.** A failed `auth` is answered with a named `error`, then a close:
    - `unauthenticated`, `unsupported-alg`, `not-yet-valid`, `protocol-unsupported` and `replay` close with 4401;
    - `not-admitted` closes with 4403.
@@ -61,8 +61,8 @@ this link moves with the pin.
    - `ping` is answered with `pong`;
    - `send`, `deliver` and `ack` are store-and-forward (see [Messages](#messages));
    - `presence` and `presence-query` are [presence](#presence);
-   - a known frame type not yet served (deltas, until DEC-0054) gets `error` `internal` "not served by this relay
-     version yet";
+   - a known frame type not yet served (deltas and heartbeats: RLY-07) gets `error` `internal` "not served by this
+     relay version yet";
    - an unknown type gets `unknown-type`, and the session stays open.
 6. **Transport closes:**
    - a binary frame closes with 1003;
@@ -153,7 +153,8 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
   - It keeps the blob's recipient list.
   - It refuses a body over 32 MiB with 413.
 - **Serving a blob.** It re-checks the digest on `GET` before serving.
-- **Deletion.** A blob is deleted once every stored recipient fetched it (counted per kid), or after 7 days.
+- **Deletion.** A blob is deleted once every stored recipient fetched it (counted per kid), or after 7 days, when it
+  is next requested.
   - A `GET` for a blob the relay does not hold gets 403 `not-admitted`, the same answer as a machine that may not
     fetch it. The relay does not say whether a blob exists.
 - **Where blobs are kept.**

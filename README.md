@@ -1,6 +1,6 @@
 # PassionCode Relay
 
-PassionCode Relay carries sessions, sealed secret envelopes and package blobs between machines. The machines can belong to one person or to an organization. The relay holds no authority and no plaintext: every machine proves itself with its own device key, and every secret is sealed to the machine that will open it. The relay sees only digests and ciphertext.
+PassionCode Relay carries sessions, sealed secret envelopes and package blobs between machines. The machines can belong to one person or to an organization. The relay holds no authority: every machine proves itself with its own device key, and every secret is sealed to the machine that will open it. It holds signed message bodies it can read but cannot forge, blobs by digest, and secrets only as sealed envelopes; a secret is never in plaintext at the relay.
 
 It ships as two builds of one runtime-neutral core:
 - **Hosted:** a Cloudflare Worker with Durable Objects and R2. PassionCode.ai runs it.

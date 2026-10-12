@@ -88,7 +88,7 @@ export interface SessionEnv {
 export type SessionState = "awaiting-auth" | "admitted" | "closed";
 
 /**
- * Until DEC-0054 defines the revocation delta, a relay has carried none: the head is sequence 0 over no bytes. It has
+ * Until RLY-07 carries DEC-0054's revocation delta, a relay has carried none: the head is sequence 0 over no bytes. It has
  * the check-in's `records.revocationDelta` shape, so a node can report it unchanged.
  */
 export const EMPTY_DELTA_HEAD = { sequence: 0, sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" } as const;

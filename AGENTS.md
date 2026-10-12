@@ -16,7 +16,7 @@
 
 ## What this repository is
 
-PassionCode Relay: carries sessions, sealed secret envelopes and package blobs between machines that belong to one person or one organization, with no authority and no plaintext. It is one runtime-neutral core (`src/core/`) with two builds: hosted (`src/cloudflare/`, a Worker with Durable Objects and R2) and portable (`src/portable/`, for self-hosting). Why it is shaped this way: [docs/adr/0001-relay-repository.md](docs/adr/0001-relay-repository.md). Roadmap track: RM-21 (agent network).
+PassionCode Relay: carries sessions, sealed secret envelopes and package blobs between machines that belong to one person or one organization, with no authority. It holds signed message bodies it can read but cannot forge, blobs by digest, and secrets only as sealed envelopes; a secret is never in plaintext at the relay. It is one runtime-neutral core (`src/core/`) with two builds: hosted (`src/cloudflare/`, a Worker with Durable Objects and R2) and portable (`src/portable/`, for self-hosting). Why it is shaped this way: [docs/adr/0001-relay-repository.md](docs/adr/0001-relay-repository.md). Roadmap track: RM-21 (agent network).
 
 ## Commands
 
@@ -30,9 +30,10 @@ PassionCode Relay: carries sessions, sealed secret envelopes and package blobs b
 
 ## Local rules
 
-- **The protocol lives in fabric-agent-contract DEC-0047, not here.** Do not add a frame, a route that carries
-  session data, or an authentication scheme that the accepted DEC does not define. Until it is accepted, every
-  session is refused with `protocol-not-ready`, and a test guards each path to that refusal.
+- **The protocol lives in fabric-agent-contract DEC-0047, not here** (accepted 2026-10-12, #53 `8060254`). Do not add
+  a frame, a route that carries session data, or an authentication scheme that DEC-0047 does not define. A frame type
+  DEC-0047 defines but this relay does not serve yet is answered `error` `internal` "not served by this relay version
+  yet" (`src/core/session.ts`), never dropped.
 - **Both builds route through `handle` in `src/core/relay.ts`.** An adapter converts requests and responses and
   binds storage. It adds no route, so the hosted and the self-hosted relay cannot drift apart.
 - **The core uses web-standard APIs only** (`Request`, `Response`, `crypto.subtle`): no `node:*` and no
