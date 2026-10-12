@@ -20,7 +20,7 @@ before(async () => {
     scriptPath: SCRIPT,
     compatibilityDate: CONFIG.compatibility_date,
     compatibilityFlags: CONFIG.compatibility_flags,
-    durableObjects: { SESSIONS: { className: "RelaySession", useSQLite: true } },
+    durableObjects: { SESSIONS: { className: "RelaySession", useSQLite: true }, MAILBOX: { className: "RelayMailbox", useSQLite: true } },
     r2Buckets: ["BLOBS"],
   });
   await mf.ready;
@@ -101,3 +101,41 @@ test("the R2 binding the blob store uses exists in the bundle's bindings", async
   const bucket = await mf.getR2Bucket("BLOBS");
   assert.equal(await bucket.get("sha256:" + "0".repeat(64)), null);
 });
+
+test("two machines of the record exchange a message through the Worker: send, accepted, deliver, ack", async () => {
+  const e = estate(new Date(), "ES256");
+  const bucket = await mf.getR2Bucket("BLOBS");
+  await bucket.put("estate/pinned.json", JSON.stringify(e.pinned));
+  await bucket.put("estate/revisions/1.json", JSON.stringify(e.record));
+  const iat = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  const auth = (m: { kid: string; privateKey: import("node:crypto").KeyObject }, nonce: string) => {
+    const fields = { relay: "http://relay.test", nonce, estate: "estate-5d0f1a", kid: m.kid, iat };
+    const sig = signBytes("sha256", Buffer.from(relayAuthSigningInput(fields)), { key: m.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
+    return JSON.stringify({ v: 1, type: "auth", id: "a1", protocol: "fabric-relay/0.1", alg: "ES256", ...fields, sig });
+  };
+  const a = await session(), b = await session();
+  await a.until(() => a.frames.length >= 1);
+  await b.until(() => b.frames.length >= 1);
+  a.ws.send(auth(e.machine, a.frames[0]!.nonce));
+  b.ws.send(auth(e.second, b.frames[0]!.nonce));
+  await a.until(() => a.frames.some((f) => f.type === "welcome"));
+  await b.until(() => b.frames.some((f) => f.type === "welcome"));
+  a.ws.send(JSON.stringify({ v: 1, type: "send", id: "s1", to: e.second.kid, msgId: "m-1", body: "eyJoaSI6MX0", ttl: 600 }));
+  await a.until(() => a.frames.some((f) => f.type === "accepted"));
+  assert.equal(a.frames.find((f) => f.type === "accepted")!.seq, 1);
+  await b.until(() => b.frames.some((f) => f.type === "deliver"));
+  const deliver = b.frames.find((f) => f.type === "deliver")!;
+  assert.deepEqual([deliver.from, deliver.msgId, deliver.seq, deliver.body], [e.machine.kid, "m-1", 1, "eyJoaSI6MX0"]);
+  b.ws.send(JSON.stringify({ v: 1, type: "ack", id: "k1", seq: 1 }));
+  // A later connection of B finds nothing waiting: the ack deleted it in the mailbox object.
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const again = await session();
+  await again.until(() => again.frames.length >= 1);
+  again.ws.send(auth(e.second, again.frames[0]!.nonce));
+  await again.until(() => again.frames.some((f) => f.type === "welcome"));
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(again.frames.filter((f) => f.type === "deliver").length, 0);
+  for (const c of [a, b, again]) c.ws.close(1000, "done");
+  await bucket.delete(["estate/pinned.json", "estate/revisions/1.json"]);
+});
+
