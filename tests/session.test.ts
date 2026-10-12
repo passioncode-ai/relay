@@ -156,3 +156,53 @@ test("AdmissionHolder: holds what the contract accepted, refuses the rest unchan
   at = new Date(Date.parse(estate.cases[1].record.validUntil) + 1000);
   assert.deepEqual(holder.current(), { ok: false, refusal: "expired" });
 });
+
+test("restore(snapshot()) mid-session keeps the outbound ids and the delivered seq, and the session goes on", async () => {
+  const { MemoryMailbox } = await import("../src/core/mailbox.ts");
+  const mailbox = new MemoryMailbox();
+  await mailbox.append(relay.auth.frame.kid, "urn:fabric:machine:other#sig", "m-1", "AA", 600, new Date(T0));
+  const sent: Array<Record<string, any>> = [];
+  const records: unknown[] = [];
+  const env = { relay: relay.auth.context.relay, now: () => new Date(T0), nonce: () => relay.auth.context.nonce, sessionId: () => "s-1", admission: () => admitted(), mailbox };
+  const first = new RelaySession({ send: (text) => sent.push(JSON.parse(text)), close: () => assert.fail("closed"), persist: (r) => records.push(r) }, env);
+  first.open();
+  await first.receive(auth());
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(sent.map((f) => [f.type, f.id]), [["hello", "r1"], ["welcome", "r2"], ["deliver", "r3"]]);
+  const record = first.snapshot();
+  assert.deepEqual(records.at(-1), record, "the session persists its record after every change");
+  assert.ok(JSON.stringify(record).length < 1024, "a record fits a WebSocket attachment many times over");
+  const closed: number[] = [];
+  const again = RelaySession.restore({ send: (text) => sent.push(JSON.parse(text)), close: (code) => closed.push(code) }, env, JSON.parse(JSON.stringify(record)));
+  assert.deepEqual([again.state, again.kid], ["admitted", relay.auth.frame.kid]);
+  await again.wake();
+  assert.equal(sent.filter((f) => f.type === "deliver").length, 1, "what was delivered is not delivered again");
+  await again.receive(JSON.stringify({ v: 1, type: "teleport", id: "t1" }));
+  assert.deepEqual([sent.at(-1)!.code, sent.at(-1)!.id], ["unknown-type", "r4"]);
+  await again.receive(JSON.stringify({ v: 1, type: "ping", id: "p1" }));
+  assert.deepEqual(sent.at(-1), { v: 1, id: "p1", type: "pong" });
+  await again.receive(auth());
+  assert.deepEqual([sent.at(-1)!.code, closed], ["replay", [4401]], "the restored nonce is still used");
+});
+
+test("nextDeadline is the first instant past the 10 s auth deadline, then past 90 s of silence; none once closed", async () => {
+  const h = harness();
+  assert.equal(h.session.nextDeadline(), T0 + 10_001);
+  h.advance(4000);
+  await h.session.receive(auth());
+  assert.equal(h.session.nextDeadline(), T0 + 4000 + 90_001);
+  h.advance(90_001);
+  h.session.tick();
+  assert.deepEqual([h.closed.map((c) => c.code), h.session.nextDeadline()], [[1001], undefined]);
+});
+
+test("fault: a relay fault is answered error internal, logged, and closes 1011", async () => {
+  const h = harness();
+  h.session.fault(new TypeError("boom"));
+  assert.deepEqual([h.sent.at(-1)?.type, h.sent.at(-1)?.code], ["error", "internal"]);
+  assert.ok(frameValid(h.sent.at(-1)), JSON.stringify(frameValid.errors));
+  assert.deepEqual(h.closed.map((c) => c.code), [1011]);
+  assert.deepEqual(h.log.filter((e) => e.event === "session-fault").map((e) => [e.error, e.message]), [["TypeError", "boom"]]);
+  h.session.fault(new Error("again"));
+  assert.equal(h.closed.length, 1, "a closed session is not closed twice");
+});

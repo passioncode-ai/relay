@@ -1,7 +1,8 @@
 // #region cloudflare-presence — docs: docs/protocol/sessions.md#presence
 
 import { DurableObject } from "cloudflare:workers";
-import type { PresenceRecord, PresenceStore } from "../core/presence.ts";
+import type { PresenceRecord } from "../core/presence.ts";
+import type { RelaySession, SessionHub } from "../core/session.ts";
 import type { Env } from "./worker.ts";
 
 /**
@@ -81,31 +82,37 @@ export class RelayPresence extends DurableObject<Env> {
   }
 }
 
-/** The core's PresenceStore for one session object, over the estate's presence object; `self` names the connection. */
-export class DurablePresence implements PresenceStore {
-  readonly #object: DurableObjectStub<RelayPresence>;
-  constructor(env: Env, private readonly self: string, private readonly listen: (listener: ((record: PresenceRecord) => void) | undefined) => void) {
-    this.#object = env.PRESENCE.get(env.PRESENCE.idFromName("estate"));
+/**
+ * The core's SessionHub for one session object, over the estate's presence object and the recipient's mailbox object.
+ * It lives only until the Worker runs one hub per estate (F-2), which removes this file.
+ */
+export class DurableSessionHub implements SessionHub {
+  readonly #presence: DurableObjectStub<RelayPresence>;
+  constructor(private readonly env: Env, private readonly self: string, private readonly log: (event: Record<string, unknown>) => void) {
+    this.#presence = env.PRESENCE.get(env.PRESENCE.idFromName("estate"));
   }
-  connected(kid: string, _connection: string, at: Date): Promise<void> {
-    return this.#object.connected(kid, this.self, at.getTime());
+  #mailbox(kid: string) {
+    return this.env.MAILBOX.get(this.env.MAILBOX.idFromName(kid));
   }
-  disconnected(kid: string, _connection: string, at: Date): Promise<void> {
-    return this.#object.disconnected(kid, this.self, at.getTime());
+  #fault(error: unknown): void {
+    this.log({ event: "presence-fault", error: (error as Error).name, message: String((error as Error).message).slice(0, 200) });
   }
-  touch(kid: string, at: Date): Promise<void> {
-    return this.#object.touch(kid, at.getTime());
+  joined(session: RelaySession): void {
+    const kid = session.kid as string;
+    void this.#mailbox(kid).subscribe(this.self);
+    void this.#presence.subscribe(this.self);
+    this.#presence.connected(kid, this.self, Date.now()).catch((error: unknown) => this.#fault(error));
   }
-  query(kids: readonly string[]): Promise<PresenceRecord[]> {
-    return this.#object.query([...kids]);
+  left(session: RelaySession): void {
+    const kid = session.kid as string;
+    void this.#mailbox(kid).unsubscribe(this.self);
+    void this.#presence.unsubscribe(this.self);
+    this.#presence.disconnected(kid, this.self, Date.now()).catch((error: unknown) => this.#fault(error));
   }
-  subscribe(_connection: string, listener: (record: PresenceRecord) => void): () => void {
-    this.listen(listener);
-    void this.#object.subscribe(this.self);
-    return () => {
-      this.listen(undefined);
-      void this.#object.unsubscribe(this.self);
-    };
-  }
+  queued(): void {} // the mailbox object wakes its subscribers itself when it queues a message
+  readonly presence = {
+    touch: (kid: string, at: Date) => this.#presence.touch(kid, at.getTime()),
+    query: (kids: readonly string[]) => this.#presence.query([...kids]),
+  };
 }
 // #endregion cloudflare-presence

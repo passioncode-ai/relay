@@ -7,13 +7,13 @@ import { DurableObject } from "cloudflare:workers";
 import validateEstateRecord from "../contract/estate-record.validate.js";
 import { loadAdmission } from "../core/admission.ts";
 import { CONNECT_PATH, handle, SUBPROTOCOL, upgradeRefusal } from "../core/relay.ts";
-import type { DeliveryHub } from "../core/mailbox.ts";
+import { jsonLog } from "../core/log.ts";
 import { RelaySession as Session } from "../core/session.ts";
 import type { PresenceRecord } from "../core/presence.ts";
 import { R2BlobIndex, R2BlobStore } from "./blob-store.ts";
 import { R2EstateSource } from "./estate-source.ts";
 import { DurableMailbox, type RelayMailbox } from "./mailbox.ts";
-import { DurablePresence, type RelayPresence } from "./presence.ts";
+import { DurableSessionHub, type RelayPresence } from "./presence.ts";
 
 // Every Durable Object class a binding names is exported by the Worker's main module.
 export { R2BlobIndex, R2BlobStore } from "./blob-store.ts";
@@ -32,24 +32,23 @@ export interface Env {
 const TICK_MS = 1000;
 
 const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-const log = (event: Record<string, unknown>) => console.log(JSON.stringify({ service: "relay", ...event }));
+const log = jsonLog("cloudflare");
 
 /** One connection's session. It reads the estate when the connection opens and admits only from what verifies. */
 export class RelaySession extends DurableObject<Env> {
-  #wake: (() => void) | undefined;
-  #presence: ((record: PresenceRecord) => void) | undefined;
+  #session: Session | undefined;
   #open = false;
 
   /** Called by a mailbox object when a message for this connection's machine is queued. */
   async wake(): Promise<void> {
-    if (!this.#wake) throw new Error("no live connection");
-    this.#wake();
+    if (!this.#session || !this.#open) throw new Error("no live connection");
+    void this.#session.wake();
   }
 
   /** Called by the presence object when another machine of the estate comes online or goes offline. */
   async presence(record: PresenceRecord): Promise<void> {
-    if (!this.#presence) throw new Error("no live connection");
-    this.#presence(record);
+    if (!this.#session || !this.#open) throw new Error("no live connection");
+    this.#session.presence(record);
   }
 
   /** Asked by the presence object: does this object still hold an open connection? */
@@ -68,20 +67,6 @@ export class RelaySession extends DurableObject<Env> {
     const [client, server] = [pair[0], pair[1]];
     server.accept();
     let timer: ReturnType<typeof setInterval> | undefined;
-    // This connection's hub: one subscription, to its own machine's mailbox object, woken through wake().
-    const self = this.ctx.id.toString();
-    const hub: DeliveryHub = {
-      subscribe: (kid, listener) => {
-        this.#wake = listener;
-        const box = this.env.MAILBOX.get(this.env.MAILBOX.idFromName(kid));
-        void box.subscribe(self);
-        return () => {
-          this.#wake = undefined;
-          void box.unsubscribe(self);
-        };
-      },
-      notify: () => {}, // the mailbox object wakes its subscribers itself when it queues a message
-    };
     const session = new Session(
       {
         send: (text) => server.send(text),
@@ -98,17 +83,15 @@ export class RelaySession extends DurableObject<Env> {
         sessionId: () => crypto.randomUUID(),
         admission: () => holder.current(),
         mailbox: new DurableMailbox(this.env),
-        hub,
-        presence: new DurablePresence(this.env, self, (listener) => { this.#presence = listener; }),
+        hub: new DurableSessionHub(this.env, this.ctx.id.toString(), log),
         log,
       },
     );
+    this.#session = session;
     server.addEventListener("message", (event) => {
       session.receive(event.data as string | ArrayBuffer).catch((error: unknown) => {
-        // A fault in the relay is reported and closes the connection as an internal error, never silently.
-        log({ event: "session-fault", error: (error as Error).name, message: String((error as Error).message).slice(0, 200) });
         if (timer) clearInterval(timer);
-        server.close(1011, "internal error");
+        session.fault(error);
       });
     });
     server.addEventListener("close", () => {

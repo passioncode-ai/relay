@@ -35,7 +35,8 @@ is the authority on every rule.
 - **Where the estate is kept.** It is never in this repository:
   - hosted: R2 `estate/pinned.json` and `estate/revisions/<n>.json`;
   - portable: `RELAY_DATA_DIR/estate/pinned.json` and `revisions/<n>.json`.
-- **When it is read.** Each connection reads the estate when it opens.
+- **When it is read.** The estate is read again whenever a connection opens. Every open session of the estate hub
+  (below) admits from what was read last; re-checking open sessions when the set changes is RLY-001's.
 
 ## One session
 
@@ -61,7 +62,23 @@ is the authority on every rule.
    - a binary frame closes with 1003;
    - a frame over 1 MiB gets `too-large`, then 1009;
    - 90 s of silence closes with 1001;
-   - a fault while handling a frame is logged as `session-fault` and closes with 1011.
+   - a fault in the relay while handling a frame is logged as `session-fault`, answered `error` `internal`, and closes
+     with 1011 (`RelaySession.fault`).
+
+## The estate hub
+
+Each build runs **one hub per estate** (`src/core/hub.ts`; why: [ADR-0002](../adr/0002-estate-hub.md)). It holds the
+connection set and everything that spans connections:
+
+- **Presence is derived from the set**, never stored: a machine is online while an admitted session in the set has its
+  kid. Only `lastSeen` is kept.
+- **One timer.** Each session says when it next needs attention (`nextDeadline()`: the 10 s auth deadline, then 90 s of
+  silence); the hub arms the build's one timer at the earliest and closes exactly the sessions that are due.
+- **Delivery wake-ups.** A message queued for a machine wakes every session it holds. One flush runs at a time per
+  session; a wake during a flush runs one more, so a message is delivered once and never missed. A session is in the
+  set before its first delivery, so nothing queued meanwhile is missed (RLY-013).
+- **A session is a record.** `SessionRecord` holds a session's whole state and is handed to the transport after every
+  change; `RelaySession.restore` continues from it.
 
 The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and the subprotocol `fabric-relay.v1`
 (`upgradeRefusal`). A plain request gets 426, and a missing subprotocol gets 400.
@@ -112,15 +129,16 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
   - Only the recipient's own signed message back reports an outcome.
   - `tests/presence.test.ts` sends to an offline machine, lets it connect, take the message and ack it, and checks
     that the sender heard only that it came online.
-- **Where presence is kept.**
+- **Where presence is kept.** Who is online is derived by the estate hub from its live connections, so a runtime that
+  drops every socket at once leaves nothing stale.
   - Hosted: one Durable Object for the estate (`PRESENCE`, SQLite storage). It holds:
     - the live session objects of each machine;
     - each machine's `lastSeen`;
     - the sessions to tell.
     A session object that does not answer is taken as a connection that ended: when it is told a change, and before a
     query is answered.
-  - Portable: who is connected lives in memory, so it ends with the process. `lastSeen` is kept in
-    `RELAY_DATA_DIR/presence.sqlite` (owner-only), so it survives a restart.
+  - Portable: `lastSeen` is kept in `RELAY_DATA_DIR/presence.sqlite` (owner-only, `SqliteLastSeen`), so it survives a
+    restart.
 
 ## Blobs
 

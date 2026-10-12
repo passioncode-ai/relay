@@ -1,5 +1,5 @@
 // Store-and-forward (RLY-03, DEC-0047 item 5): the mailbox store, and two admitted machines exchanging a message through
-// sessions that share a store and a hub. Every frame the relay sends is valid against the contract's relay-frame schema.
+// sessions of one estate hub (src/core/hub.ts) over one store. Every frame the relay sends is valid against the contract's relay-frame schema.
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -7,7 +7,8 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { test } from "node:test";
 import { relayAuthSigningInput, type AdmissionResult } from "../src/contract/relay.ts";
-import { MAILBOX_LIMIT, MemoryHub, MemoryMailbox } from "../src/core/mailbox.ts";
+import { EstateHub } from "../src/core/hub.ts";
+import { MAILBOX_LIMIT, MemoryMailbox } from "../src/core/mailbox.ts";
 import { RelaySession } from "../src/core/session.ts";
 import { SqliteMailbox } from "../src/portable/sqlite-mailbox.ts";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
@@ -53,12 +54,14 @@ function machine(kid: string) {
 const A = machine("urn:fabric:machine:a#sig"), B = machine("urn:fabric:machine:b#sig");
 const admission = (): AdmissionResult => ({ ok: true, held: {}, revision: 1, set: new Map([[A.kid, A.jwk], [B.kid, B.jwk]]) as unknown as Map<string, Uint8Array> });
 
-function connect(m: ReturnType<typeof machine>, mailbox: MemoryMailbox, hub: MemoryHub, nonce = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8") {
+const NONCE = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
+let sessions = 0;
+const estateHub = (mailbox: MemoryMailbox) =>
+  new EstateHub({ now: () => T0, nonce: () => NONCE, sessionId: () => `s-${++sessions}`, admission, mailbox });
+
+function connect(m: ReturnType<typeof machine>, hub: EstateHub, nonce = NONCE) {
   const sent: Array<Record<string, any>> = [];
-  const session = new RelaySession({ send: (t) => sent.push(JSON.parse(t)), close: () => {} }, {
-    relay: "https://relay.example", now: () => T0, nonce: () => nonce, sessionId: () => `s-${m.kid}`, admission, mailbox, hub,
-  });
-  session.open();
+  const session = hub.connect({}, { send: (t) => sent.push(JSON.parse(t)), close: () => {} }, "https://relay.example")!;
   const iat = T0.toISOString().replace(/\.\d{3}Z$/, "Z");
   const fields = { relay: "https://relay.example", nonce, estate: "e", kid: m.kid, iat };
   const sig = sign("sha256", Buffer.from(relayAuthSigningInput(fields)), { key: m.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
@@ -68,8 +71,8 @@ function connect(m: ReturnType<typeof machine>, mailbox: MemoryMailbox, hub: Mem
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 test("a message from A reaches B: accepted with its seq, delivered once to each of B's connections, deleted on ack", async () => {
-  const mailbox = new MemoryMailbox(), hub = new MemoryHub();
-  const a = connect(A, mailbox, hub), b1 = connect(B, mailbox, hub), b2 = connect(B, mailbox, hub);
+  const mailbox = new MemoryMailbox(), hub = estateHub(mailbox);
+  const a = connect(A, hub), b1 = connect(B, hub), b2 = connect(B, hub);
   for (const c of [a, b1, b2]) await c.session.receive(c.auth);
   await a.frame({ type: "send", id: "s1", to: B.kid, msgId: "m-1", body: "eyJoaSI6MX0", ttl: 3600 });
   await settle();
@@ -85,7 +88,7 @@ test("a message from A reaches B: accepted with its seq, delivered once to each 
   assert.equal(b1.sent.filter((f) => f.type === "deliver").length, 1); // not delivered twice
   await b1.frame({ type: "ack", id: "k1", seq: 1 });
   assert.deepEqual(await mailbox.pending(B.kid, T0), []);
-  const late = connect(B, mailbox, hub);
+  const late = connect(B, hub);
   await late.session.receive(late.auth);
   await settle();
   assert.equal(late.sent.filter((f) => f.type === "deliver").length, 0); // acknowledged: gone for every connection
@@ -93,11 +96,11 @@ test("a message from A reaches B: accepted with its seq, delivered once to each 
 });
 
 test("a machine that connects later gets what waited for it; one that disconnected gets nothing more", async () => {
-  const mailbox = new MemoryMailbox(), hub = new MemoryHub();
-  const a = connect(A, mailbox, hub);
+  const mailbox = new MemoryMailbox(), hub = estateHub(mailbox);
+  const a = connect(A, hub);
   await a.session.receive(a.auth);
   await a.frame({ type: "send", id: "s1", to: B.kid, msgId: "m-1", body: "AA", ttl: 60 });
-  const b = connect(B, mailbox, hub);
+  const b = connect(B, hub);
   await b.session.receive(b.auth);
   await settle();
   assert.deepEqual(b.sent.filter((f) => f.type === "deliver").map((f) => f.seq), [1]);
@@ -108,8 +111,8 @@ test("a machine that connects later gets what waited for it; one that disconnect
 });
 
 test("send is refused by name: a stranger recipient, a body over the limit, FAC-SEM-071's limits; nothing is queued", async () => {
-  const mailbox = new MemoryMailbox(), hub = new MemoryHub();
-  const a = connect(A, mailbox, hub);
+  const mailbox = new MemoryMailbox(), hub = estateHub(mailbox);
+  const a = connect(A, hub);
   await a.session.receive(a.auth);
   const cases: Array<[Record<string, unknown>, string]> = [
     [{ to: "urn:fabric:machine:stranger#sig", msgId: "m", body: "AA", ttl: 60 }, "unknown-recipient"],
@@ -133,19 +136,19 @@ test("without a mailbox, send and ack are refused as not served yet", async () =
   const session = new RelaySession({ send: (t) => sent.push(JSON.parse(t)), close: () => {} },
     { relay: "https://relay.example", now: () => T0, nonce: () => nonce, sessionId: () => "s", admission });
   session.open();
-  await session.receive(connect(A, new MemoryMailbox(), new MemoryHub(), nonce).auth);
+  await session.receive(connect(A, estateHub(new MemoryMailbox()), nonce).auth);
   await session.receive(JSON.stringify({ v: 1, type: "send", id: "s1", to: B.kid, msgId: "m", body: "AA", ttl: 60 }));
   assert.deepEqual([sent.at(-1)!.code, sent.at(-1)!.replyTo], ["internal", "s1"]);
 });
 
 test("two wake-ups at once deliver a message to a connection once, not twice", async () => {
-  const mailbox = new MemoryMailbox(), hub = new MemoryHub();
-  const b = connect(B, mailbox, hub);
+  const mailbox = new MemoryMailbox(), hub = estateHub(mailbox);
+  const b = connect(B, hub);
   await b.session.receive(b.auth);
   await settle();
   await mailbox.append(B.kid, A.kid, "m-1", "AA", 60, T0);
-  hub.notify(B.kid);
-  hub.notify(B.kid);
+  void hub.wake(B.kid);
+  void hub.wake(B.kid);
   await settle();
   await settle();
   assert.deepEqual(b.sent.filter((f) => f.type === "deliver").map((f) => f.seq), [1]);

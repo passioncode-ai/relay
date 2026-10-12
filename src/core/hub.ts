@@ -1,0 +1,264 @@
+// #region relay-hub — docs: docs/adr/0002-estate-hub.md
+// The estate hub: one per estate in both builds (RLY-012, RLY-014). It owns everything that spans connections:
+// - the connection set, each entry a transport paired with its `RelaySession`;
+// - presence, derived from that set (a kid is online iff an admitted session in the set has it) and pushed to the other
+//   sessions synchronously, so `presence` frames arrive in event order; only `lastSeen` is stored;
+// - the admission set sessions admit from (today the adapter's holder; the estate cache of RLY-001 replaces it);
+// - one scheduler: `nextWake()` is the earliest deadline of every session (and of the admission refresh, when one is
+//   hooked in), handed to the adapter's single timer through `arm` after every event;
+// - mailbox wake-ups: `wake(kid)` flushes that machine's sessions, each flush single-flight with a "run again" flag;
+// - shutdown: `stop()` closes every session through the session's own close and waits for the transports.
+//
+// The hosted build runs one hub in one hibernating Durable Object per estate (src/cloudflare/estate.ts), the portable
+// build one hub in its process (src/portable/server.ts). A hub holds only machines of one estate record, all of one
+// owner (DEC-0047 item 4); each session still writes only to its own socket and acts only for its own kid.
+
+import type { AdmissionResult } from "../contract/relay.ts";
+import { errorFields, type Log } from "./log.ts";
+import type { MailboxStore } from "./mailbox.ts";
+import type { LastSeenStore, PresenceRecord } from "./presence.ts";
+import { RelaySession, type SessionEnv, type SessionHub, type SessionIo, type SessionRecord } from "./session.ts";
+
+export interface HubDeps {
+  now: () => Date;
+  nonce: () => string; // 32 random bytes, base64url
+  sessionId: () => string;
+  /** The verified admission set every session of the hub admits from (src/core/admission.ts). */
+  admission: () => AdmissionResult;
+  /** Store-and-forward (RLY-03); without it messages are answered "not served yet". */
+  mailbox?: MailboxStore;
+  /** Each machine's `lastSeen` (RLY-06); without it presence is answered "not served yet". */
+  lastSeen?: LastSeenStore;
+  /**
+   * The adapter's one timer: called after every event with the hub's next wake (epoch ms), or undefined when nothing is
+   * due. The Worker maps it to the Durable Object's alarm, the portable build to one `setTimeout`. It calls `onWake()`.
+   */
+  arm?: (at: number | undefined) => void;
+  /**
+   * Whether a session's `send` wakes the recipient's sessions in process (default). The Worker sets false: its mailbox
+   * object calls the hub's `wake(kid)` itself once the message is stored.
+   */
+  wakeOnQueued?: boolean;
+  /** A hook for the admission refresh (RLY-001): its deadline joins `nextWake()`, and `onWake()` runs it when due. */
+  refresh?: { deadline(): number | undefined; run(now: Date): void };
+  log?: Log;
+}
+
+export interface StopOptions {
+  code?: number;
+  reason?: string;
+  /** How long to wait for every transport to report its close. */
+  graceMs?: number;
+}
+
+export class EstateHub<C = unknown> implements SessionHub {
+  readonly #entries = new Map<C, RelaySession>();
+  #stopping = false;
+  #armed: number | undefined;
+  #drained: (() => void) | undefined;
+  readonly presence: SessionHub["presence"];
+
+  constructor(private readonly deps: HubDeps) {
+    const lastSeen = deps.lastSeen;
+    this.presence = lastSeen
+      ? {
+          touch: (kid, at) => void this.#seen(kid, at),
+          query: (kids) => {
+            const out: PresenceRecord[] = [];
+            for (const kid of new Set(kids)) {
+              const seen = this.#read(kid);
+              if (seen) out.push({ kid, state: this.#online(kid) ? "online" : "offline", lastSeen: seen });
+            }
+            return out;
+          },
+        }
+      : undefined;
+  }
+
+  #env(relay: string): SessionEnv {
+    return {
+      relay, now: this.deps.now, nonce: this.deps.nonce, sessionId: this.deps.sessionId, admission: () => this.admission(),
+      ...(this.deps.mailbox ? { mailbox: this.deps.mailbox } : {}), hub: this, ...(this.deps.log ? { log: this.deps.log } : {}),
+    };
+  }
+
+  /** The admission set right now, the same for every session of the estate. */
+  admission(): AdmissionResult {
+    return this.deps.admission();
+  }
+
+  /** A new connection: its session greets it with `hello`. While the hub stops, the connection is closed 1001 at once. */
+  connect(conn: C, io: SessionIo, relay: string): RelaySession | undefined {
+    if (this.#stopping) {
+      io.close(1001, "relay stopping");
+      return undefined;
+    }
+    const session = new RelaySession(io, this.#env(relay));
+    this.#entries.set(conn, session);
+    session.open();
+    this.#arm();
+    return session;
+  }
+
+  /** A connection the runtime kept while the hub was away (a hibernation wake): its session continues from its record. */
+  restore(conn: C, io: SessionIo, record: SessionRecord): RelaySession {
+    const session = RelaySession.restore(io, this.#env(record.relay), record);
+    this.#entries.set(conn, session);
+    return session;
+  }
+
+  session(conn: C): RelaySession | undefined {
+    return this.#entries.get(conn);
+  }
+
+  /** How many transports the hub holds, closed sessions whose transport has not reported its close included. */
+  get size(): number {
+    return this.#entries.size;
+  }
+
+  /** One frame from a connection. A fault while handling it closes that session 1011 through `RelaySession.fault`. */
+  async receive(conn: C, data: string | Uint8Array | ArrayBuffer): Promise<void> {
+    const session = this.#entries.get(conn);
+    if (!session) return;
+    try {
+      await session.receive(data);
+    } catch (error) {
+      session.fault(error);
+    } finally {
+      this.#arm();
+    }
+  }
+
+  /** The transport of `conn` closed, from either side: its session ends and leaves the set. */
+  closed(conn: C): void {
+    const session = this.#entries.get(conn);
+    if (!session) return;
+    this.#entries.delete(conn);
+    session.disconnected();
+    this.#arm();
+    if (this.#entries.size === 0) this.#drained?.();
+  }
+
+  /** The earliest instant (epoch ms) at which a session or the admission refresh needs the hub; undefined for none. */
+  nextWake(): number | undefined {
+    let at = this.deps.refresh?.deadline();
+    for (const session of this.#entries.values()) {
+      const due = session.nextDeadline();
+      if (due !== undefined && (at === undefined || due < at)) at = due;
+    }
+    return at;
+  }
+
+  /** The adapter's timer fired: every due session acts on its deadline, the refresh runs if due, the timer is re-armed. */
+  onWake(): void {
+    const now = this.deps.now();
+    for (const session of [...this.#entries.values()]) {
+      const due = session.nextDeadline();
+      if (due !== undefined && due <= now.getTime()) session.tick();
+    }
+    const refresh = this.deps.refresh;
+    const due = refresh?.deadline();
+    if (refresh && due !== undefined && due <= now.getTime()) {
+      try {
+        refresh.run(now);
+      } catch (error) {
+        this.deps.log?.({ event: "refresh-fault", ...errorFields(error) });
+      }
+    }
+    this.#arm();
+  }
+
+  /** A message was queued for `kid`: every session that machine holds delivers what waits for it. */
+  async wake(kid: string): Promise<void> {
+    const sessions = [...this.#entries.values()].filter((session) => session.state === "admitted" && session.kid === kid);
+    await Promise.all(sessions.map((session) => session.wake()));
+    this.#arm();
+  }
+
+  /**
+   * Stop: every session is closed with `code` (1001, "going away") through its own close, so each admitted machine's
+   * `lastSeen` is written; nothing is announced meanwhile. Resolves when every transport has reported its close, or at
+   * `graceMs`, naming the connections that did not (the adapter terminates them).
+   */
+  async stop({ code = 1001, reason = "relay stopping", graceMs = 5000 }: StopOptions = {}): Promise<{ sessions: number; unclosed: C[] }> {
+    this.#stopping = true;
+    const sessions = this.#entries.size;
+    for (const session of [...this.#entries.values()]) session.close(code, reason);
+    this.#arm();
+    if (this.#entries.size > 0) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await new Promise<void>((resolve) => {
+        this.#drained = resolve;
+        timer = setTimeout(resolve, graceMs);
+      });
+      clearTimeout(timer);
+      this.#drained = undefined;
+    }
+    return { sessions, unclosed: [...this.#entries.keys()] };
+  }
+
+  get stopping(): boolean {
+    return this.#stopping;
+  }
+
+  // SessionHub: what a session tells the hub.
+
+  joined(session: RelaySession): void {
+    const kid = session.kid as string;
+    const wasOnline = this.#online(kid, session);
+    const lastSeen = this.#seen(kid, this.deps.now());
+    if (!wasOnline) this.#publish({ kid, state: "online", lastSeen });
+  }
+
+  left(session: RelaySession): void {
+    const kid = session.kid as string;
+    const lastSeen = this.#seen(kid, this.deps.now());
+    if (!this.#online(kid)) this.#publish({ kid, state: "offline", lastSeen });
+  }
+
+  queued(kid: string): void {
+    if (this.deps.wakeOnQueued !== false) void this.wake(kid);
+  }
+
+  /** Online iff an admitted session in the set (other than `except`) has the kid. */
+  #online(kid: string, except?: RelaySession): boolean {
+    for (const session of this.#entries.values()) if (session !== except && session.state === "admitted" && session.kid === kid) return true;
+    return false;
+  }
+
+  #publish(record: PresenceRecord): void {
+    if (this.#stopping || !this.presence) return;
+    for (const session of this.#entries.values()) session.presence(record);
+  }
+
+  #read(kid: string): string | undefined {
+    try {
+      return this.deps.lastSeen?.get(kid);
+    } catch (error) {
+      this.deps.log?.({ event: "presence-fault", ...errorFields(error) });
+      return undefined;
+    }
+  }
+
+  /** Moves `lastSeen` forward, never back, and answers it. A store that fails is logged; it costs no session. */
+  #seen(kid: string, at: Date): string {
+    const value = at.toISOString();
+    if (!this.deps.lastSeen) return value;
+    const before = this.#read(kid);
+    if (before && before >= value) return before;
+    try {
+      this.deps.lastSeen.put(kid, value);
+    } catch (error) {
+      this.deps.log?.({ event: "presence-fault", ...errorFields(error) });
+    }
+    return value;
+  }
+
+  #arm(): void {
+    const at = this.nextWake();
+    if (at === this.#armed) return;
+    this.#armed = at;
+    this.deps.arm?.(at);
+  }
+}
+// #endregion relay-hub

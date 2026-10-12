@@ -5,6 +5,9 @@
 // set as admission). A machine is online while it holds at least one admitted connection; `lastSeen` is when the relay
 // last heard from it — a connection admitted, a frame, a connection ended. The relay reports what it saw and never
 // invents a time: a machine it never saw has no presence to report.
+//
+// Who is online is not stored anywhere: the estate hub (hub.ts) derives it from its live connection set, so nothing can
+// go stale when a runtime drops every socket at once (RLY-012). `lastSeen` is the only presence state that is kept.
 
 /** One machine's presence, as the `presence` frame carries it. */
 export interface PresenceRecord {
@@ -14,85 +17,27 @@ export interface PresenceRecord {
 }
 
 /**
- * Who is connected and when each machine was last seen. Implementations: `MemoryPresence` (tests, one process; the
- * portable build with its last-seen times in SQLite) and the Worker's presence Durable Object.
+ * Each machine's `lastSeen`, durable across restarts. The hub moves it forward only. Implementations: `MemoryLastSeen`
+ * (tests), `SqliteLastSeen` (portable, `presence.sqlite`) and the hub Durable Object's SQLite storage (hosted).
  */
-export interface PresenceStore {
-  /** A connection of `kid` was admitted. Its first connection publishes `online` to every subscriber. */
-  connected(kid: string, connection: string, at: Date): Promise<void>;
-  /** That connection ended. Its last connection publishes `offline` to every subscriber. */
-  disconnected(kid: string, connection: string, at: Date): Promise<void>;
-  /** The machine was heard from: `lastSeen` moves, nothing is published. */
-  touch(kid: string, at: Date): Promise<void>;
-  /** The presence of each kid the relay has seen, in the order asked; a kid never seen is left out. */
-  query(kids: readonly string[]): Promise<PresenceRecord[]>;
-  /** Changes reach `listener` until the returned function is called. */
-  subscribe(connection: string, listener: (record: PresenceRecord) => void): () => void;
+export interface LastSeenStore {
+  get(kid: string): string | undefined;
+  put(kid: string, at: string): void;
 }
 
 /** How often a session moves `lastSeen` while frames keep arriving: often enough for a person, cheap for a store. */
 export const TOUCH_INTERVAL_SECONDS = 30;
 
-const stamp = (at: Date) => at.toISOString();
-
-export class MemoryPresence implements PresenceStore {
-  readonly #connections = new Map<string, Set<string>>(); // kid → its live connections
-  readonly #lastSeen: Map<string, string>;
-  readonly #listeners = new Map<string, (record: PresenceRecord) => void>();
-
-  /** `lastSeen` restored from a previous run, if the adapter keeps one; `remember` is told every change. */
-  constructor(lastSeen: Iterable<[string, string]> = [], private readonly remember?: (kid: string, lastSeen: string) => void) {
-    this.#lastSeen = new Map(lastSeen);
+export class MemoryLastSeen implements LastSeenStore {
+  readonly #seen: Map<string, string>;
+  constructor(seen: Iterable<[string, string]> = []) {
+    this.#seen = new Map(seen);
   }
-
-  #seen(kid: string, at: Date): string {
-    const value = stamp(at);
-    const before = this.#lastSeen.get(kid);
-    if (before && before > value) return before; // a late report never moves the time back
-    this.#lastSeen.set(kid, value);
-    this.remember?.(kid, value);
-    return value;
+  get(kid: string): string | undefined {
+    return this.#seen.get(kid);
   }
-
-  #publish(record: PresenceRecord): void {
-    for (const listener of this.#listeners.values()) listener({ ...record });
-  }
-
-  async connected(kid: string, connection: string, at: Date): Promise<void> {
-    let live = this.#connections.get(kid);
-    if (!live) this.#connections.set(kid, (live = new Set()));
-    const first = live.size === 0;
-    live.add(connection);
-    const lastSeen = this.#seen(kid, at);
-    if (first) this.#publish({ kid, state: "online", lastSeen });
-  }
-
-  async disconnected(kid: string, connection: string, at: Date): Promise<void> {
-    const live = this.#connections.get(kid);
-    if (!live?.delete(connection)) return; // never connected, or already gone: nothing changed
-    const lastSeen = this.#seen(kid, at);
-    if (live.size === 0) {
-      this.#connections.delete(kid);
-      this.#publish({ kid, state: "offline", lastSeen });
-    }
-  }
-
-  async touch(kid: string, at: Date): Promise<void> {
-    this.#seen(kid, at);
-  }
-
-  async query(kids: readonly string[]): Promise<PresenceRecord[]> {
-    const out: PresenceRecord[] = [];
-    for (const kid of new Set(kids)) {
-      const lastSeen = this.#lastSeen.get(kid);
-      if (lastSeen) out.push({ kid, state: this.#connections.has(kid) ? "online" : "offline", lastSeen });
-    }
-    return out;
-  }
-
-  subscribe(connection: string, listener: (record: PresenceRecord) => void): () => void {
-    this.#listeners.set(connection, listener);
-    return () => this.#listeners.delete(connection);
+  put(kid: string, at: string): void {
+    this.#seen.set(kid, at);
   }
 }
 // #endregion relay-presence

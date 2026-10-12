@@ -7,7 +7,7 @@ import { after, test } from "node:test";
 import { DigestMismatch, getVerified, putVerified, sha256Digest } from "../src/core/digest.ts";
 import { FsBlobStore, FsEstateSource } from "../src/portable/fs-store.ts";
 import { SqliteMailbox } from "../src/portable/sqlite-mailbox.ts";
-import { SqlitePresence } from "../src/portable/sqlite-presence.ts";
+import { SqliteLastSeen } from "../src/portable/sqlite-last-seen.ts";
 import { mkdir } from "node:fs/promises";
 import { sign } from "node:crypto";
 import { relayAuthSigningInput } from "../src/contract/relay.ts";
@@ -132,7 +132,7 @@ async function relayWithEstate(withEstate = true) {
     await writeFile(join(root, "estate", "revisions", "1.json"), JSON.stringify(e.record));
   }
   const events: Record<string, unknown>[] = [];
-  const server = await serve({ runtime: "portable", blobs: new FsBlobStore(root) }, { host: "127.0.0.1", port: 0, estate: new FsEstateSource(root), mailbox: new SqliteMailbox(join(root, "mailbox.sqlite")), presence: new SqlitePresence(join(root, "presence.sqlite")), log: (event) => events.push(event) });
+  const server = await serve({ runtime: "portable", blobs: new FsBlobStore(root) }, { host: "127.0.0.1", port: 0, estate: new FsEstateSource(root), mailbox: new SqliteMailbox(join(root, "mailbox.sqlite")), lastSeen: new SqliteLastSeen(join(root, "presence.sqlite")), log: (event) => events.push(event) });
   const port = (server.address() as AddressInfo).port;
   return { server, e, events, root, url: `ws://127.0.0.1:${port}/v1/connect`, origin: `http://127.0.0.1:${port}` };
 }
