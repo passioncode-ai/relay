@@ -5,13 +5,15 @@
 // module only sequences them and keeps the transport rules of DEC-0047 item 3.
 //
 // What it serves after `welcome`: `ping` → `pong`; with a mailbox, `send` → `accepted`, `deliver` to every connection the
-// recipient holds, and `ack` (RLY-03). Blobs are HTTP routes, not frames. Presence and deltas are RLY-06 and are
-// answered `error` `internal` "not served yet" rather than dropped.
+// recipient holds, and `ack` (RLY-03); with a presence store, `presence` to the estate's other machines and
+// `presence-query` (RLY-06). Blobs are HTTP routes, not frames. Deltas wait for DEC-0054 and are answered `error`
+// `internal` "not served yet" rather than dropped.
 
 import type { AdmissionResult } from "../contract/relay.ts";
 import { relayRules } from "../contract/relay-rules.ts";
 import { MAX_BODY_BYTES } from "../contract/relay.ts";
 import type { DeliveryHub, MailboxStore } from "./mailbox.ts";
+import { TOUCH_INTERVAL_SECONDS, type PresenceRecord, type PresenceStore } from "./presence.ts";
 import {
   AUTH_DEADLINE_SECONDS, CLOSE_CODES, FRAME_TYPES, IDLE_CLOSE_SECONDS, MAX_FRAME_BYTES, RELAY_PROTOCOL, admit,
   type AuthFrame, type RelayErrorCode,
@@ -32,6 +34,8 @@ export interface SessionEnv {
   /** The store and the hub of store-and-forward (RLY-03); without them messages are answered "not served yet". */
   mailbox?: MailboxStore;
   hub?: DeliveryHub;
+  /** Who is online and when each machine was last seen (RLY-06); without it presence is answered "not served yet". */
+  presence?: PresenceStore;
   log?: (event: Record<string, unknown>) => void;
 }
 
@@ -45,6 +49,9 @@ export const EMPTY_DELTA_HEAD = { sequence: 0, sha256: "e3b0c44298fc1c149afbf4c8
 
 const SERVED = ["hello", "auth", "welcome", "ping", "pong", "error"];
 const MAIL = ["send", "ack"];
+/** The most kids one `presence-query` may name, and the longest kid (the relay-frame schema's limits). */
+const MAX_QUERY_KIDS = 256;
+const MAX_KID_LENGTH = 256;
 const isFrame = (value: unknown): value is { v: unknown; type: unknown; id: unknown } & Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 
@@ -58,6 +65,9 @@ export class RelaySession {
   private outbound = 0;
   private delivered = 0; // the highest seq this connection has been sent
   private unsubscribe: (() => void) | undefined;
+  private connection = ""; // this connection's session id, as `welcome` names it
+  private unsubscribePresence: (() => void) | undefined;
+  private lastTouch = 0;
   private queue: Promise<void> = Promise.resolve();
 
   constructor(private readonly io: SessionIo, private readonly env: SessionEnv) {}
@@ -99,9 +109,12 @@ export class RelaySession {
     }
     if (frame.type === "auth") return this.authenticate(frame as unknown as AuthFrame);
     if (this.state === "awaiting-auth") return this.refuse("unauthenticated", "authenticate before any other frame");
+    await this.touch();
     if (frame.type === "ping") return this.send({ type: "pong", id: frame.id });
     if (frame.type === "pong") return;
     if (MAIL.includes(frame.type) && this.env.mailbox) return frame.type === "send" ? this.send_(frame) : this.ack(frame);
+    if (frame.type === "presence-query" && this.env.presence) return this.presenceQuery(frame);
+    if (frame.type === "presence" && this.env.presence) return this.error("unknown-type", "presence is sent by the relay, not to it", frame.id);
     if ((FRAME_TYPES as readonly string[]).includes(frame.type) && !SERVED.includes(frame.type)) {
       return this.error("internal", `${frame.type} is not served by this relay version yet`, frame.id);
     }
@@ -118,7 +131,7 @@ export class RelaySession {
     if (now - this.lastFrameAt > IDLE_CLOSE_SECONDS * 1000) this.close(CLOSE_CODES.idle, `silent for ${IDLE_CLOSE_SECONDS} s`);
   }
 
-  private authenticate(frame: AuthFrame): void {
+  private async authenticate(frame: AuthFrame): Promise<void> {
     const admission = this.env.admission();
     const result = admit(frame, {
       relay: this.env.relay, nonce: this.nonce, nonceUsed: this.nonceUsed, now: this.env.now(),
@@ -133,10 +146,60 @@ export class RelaySession {
     this.state = "admitted";
     this.kid = result.kid;
     this.env.log?.({ event: "admitted", kid: result.kid, revision: admission.revision });
-    this.send({ type: "welcome", session: this.env.sessionId(), estateRevision: admission.revision, deltaHead: EMPTY_DELTA_HEAD, heartbeat: null });
+    this.connection = this.env.sessionId();
+    this.send({ type: "welcome", session: this.connection, estateRevision: admission.revision, deltaHead: EMPTY_DELTA_HEAD, heartbeat: null });
     if (this.env.mailbox) {
       this.unsubscribe = this.env.hub?.subscribe(result.kid, () => void this.flush());
       void this.flush();
+    }
+    if (this.env.presence) {
+      // Subscribe before announcing, so a machine that connects at the same moment is not missed either way.
+      this.unsubscribePresence = this.env.presence.subscribe(this.connection, (record) => this.presenceOut(record));
+      this.lastTouch = this.env.now().getTime();
+      await this.env.presence.connected(result.kid, this.connection, this.env.now());
+    }
+  }
+
+  /** A frame arrived: `lastSeen` moves, at most once per TOUCH_INTERVAL_SECONDS. */
+  private async touch(): Promise<void> {
+    if (!this.env.presence || this.state !== "admitted") return;
+    const now = this.env.now();
+    if (now.getTime() - this.lastTouch < TOUCH_INTERVAL_SECONDS * 1000) return;
+    this.lastTouch = now.getTime();
+    // A last-seen time that could not be written is logged; it never costs the machine its session.
+    await this.env.presence.touch(this.kid as string, now).catch((error: unknown) => this.presenceFault(error));
+  }
+
+  private presenceFault(error: unknown): void {
+    this.env.log?.({ event: "presence-fault", error: (error as Error).name, message: String((error as Error).message).slice(0, 200) });
+  }
+
+  /**
+   * A change in another machine's presence, sent only while that machine is in the set the relay admits right now:
+   * presence follows the verified set (DEC-0047 item 4), and every machine of that set is of this estate's owner.
+   */
+  private presenceOut(record: PresenceRecord): void {
+    if (this.state !== "admitted" || record.kid === this.kid) return;
+    const admission = this.env.admission();
+    if (!admission.ok || !admission.set.has(record.kid)) return;
+    this.send({ type: "presence", kid: record.kid, state: record.state, lastSeen: record.lastSeen });
+  }
+
+  /**
+   * `presence-query {kids}`: one `presence` frame per kid of this estate's admitted set that the relay has seen. A kid
+   * outside the set, or never seen, gets no frame: the relay says nothing about machines of another owner and invents
+   * no time for one it never saw.
+   */
+  private async presenceQuery(frame: Record<string, unknown>): Promise<void> {
+    const kids = frame.kids;
+    if (!Array.isArray(kids) || kids.length > MAX_QUERY_KIDS || !kids.every((kid) => typeof kid === "string" && kid.length >= 1 && kid.length <= MAX_KID_LENGTH)) {
+      return this.error("unknown-type", `not a valid presence-query frame (kids: 0 to ${MAX_QUERY_KIDS} kids)`, frame.id as string);
+    }
+    const admission = this.env.admission();
+    const asked = admission.ok ? (kids as string[]).filter((kid) => admission.set.has(kid)) : [];
+    for (const record of await this.env.presence!.query(asked)) {
+      if (this.state !== "admitted") return;
+      this.send({ type: "presence", kid: record.kid, state: record.state, lastSeen: record.lastSeen });
     }
   }
 
@@ -192,15 +255,24 @@ export class RelaySession {
   /** The transport closed from the other side: stop delivering to this connection. */
   disconnected(): void {
     if (this.state === "closed") return;
-    this.state = "closed";
-    this.unsubscribe?.();
+    this.end();
   }
 
   private close(code: number, reason: string): void {
     if (this.state === "closed") return;
+    this.end();
+    this.io.close(code, reason);
+  }
+
+  /** Stops delivery to this connection and, for an admitted one, tells the presence store it ended. */
+  private end(): void {
+    const admitted = this.state === "admitted";
     this.state = "closed";
     this.unsubscribe?.();
-    this.io.close(code, reason);
+    this.unsubscribePresence?.();
+    if (admitted && this.env.presence) {
+      this.env.presence.disconnected(this.kid as string, this.connection, this.env.now()).catch((error: unknown) => this.presenceFault(error));
+    }
   }
 }
 // #endregion relay-session

@@ -11,6 +11,7 @@ import { loadAdmission, type EstateSource } from "../core/admission.ts";
 import { CONNECT_PATH, handle, SUBPROTOCOL, upgradeRefusal, type RelayDeps } from "../core/relay.ts";
 import { MemoryHub, type MailboxStore } from "../core/mailbox.ts";
 import type { BlobIndex } from "../core/blobs.ts";
+import type { PresenceStore } from "../core/presence.ts";
 import { RelaySession } from "../core/session.ts";
 
 /** How often a session checks its 10 s auth deadline and its 90 s idle close. */
@@ -54,6 +55,8 @@ export interface ServeOptions {
   blobIndex?: BlobIndex;
   /** Where queued messages are kept (RLY-03); without one, messages are answered "not served yet". */
   mailbox?: MailboxStore;
+  /** Who is online and when each machine was last seen (RLY-06); without one, presence is answered "not served yet". */
+  presence?: PresenceStore;
   log?: (event: Record<string, unknown>) => void;
 }
 
@@ -122,6 +125,7 @@ export function serve(deps: RelayDeps, options: ServeOptions): Promise<Server> {
           sessionId: () => randomUUID(),
           admission: () => holder.current(),
           ...(options.mailbox ? { mailbox: options.mailbox, hub } : {}),
+          ...(options.presence ? { presence: options.presence } : {}),
           log,
         },
       );

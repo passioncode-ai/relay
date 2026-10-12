@@ -1,4 +1,4 @@
-# Sessions and admission (RLY-02)
+# Sessions and admission (RLY-02, RLY-03, RLY-06)
 
 How this relay runs a `fabric-relay/0.1` session. The protocol is fabric-agent-contract's DEC-0047 (merged at
 `8060254`), on top of DEC-0055's estate record. This page says how the code applies it; the contract's
@@ -53,7 +53,8 @@ is the authority on every rule.
 5. **After `welcome`:**
    - `ping` is answered with `pong`;
    - `send`, `deliver` and `ack` are store-and-forward (see [Messages](#messages));
-   - a known frame type not yet served (presence, deltas: RLY-06) gets `error` `internal` "not served by this relay
+   - `presence` and `presence-query` are [presence](#presence);
+   - a known frame type not yet served (deltas, until DEC-0054) gets `error` `internal` "not served by this relay
      version yet";
    - an unknown type gets `unknown-type`, and the session stays open.
 6. **Transport closes:**
@@ -84,6 +85,42 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
   - Hosted: one Durable Object per recipient (`MAILBOX`, SQLite storage). It wakes the session objects of the
     recipient's live connections.
   - Portable: `RELAY_DATA_DIR/mailbox.sqlite` (owner-only).
+
+## Presence
+
+- **Who hears it.** The relay serves one estate, and it admits only machines listed in that estate's verified record.
+  So every admitted machine has the same owner, and presence goes only to them.
+  - A machine hears about the estate's other machines, never about itself.
+  - A machine that has left the current verified set is neither announced nor answered: presence follows the same set
+    as admission.
+- **When.**
+  - `presence {kid, state: online, lastSeen}` is sent when a machine's first connection is admitted.
+  - `presence {kid, state: offline, lastSeen}` is sent when its last connection ends.
+  - A second connection of a machine that is already online changes nothing anyone is told.
+- **`lastSeen`** is when the relay last heard from the machine: a connection admitted, a frame, or a connection
+  ended.
+  - Frames move it at most once per 30 s (`TOUCH_INTERVAL_SECONDS`).
+  - It never moves back.
+- **`presence-query {kids}`** gets one `presence` frame for each asked kid of the estate that the relay has seen, in
+  the order asked.
+  - A kid outside the set, or one the relay never saw, gets no frame. The relay invents no time.
+  - More than 256 kids, or `kids` that is not a list of kids, gets `unknown-type`.
+  - A node that sends `presence` itself gets `unknown-type`.
+- **The offline rule (Fabric ADR-0088).** A sender learns that its message was queued (`accepted {msgId, seq}`), and
+  nothing after that.
+  - The relay never tells a sender that a message was delivered, acknowledged or done.
+  - Only the recipient's own signed message back reports an outcome.
+  - `tests/presence.test.ts` sends to an offline machine, lets it connect, take the message and ack it, and checks
+    that the sender heard only that it came online.
+- **Where presence is kept.**
+  - Hosted: one Durable Object for the estate (`PRESENCE`, SQLite storage). It holds:
+    - the live session objects of each machine;
+    - each machine's `lastSeen`;
+    - the sessions to tell.
+    A session object that does not answer is taken as a connection that ended: when it is told a change, and before a
+    query is answered.
+  - Portable: who is connected lives in memory, so it ends with the process. `lastSeen` is kept in
+    `RELAY_DATA_DIR/presence.sqlite` (owner-only), so it survives a restart.
 
 ## Blobs
 
