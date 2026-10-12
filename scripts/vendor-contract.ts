@@ -26,6 +26,8 @@ export const SOURCES = [
 export const VECTORS = ["relay.json", "secret-envelope.json", "estate-record.json", "p256.json"] as const;
 /** The estate record's schema and every schema it reaches by `$ref`: a relay applies a revision only when it is valid. */
 export const SCHEMA_ROOT = "estate-record.schema.json";
+/** Schemas the relay's tests validate its own frames against (no validator is compiled for them). */
+export const FRAME_SCHEMAS = ["relay-frame.schema.json"] as const;
 
 const root = path.resolve(import.meta.dirname, "..");
 const checkout = process.argv[2];
@@ -60,6 +62,11 @@ while (pending.length) {
   writeFileSync(path.join(root, "src/contract/schemas", name), bytes);
   files[`src/contract/schemas/${name}`] = sha256(bytes);
   for (const match of bytes.toString("utf8").matchAll(/"\$ref":\s*"([a-z0-9-]+\.schema\.json)/g)) pending.push(match[1] as string);
+}
+for (const name of FRAME_SCHEMAS) {
+  const bytes = show(`schemas/${name}`);
+  writeFileSync(path.join(root, "src/contract/schemas", name), bytes);
+  files[`src/contract/schemas/${name}`] = sha256(bytes);
 }
 const ajv = new Ajv2020({ allErrors: true, strict: true, code: { source: true } });
 addFormats(ajv);

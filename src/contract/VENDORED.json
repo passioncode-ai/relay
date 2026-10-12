@@ -30,6 +30,7 @@
     "src/contract/schemas/delegation-jwks.schema.json": "4122c310c8b543839788dcbc8fd3be9193fe674a5518f19c952baed62143f333",
     "src/contract/schemas/governance.schema.json": "f8af842c0cb180836722e04182c8b1131b2e23aca9e69d8ded75245c906d5963",
     "src/contract/schemas/registry-models.schema.json": "29a1b3ea8e0d67fe7115c79e14d4f9f103533a634e65bdb8cff6da7db768b5ce",
+    "src/contract/schemas/relay-frame.schema.json": "c658a1c7f0edeee3fac439d3d033a6dcb3751492c0018b11dbcd51795cf1faca",
     "src/contract/estate-record.validate.js": "238692223bdcd51c4db6a8bdda3aa7518d4df6ea9e9f5fb74563f3756174c897"
   }
 }

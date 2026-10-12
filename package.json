@@ -19,6 +19,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "5.20261011.1",
     "@types/node": "24.19.2",
+    "@types/ws": "8.18.1",
     "miniflare": "4.20260730.0",
     "tsx": "4.23.15",
     "typescript": "5.9.3",
@@ -26,6 +27,7 @@
   },
   "dependencies": {
     "ajv": "8.17.1",
-    "ajv-formats": "3.0.1"
+    "ajv-formats": "3.0.1",
+    "ws": "8.22.0"
   }
 }
