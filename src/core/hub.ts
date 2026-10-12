@@ -64,6 +64,7 @@ export class EstateHub<C = unknown> implements SessionHub {
   #armed: number | undefined;
   #drained: (() => void) | undefined;
   #refreshRetryAt: number | undefined;
+  #refreshing: Promise<void> | undefined;
   readonly presence: SessionHub["presence"];
 
   constructor(private readonly deps: HubDeps) {
@@ -149,7 +150,8 @@ export class EstateHub<C = unknown> implements SessionHub {
 
   /** The earliest instant (epoch ms) at which a session or the admission refresh needs the hub; undefined for none. */
   nextWake(): number | undefined {
-    let at = this.deps.refresh?.deadline();
+    // A refresh that is running is not due again: its deadline joins the timer once it has finished.
+    let at = this.#refreshing ? undefined : this.deps.refresh?.deadline();
     if (at !== undefined && this.#refreshRetryAt !== undefined && at < this.#refreshRetryAt) at = this.#refreshRetryAt;
     for (const session of this.#entries.values()) {
       const due = session.nextDeadline();
@@ -160,7 +162,8 @@ export class EstateHub<C = unknown> implements SessionHub {
 
   /**
    * The adapter's timer fired: every due session acts on its deadline, the refresh runs (awaited) if due, and the timer
-   * is armed again for whatever is due next. It never rejects.
+   * is armed again for whatever is due next. One refresh runs at a time: a wake while one runs does not start another.
+   * It never rejects.
    */
   async onWake(): Promise<void> {
     const now = this.deps.now();
@@ -171,14 +174,19 @@ export class EstateHub<C = unknown> implements SessionHub {
     const refresh = this.deps.refresh;
     const due = refresh?.deadline();
     const retryOk = this.#refreshRetryAt === undefined || this.#refreshRetryAt <= now.getTime();
-    if (refresh && due !== undefined && due <= now.getTime() && retryOk) {
-      try {
-        await refresh.run(now);
-        this.#refreshRetryAt = undefined;
-      } catch (error) {
-        this.deps.log?.({ event: "refresh-fault", ...errorFields(error) });
-        this.#refreshRetryAt = now.getTime() + REFRESH_RETRY_MS;
-      }
+    if (refresh && !this.#refreshing && due !== undefined && due <= now.getTime() && retryOk) {
+      this.#refreshing = (async () => {
+        try {
+          await refresh.run(now);
+          this.#refreshRetryAt = undefined;
+        } catch (error) {
+          this.deps.log?.({ event: "refresh-fault", ...errorFields(error) });
+          this.#refreshRetryAt = now.getTime() + REFRESH_RETRY_MS;
+        } finally {
+          this.#refreshing = undefined;
+        }
+      })();
+      await this.#refreshing;
     }
     this.#armed = Number.NaN; // the timer that fired is spent: arm again whatever is due next
     this.#arm();

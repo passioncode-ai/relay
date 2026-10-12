@@ -2,8 +2,9 @@
 
 How this relay runs a `fabric-relay/0.1` session. The protocol is fabric-agent-contract's DEC-0047 (merged at
 `8060254`), on top of DEC-0055's estate record. This page says how the code applies it; the contract's
-[relay specification](https://github.com/passioncode-ai/fabric-agent-contract/blob/main/docs/specification/relay.md)
-is the authority on every rule.
+[relay specification at the pinned commit `51719e4`](https://github.com/passioncode-ai/fabric-agent-contract/blob/51719e4/docs/specification/relay.md)
+is the authority on every rule. Iteration node RP re-pins the relay to `464c45e` (fabric-agent-contract #70), and
+this link moves with the pin.
 
 ## The contract, vendored
 
@@ -40,7 +41,8 @@ is the authority on every rule.
   A read never rolls back to an older revision than the one held. A revision file that does not parse is refused by the
   contract like any other bad revision, so the revisions before it still hold. A read that fails is logged
   `estate-unreadable` and loses no event: the hub keeps what it held, which after a wake is nothing, and then admits
-  nobody (fail closed). Re-checking open sessions when the set changes is iteration node A-4's.
+  nobody (fail closed). Presence follows that empty set: while no estate is held, a machine coming or going is not
+  announced and a query answers nothing; `lastSeen` is still written, and answers again once a read succeeds. Re-checking open sessions when the set changes is iteration node A-4's.
 
 ## One session
 

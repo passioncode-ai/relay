@@ -252,3 +252,20 @@ test("an admission refresh that rejects is logged refresh-fault, and the next wa
   await r.hub.onWake();
   assert.equal(runs, 2);
 });
+
+test("an admission refresh runs once at a time: a timer that fires while one runs does not start another", async () => {
+  let runs = 0;
+  let finish: (() => void) | undefined;
+  const r = rig({ refresh: { deadline: () => T0 + 1000, run: () => { runs += 1; return new Promise<void>((resolve) => { finish = resolve; }); } } });
+  const a = r.open();
+  r.at(1000);
+  const first = r.hub.onWake(); // the refresh is due and starts
+  assert.equal(runs, 1);
+  await a.frame({ type: "ping", id: "p" }); // an event arms the timer while the refresh runs
+  assert.notEqual(r.armed.at(-1), T0 + 1000, "the running refresh's deadline is not armed again");
+  await r.hub.onWake(); // the timer fires anyway
+  assert.equal(runs, 1, "no second refresh while one runs");
+  finish!();
+  await first;
+  assert.equal(runs, 1);
+});

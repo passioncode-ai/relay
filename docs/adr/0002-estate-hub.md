@@ -41,7 +41,9 @@ connections was a separate store reached by message:
    per-session state a later change adds goes into the record**, never into a hub-side map keyed by connection (A's
    admitted revision, D's token bucket, C's delivered seq).
 3. **A relay fault is closed through the session**: `RelaySession.fault()` logs `session-fault`, sends `error internal`,
-   then closes 1011. The hub calls it when handling a frame rejects; adapters never close 1011 themselves.
+   then closes 1011. The hub calls it when handling a frame rejects. An adapter closes 1011 itself only where there is
+   no session to fault, and then the same way: the hosted hub, waking with a socket that carries no session record,
+   sends that socket `error internal` and then closes it 1011 (`RelayEstate`'s rebuild).
 4. **Each build hosts exactly one hub per estate.**
    - Hosted: one hibernating Durable Object, `RelayEstate` (`src/cloudflare/estate.ts`), with the WebSocket
      Hibernation API and one alarm. The per-connection `RelaySession` and the `RelayPresence` objects are deleted.

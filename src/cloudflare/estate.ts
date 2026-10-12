@@ -136,7 +136,10 @@ export class RelayEstate extends DurableObject<Env> {
   /**
    * Every event first rebuilds the hub's set, then, if the object holds no estate (a fresh object after a wake), reads
    * it. The read never fails the event: a frame still reaches its session, an alarm still ticks, a close still ends the
-   * session and is announced, a wake still delivers. With no usable estate the sessions admit nobody.
+   * session and writes its `lastSeen`, a wake still delivers. While no estate is held the relay admits nobody, and
+   * presence follows that empty set: a machine coming or going is not announced, and a query answers nothing, until a
+   * later read succeeds (the next connection, or the next event after a wake). The held revision is not kept across a
+   * wake; persisting it, with the contract pin it was verified under, is iteration node A-7's (canvas S2).
    */
   async #ready(reload = false): Promise<void> {
     this.#rebuild();

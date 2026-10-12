@@ -34,6 +34,35 @@ export async function startWorker(extra: Partial<MiniflareOptions> = {}): Promis
   return mf;
 }
 
+/**
+ * A Worker whose log lines (one JSON object per line on workerd's stdout) the test can read: `logs()` answers every
+ * line seen so far, `events(name)` those with that event.
+ */
+export async function startLoggedWorker(extra: Partial<MiniflareOptions> = {}) {
+  const lines: Array<Record<string, any>> = [];
+  let buffered = "";
+  const mf = await startWorker({
+    ...extra,
+    handleRuntimeStdio: (stdout: NodeJS.ReadableStream) => {
+      stdout.on("data", (chunk: Buffer) => {
+        buffered += chunk.toString("utf8");
+        for (let i = buffered.indexOf("\n"); i >= 0; i = buffered.indexOf("\n")) {
+          const line = buffered.slice(0, i);
+          buffered = buffered.slice(i + 1);
+          const start = line.indexOf("{");
+          if (start < 0) continue;
+          try {
+            lines.push(JSON.parse(line.slice(start)));
+          } catch {
+            // not one of the relay's lines
+          }
+        }
+      });
+    },
+  } as Partial<MiniflareOptions>);
+  return { mf, logs: () => lines, events: (name: string) => lines.filter((line) => line.event === name) };
+}
+
 /** Opens a session through the Worker and collects what the relay sends until it closes. */
 export async function session(mf: Miniflare, relayOrigin = "http://relay.test") {
   const response = await mf.dispatchFetch(`${relayOrigin}/v1/connect`, { headers: { upgrade: "websocket", "sec-websocket-protocol": "fabric-relay.v1" } });

@@ -58,3 +58,13 @@ test("a message queued for a machine that is offline is delivered when it connec
   for (const c of [a, b]) c.ws.close(1000, "done");
   await remove();
 });
+
+test("structural: a mailbox wakes the hub in the background (ctx.waitUntil), so a sender's accepted never waits on another machine's delivery", async () => {
+  // Measured: a hub that is slow or failing cannot be produced from outside the Worker without a test hook, so the
+  // seam is checked in the source; with the wake awaited instead, this test fails.
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync("src/cloudflare/mailbox.ts", "utf8");
+  const append = source.slice(source.indexOf("async append("), source.indexOf("async pending("));
+  assert.match(append, /this\.ctx\.waitUntil\(this\.env\.ESTATE\.get\(/);
+  assert.doesNotMatch(append, /await this\.env\.ESTATE/);
+});
