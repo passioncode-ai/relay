@@ -3,7 +3,7 @@
 // same for sessions and for blob routes.
 //
 // - RELAY_ORIGIN set: parsed with the URL parser; it must be a bare origin (no path beyond "/", no query, fragment or
-//   credentials) and https:, or http: on a loopback literal. The answer is `url.origin`: the host lowercased, the
+//   credentials) and https:, or http: on a loopback literal served from a loopback-literal RELAY_HOST. The answer is `url.origin`: the host lowercased, the
 //   default port dropped. Anything else refuses to start, naming the problem (the value is not a secret).
 // - RELAY_ORIGIN unset: allowed only when RELAY_HOST is a loopback literal; the origin is http://<host>:<bound port>,
 //   computed after listen, and the relay is local-only.
@@ -51,6 +51,9 @@ export function relayOrigin(raw: string | undefined, host: string): OriginRule {
   if (url.protocol === "http:") {
     if (!isLoopbackLiteral(url.hostname)) {
       return { ok: false, reason: `RELAY_ORIGIN ${url.origin} is http:// but not on a loopback literal (127.0.0.0/8 or [::1]); use https://` };
+    }
+    if (!isLoopbackLiteral(host)) {
+      return { ok: false, reason: `RELAY_ORIGIN ${url.origin} is http:// but RELAY_HOST ${host} is not a loopback literal: other machines could reach a local-only origin; use https://` };
     }
   } else if (url.protocol !== "https:") {
     return { ok: false, reason: `RELAY_ORIGIN must be https:// (it is ${url.protocol})` };

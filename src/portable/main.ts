@@ -49,25 +49,32 @@ const address = server.address() as AddressInfo;
 log({ event: "listening", host: address.address, port: address.port, origin: served.origin, version: VERSION, protocol: PROTOCOL });
 
 // SIGTERM or SIGINT: a graceful stop (every session closed 1001, lastSeen written, stores closed), exit 0. Past the
-// ceiling it exits 1 with stop-timeout; a second signal exits 1 at once with stop-forced. A supervisor must wait longer
-// than the ceiling before it kills (systemd TimeoutStopSec=20, launchd ExitTimeOut=20).
+// ceiling it exits 1 with stop-timeout; a stop that fails exits 1 with stop-failed. A second signal from the operator (a
+// second Ctrl-C) exits 1 at once with stop-forced. The same signal again within REPEAT_MS of the first is not a second
+// press: `npm run portable` forwards the terminal's SIGINT, so node sees one Ctrl-C twice. A supervisor must wait
+// longer than the ceiling before it kills (systemd TimeoutStopSec=20, launchd ExitTimeOut=20).
 const GRACE_MS = 5000;
 const CEILING_MS = GRACE_MS + 5000;
-let signalled = false;
+const REPEAT_MS = 1000;
+let first: { signal: string; at: number } | undefined;
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
-    if (signalled) {
+    if (first) {
+      if (first.signal === signal && Date.now() - first.at < REPEAT_MS) {
+        log({ event: "signal-repeated", signal });
+        return;
+      }
       log({ event: "stop-forced", signal });
       process.exit(1);
     }
-    signalled = true;
+    first = { signal, at: Date.now() };
     log({ event: "stopping", signal });
     setTimeout(() => {
       log({ event: "stop-timeout", ms: CEILING_MS });
       process.exit(1);
     }, CEILING_MS).unref();
     served.stop({ graceMs: GRACE_MS }).then(() => process.exit(0), (error: unknown) => {
-      log({ event: "stop-timeout", error: (error as Error).name });
+      log({ event: "stop-failed", error: (error as Error)?.name ?? "Error", message: String((error as Error)?.message ?? error).slice(0, 200) });
       process.exit(1);
     });
   });

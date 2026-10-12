@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-Release iteration 1, wave 1 (relay#8 and its stacked pull request):
+Release iteration 1, wave 1 (relay#8 and #9). Ids: `RLY-0n` are this repository's backlog rows; `RLY-0nn` are
+release iteration 1's inventory findings (Project Observatory `docs/runs/2026-10-12-release-iteration-1/`).
 
 - **One estate hub per estate** (RLY-012, RLY-014, RLY-013; [ADR-0002](docs/adr/0002-estate-hub.md)).
   - A session is a serializable `SessionRecord`.
@@ -13,14 +14,21 @@ Release iteration 1, wave 1 (relay#8 and its stacked pull request):
 - **Hosted.** The Worker runs one hibernating Durable Object per estate, `RelayEstate`, on the WebSocket Hibernation
   API with one alarm.
   - The per-connection session objects and the presence object are gone.
-  - The bindings are `ESTATE`, `MAILBOX` and `BLOBS`, and the migrations collapse to one `v1`. Nothing was ever deployed.
-  - Durable Object names go through `contextKey()` (RLY-08).
+  - The bindings are `ESTATE`, `MAILBOX` and `BLOBS`, and the migrations collapse to one `v1`. No deployment is
+    known; F-8 checks `wrangler deployments list` before the first deploy.
+  - Durable Object names and R2 keys come from `src/cloudflare/context.ts` (RLY-08). Mailbox objects are renamed
+    `<context>/<kid>` (were `<kid>`).
+  - An estate that cannot be read after a hibernation wake loses no event; the hub then admits nobody.
 - **Portable.**
   - **One origin** for sessions and blob routes (RLY-017): `RELAY_ORIGIN` is normalised or refused, with exit 2.
-    `http://` is allowed only on a loopback literal. When it is unset, the origin is the loopback host and the
-    bound port.
+    `http://` is allowed only on a loopback literal, served from a loopback-literal `RELAY_HOST`. When it is unset,
+    the origin is the loopback host and the bound port.
+  - **Changed:** a non-loopback `RELAY_HOST` without `RELAY_ORIGIN` now refuses to start (exit 2); it used to
+    default to an http origin.
   - **Graceful stop** on SIGTERM/SIGINT (RLY-010): every session is closed 1001, `lastSeen` is written, the
-    SQLite stores are closed, and the process exits 0.
+    SQLite stores are closed, and the process exits 0. One Ctrl-C through `npm run portable` is one press.
+- **Changed: open sessions follow the latest estate read**, for sends and presence (each connection used to keep
+  the read it opened with). A read never rolls back to an older revision.
 - **One log line shape** in both builds: `{at, service, runtime, event, …}`.
 - **Tests.**
   - The Worker test is split per module.
@@ -52,5 +60,5 @@ Each entry is one merged pull request in this repository.
     server.
   - `GET /healthz`.
   - Blob stores that verify the SHA-256 digest of every blob on write and on read.
-  - Every session refused with a not-ready refusal until fabric-agent-contract DEC-0047 was accepted (it was, at #53
+  - Every session refused with `protocol-not-ready` until fabric-agent-contract DEC-0047 was accepted (it was, at #53
     `8060254`).
