@@ -1,0 +1,458 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fabric.passioncode.ai/agent-contract/0.1.0/schemas/estate-record.schema.json",
+  "title": "Estate record (estate-record/1)",
+  "description": "DEC-0055: one revision of one person's estate — the passkeys that sign it, the machines with their device keys and a certificate of each hub key, the packages placed per machine, secret placements by reference, share grants and revocations. Each revision names its parent's digest and is signed by a passkey assertion (WebAuthn Level 3) over a challenge derived from its digest. The digest is SHA-256 over RFC 8785 of this document without digest and signature. docs/specification/estate-record.md.",
+  "type": "object",
+  "required": [
+    "schema",
+    "estate",
+    "revision",
+    "issuedAt",
+    "validUntil",
+    "authorities",
+    "machines",
+    "digest",
+    "signature"
+  ],
+  "properties": {
+    "schema": {
+      "const": "estate-record/1"
+    },
+    "estate": {
+      "$ref": "activity-common.schema.json#/$defs/opaqueId",
+      "description": "The estate's opaque id, the same in every revision (FAC-SEM-072). Never a person's name or address."
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "description": "1 for the first revision; each later one is its parent's plus one (FAC-SEM-072). The device check-in's records.estateRecord.revision names it (DEC-0053)."
+    },
+    "parent": {
+      "$ref": "common.schema.json#/$defs/sha256",
+      "description": "The parent revision's digest; absent exactly in revision 1."
+    },
+    "issuedAt": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "validUntil": {
+      "$ref": "common.schema.json#/$defs/timestamp",
+      "description": "At most 30 days after issuedAt (the first organization server's target architecture v4 §7, Freshness; FAC-SEM-072)."
+    },
+    "authorities": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "$ref": "#/$defs/authority"
+      },
+      "description": "The passkeys that may sign the next revision. Revision 1 is signed by one the enrolling machine pinned; every later revision by one its parent lists (key continuity)."
+    },
+    "machines": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/machine"
+      }
+    },
+    "publisherKeys": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/edKey"
+      },
+      "description": "The publisher keys the estate's machines pin, by kid: a placement names one, and verifyPackage verifies the placed package's publisher signature under it (DEC-0051)."
+    },
+    "shareGrants": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "allOf": [
+          {
+            "$ref": "governance.schema.json#/$defs/grant"
+          },
+          {
+            "type": "object",
+            "required": [
+              "principalKind",
+              "audience"
+            ],
+            "properties": {
+              "principalKind": {
+                "const": "external"
+              },
+              "audience": true
+            }
+          }
+        ]
+      },
+      "description": "Share grants (DEC-0037, DEC-0039): standing grants to a person or organization outside the estate, each a delegation grant with an audience."
+    },
+    "revocations": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "$ref": "#/$defs/revocation"
+      },
+      "description": "Every revocation of this estate so far: a revision keeps its parent's (FAC-SEM-072), and lists nothing it revokes (FAC-SEM-076)."
+    },
+    "digest": {
+      "$ref": "common.schema.json#/$defs/sha256",
+      "description": "SHA-256 over the RFC 8785 form of this document without digest and signature (DEC-0043, DEC-0055)."
+    },
+    "signature": {
+      "$ref": "#/$defs/assertion"
+    },
+    "extensions": {
+      "$ref": "common.schema.json#/$defs/extensions"
+    }
+  },
+  "additionalProperties": false,
+  "if": {
+    "type": "object",
+    "properties": {
+      "revision": {
+        "const": 1
+      }
+    },
+    "required": [
+      "revision"
+    ]
+  },
+  "then": {
+    "type": "object",
+    "properties": {
+      "parent": false
+    }
+  },
+  "else": {
+    "type": "object",
+    "required": [
+      "parent"
+    ],
+    "properties": {
+      "parent": true
+    }
+  },
+  "$defs": {
+    "b64url": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "description": "base64url without padding."
+    },
+    "authority": {
+      "type": "object",
+      "required": [
+        "credentialId",
+        "alg",
+        "publicKey",
+        "rpId",
+        "origins"
+      ],
+      "properties": {
+        "credentialId": {
+          "$ref": "#/$defs/b64url",
+          "type": "string",
+          "maxLength": 1366,
+          "description": "The WebAuthn credential id, as the authenticator returned it. No user handle is recorded."
+        },
+        "alg": {
+          "enum": [
+            "ES256",
+            "EdDSA"
+          ],
+          "description": "The credential's algorithm: ES256 is COSE -7, EdDSA is COSE -8 with Ed25519."
+        },
+        "publicKey": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "kty",
+                "crv",
+                "x",
+                "y"
+              ],
+              "properties": {
+                "kty": {
+                  "const": "EC"
+                },
+                "crv": {
+                  "const": "P-256"
+                },
+                "x": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"
+                },
+                "y": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "kty",
+                "crv",
+                "x"
+              ],
+              "properties": {
+                "kty": {
+                  "const": "OKP"
+                },
+                "crv": {
+                  "const": "Ed25519"
+                },
+                "x": {
+                  "$ref": "delegation-jwks.schema.json#/properties/keys/items/properties/x"
+                }
+              },
+              "additionalProperties": false
+            }
+          ],
+          "description": "The credential public key as a public JWK: a P-256 point valid by SEC 1 §3.2.2, or an Ed25519 key not of small order (FAC-SEM-073)."
+        },
+        "rpId": {
+          "type": "string",
+          "maxLength": 253,
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$",
+          "description": "The RP ID of the dedicated signing credential (v4 §7: sign.<domain>, never the sign-in one)."
+        },
+        "origins": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 256,
+            "pattern": "^https://[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$"
+          },
+          "description": "The pinned origins a signing ceremony may run in; clientDataJSON.origin is one of them."
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "alg": {
+                "const": "ES256"
+              }
+            },
+            "required": [
+              "alg"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "publicKey": {
+                "type": "object",
+                "properties": {
+                  "kty": {
+                    "const": "EC"
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "type": "object",
+            "properties": {
+              "publicKey": {
+                "type": "object",
+                "properties": {
+                  "kty": {
+                    "const": "OKP"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "edKey": {
+      "allOf": [
+        {
+          "$ref": "delegation-jwks.schema.json#/properties/keys/items"
+        },
+        {
+          "type": "object",
+          "required": [
+            "alg"
+          ],
+          "properties": {
+            "alg": true
+          }
+        }
+      ],
+      "description": "A public Ed25519 JWK naming its alg (EdDSA), as the estate's key set publishes it (DEC-0039); ES256 joins when Fabric records its decision D2."
+    },
+    "machine": {
+      "type": "object",
+      "required": [
+        "id",
+        "deviceKeys"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "activity-common.schema.json#/$defs/opaqueId",
+          "description": "The device id it enrolled with (DEC-0031); no human name."
+        },
+        "deviceKeys": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "items": {
+            "$ref": "device-enrollment.schema.json#/$defs/deviceKey"
+          },
+          "description": "DEC-0053's device keys by role: exactly one <id>#sig, and at most one <id>#kem (FAC-SEM-073)."
+        },
+        "hubKey": {
+          "$ref": "#/$defs/edKey",
+          "description": "The certificate of the hub key on this machine: the passkey-signed record binds this kid and public key to this machine. A delegation verifier trusts a token's kid only when a current revision certifies it."
+        },
+        "packages": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "required": [
+              "agentRef",
+              "digest",
+              "publisherKid"
+            ],
+            "properties": {
+              "agentRef": {
+                "$ref": "fabric-package.schema.json#/$defs/agentRef"
+              },
+              "digest": {
+                "$ref": "common.schema.json#/$defs/sha256",
+                "description": "The placed version's package digest (DEC-0050)."
+              },
+              "publisherKid": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "description": "The publisher key, in publisherKeys, its publisher signature verifies under."
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "secrets": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "required": [
+              "agentRef",
+              "slot",
+              "from"
+            ],
+            "properties": {
+              "agentRef": {
+                "$ref": "fabric-package.schema.json#/$defs/agentRef"
+              },
+              "slot": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+                "description": "The package's secret slot by name (DEC-0050 secrets[]). A reference, never a value (DEC-0013, FAC-SEM-075)."
+              },
+              "from": {
+                "$ref": "activity-common.schema.json#/$defs/opaqueId",
+                "description": "The machine, in this record, whose vault holds the slot; the value travels sealed to this machine's #kem key, never in the record."
+              }
+            },
+            "additionalProperties": false
+          },
+          "description": "Secret placements: where a slot of a package placed here is filled from. No member can hold a value."
+        }
+      },
+      "additionalProperties": false
+    },
+    "revocation": {
+      "type": "object",
+      "required": [
+        "kind",
+        "ref",
+        "revokedAt"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "authority",
+            "machine",
+            "device-key",
+            "hub-key",
+            "publisher-key",
+            "package",
+            "grant"
+          ]
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1366,
+          "description": "What is revoked, in its kind's own form: a credential id, a machine id, a kid, a package digest or a grant's meta.id."
+        },
+        "revokedAt": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        }
+      },
+      "additionalProperties": false
+    },
+    "assertion": {
+      "type": "object",
+      "required": [
+        "format",
+        "credentialId",
+        "alg",
+        "authenticatorData",
+        "clientDataJSON",
+        "sig"
+      ],
+      "properties": {
+        "format": {
+          "const": "webauthn-assertion"
+        },
+        "credentialId": {
+          "$ref": "#/$defs/b64url",
+          "type": "string",
+          "maxLength": 1366
+        },
+        "alg": {
+          "enum": [
+            "ES256",
+            "EdDSA"
+          ]
+        },
+        "authenticatorData": {
+          "$ref": "#/$defs/b64url",
+          "type": "string",
+          "minLength": 50,
+          "maxLength": 4096
+        },
+        "clientDataJSON": {
+          "$ref": "#/$defs/b64url",
+          "type": "string",
+          "maxLength": 8192
+        },
+        "sig": {
+          "$ref": "#/$defs/b64url",
+          "type": "string",
+          "maxLength": 200,
+          "description": "ES256: an ASN.1 DER Ecdsa-Sig-Value (WebAuthn Level 3 §6.5.5, RFC 3279 §2.2.3); EdDSA: the 64-byte Ed25519 signature."
+        }
+      },
+      "additionalProperties": false,
+      "description": "A WebAuthn Level 3 assertion response, without the user handle: the passkey signed authenticatorData ‖ SHA-256(clientDataJSON), and clientDataJSON's challenge is derived from the record's digest (estateChallenge)."
+    }
+  }
+}

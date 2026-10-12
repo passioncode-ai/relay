@@ -3,8 +3,13 @@
     "target": "ES2023",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2023", "DOM"],
-    "types": ["node"],
+    "lib": [
+      "ES2023",
+      "DOM"
+    ],
+    "types": [
+      "node"
+    ],
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
@@ -12,5 +17,11 @@
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true
   },
-  "include": ["src/core/**/*.ts", "src/portable/**/*.ts", "tests/**/*.ts"]
+  "include": [
+    "src/core/**/*.ts",
+    "src/portable/**/*.ts",
+    "tests/**/*.ts",
+    "src/contract/**/*.ts",
+    "scripts/**/*.ts"
+  ]
 }

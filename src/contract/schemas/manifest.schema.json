@@ -1,0 +1,486 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fabric.passioncode.ai/agent-contract/0.1.0/schemas/manifest.schema.json",
+  "title": "Fabric agent provider manifest",
+  "type": "object",
+  "required": [
+    "contractVersion",
+    "provider",
+    "capabilities"
+  ],
+  "properties": {
+    "contractVersion": {
+      "const": "0.1.0"
+    },
+    "provider": {
+      "type": "object",
+      "required": [
+        "id",
+        "revision",
+        "contentHash",
+        "createdAt",
+        "createdBy",
+        "name",
+        "identity",
+        "supportedContractVersions"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/uri"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "contentHash": {
+          "$ref": "common.schema.json#/$defs/sha256"
+        },
+        "createdAt": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "createdBy": {
+          "$ref": "common.schema.json#/$defs/uri"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "identity": {
+          "type": "object",
+          "required": [
+            "subject",
+            "method"
+          ],
+          "properties": {
+            "subject": {
+              "$ref": "common.schema.json#/$defs/uri"
+            },
+            "method": {
+              "enum": [
+                "tls",
+                "oauth2",
+                "signed-manifest",
+                "local-install"
+              ]
+            },
+            "proofUri": {
+              "$ref": "common.schema.json#/$defs/uri"
+            }
+          },
+          "additionalProperties": false
+        },
+        "supportedContractVersions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/semver"
+          }
+        },
+        "extensions": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/extensions"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "https://fabric.passioncode.ai/agent-contract/extensions/service/0.1": {
+                  "type": "object",
+                  "required": [
+                    "descriptor"
+                  ],
+                  "properties": {
+                    "descriptor": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9-]{1,62}\\.[a-z][a-z0-9-]{0,31}$"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "inputSchema",
+          "outputSchema",
+          "effect",
+          "idempotency",
+          "dataClasses",
+          "profile"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "common.schema.json#/$defs/uri"
+          },
+          "name": {
+            "$ref": "common.schema.json#/$defs/capabilityName"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "inputSchema": {
+            "$ref": "common.schema.json#/$defs/uri"
+          },
+          "outputSchema": {
+            "$ref": "common.schema.json#/$defs/uri"
+          },
+          "effect": {
+            "$ref": "common.schema.json#/$defs/effectClass"
+          },
+          "idempotency": {
+            "enum": [
+              "required",
+              "supported",
+              "none"
+            ]
+          },
+          "dataClasses": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "common.schema.json#/$defs/dataClass"
+            }
+          },
+          "profile": {
+            "$ref": "#/$defs/profile"
+          },
+          "extensions": {
+            "allOf": [
+              {
+                "$ref": "common.schema.json#/$defs/extensions"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "https://fabric.passioncode.ai/agent-contract/extensions/interop/0.1": {
+                    "$ref": "interop-capability.schema.json"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "extensions": {
+      "$ref": "common.schema.json#/$defs/extensions"
+    },
+    "costPresets": {
+      "type": "array",
+      "description": "DEC-0037: fixed options a launcher offers for a task whose cost varies (L2).",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "capability",
+          "label",
+          "maxUsd"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+          },
+          "capability": {
+            "$ref": "common.schema.json#/$defs/capabilityName"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "maxUsd": {
+            "type": "number",
+            "minimum": 0
+          },
+          "paidTools": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "depth": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "probe": {
+      "type": "object",
+      "required": [
+        "id",
+        "inputFixture",
+        "outputSchema",
+        "timeoutMs",
+        "sideEffectCeiling",
+        "assertions"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9.-]+$"
+        },
+        "inputFixture": {
+          "$ref": "common.schema.json#/$defs/uri"
+        },
+        "outputSchema": {
+          "$ref": "common.schema.json#/$defs/uri"
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300000
+        },
+        "sideEffectCeiling": {
+          "enum": [
+            "none",
+            "draft"
+          ]
+        },
+        "assertions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "profile": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "protocolRevision",
+            "connection",
+            "requiredFeatures",
+            "probes"
+          ],
+          "properties": {
+            "kind": {
+              "const": "mcp"
+            },
+            "protocolRevision": {
+              "const": "2026-07-28"
+            },
+            "connection": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "mode",
+                    "url"
+                  ],
+                  "properties": {
+                    "mode": {
+                      "const": "streamable-http"
+                    },
+                    "url": {
+                      "$ref": "common.schema.json#/$defs/uri"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "mode",
+                    "executableRef",
+                    "args"
+                  ],
+                  "properties": {
+                    "mode": {
+                      "const": "stdio"
+                    },
+                    "executableRef": {
+                      "$ref": "common.schema.json#/$defs/uri"
+                    },
+                    "args": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "scope": {
+                      "description": "DEC-0044, LC-19. Where a host starts this stdio server. project: for the sessions of a project that binds it, from that project's MCP configuration. on-demand (the default when absent): for the run that binds it, stopped when that run ends. session: in every session; spelled so that FAC-SEM-056 refuses it by name.",
+                      "enum": [
+                        "project",
+                        "on-demand",
+                        "session"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "requiredFeatures": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^(tool|resource|prompt):[^:]+$"
+              }
+            },
+            "probes": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/probe"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "protocolVersion",
+            "agentCardUrl",
+            "skillIds",
+            "binding",
+            "probes"
+          ],
+          "properties": {
+            "kind": {
+              "const": "a2a"
+            },
+            "protocolVersion": {
+              "const": "1.0"
+            },
+            "agentCardUrl": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https://"
+            },
+            "skillIds": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "binding": {
+              "enum": [
+                "REST",
+                "JSON-RPC",
+                "gRPC"
+              ]
+            },
+            "streaming": {
+              "type": "boolean"
+            },
+            "pushNotifications": {
+              "type": "boolean"
+            },
+            "probes": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/probe"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "profileVersion",
+            "runnerKind",
+            "executableRef",
+            "args",
+            "inputMode",
+            "resultUriTemplate",
+            "probes"
+          ],
+          "properties": {
+            "kind": {
+              "const": "local-runner"
+            },
+            "profileVersion": {
+              "const": "fabric-local-runner/0.1"
+            },
+            "runnerKind": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9./-]+$"
+            },
+            "executableRef": {
+              "$ref": "common.schema.json#/$defs/uri"
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "inputMode": {
+              "enum": [
+                "stdin-json",
+                "file-json",
+                "argument-file"
+              ]
+            },
+            "resultUriTemplate": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cancellation": {
+              "enum": [
+                "signal",
+                "command",
+                "unsupported"
+              ]
+            },
+            "heartbeatSeconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 300
+            },
+            "probes": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/probe"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

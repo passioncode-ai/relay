@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fabric.passioncode.ai/agent-contract/0.1.0/schemas/device-root-certification.schema.json",
+  "title": "Root certification and delegation revocations (fabric-device/0.1, DEC-0053)",
+  "description": "When a device's installer pins offline root keys, the organization's root key from enrollment carries a certification chaining to one of them: signed by a pinned key, or by a delegation key whose certificate (at most 30 days) a pinned key signed and whose id is not on the pinned key's revocation list (FAC-SEM-069). Each document is signed over the RFC 8785 form of itself without `signature` (DEC-0043).",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/certification"
+    },
+    {
+      "$ref": "#/$defs/revocations"
+    }
+  ],
+  "$defs": {
+    "certification": {
+      "type": "object",
+      "required": [
+        "protocol",
+        "kind",
+        "org",
+        "subject",
+        "issuedAt",
+        "notAfter",
+        "signature"
+      ],
+      "properties": {
+        "protocol": {
+          "$ref": "device-common.schema.json#/$defs/protocol"
+        },
+        "kind": {
+          "const": "root-certification"
+        },
+        "org": {
+          "$ref": "device-common.schema.json#/$defs/org"
+        },
+        "subject": {
+          "$ref": "device-common.schema.json#/$defs/signingKey",
+          "description": "The organization's root key it certifies: the enrollment response's policyRootKey."
+        },
+        "issuedAt": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "notAfter": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "delegation": {
+          "$ref": "#/$defs/delegation"
+        },
+        "signature": {
+          "$ref": "device-common.schema.json#/$defs/signature"
+        }
+      },
+      "additionalProperties": false
+    },
+    "delegation": {
+      "type": "object",
+      "required": [
+        "keyId",
+        "alg",
+        "publicKey",
+        "notBefore",
+        "notAfter",
+        "signature"
+      ],
+      "properties": {
+        "keyId": {
+          "$ref": "activity-common.schema.json#/$defs/opaqueId"
+        },
+        "alg": {
+          "enum": [
+            "ed25519",
+            "es256"
+          ]
+        },
+        "publicKey": {
+          "type": "string"
+        },
+        "notBefore": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "notAfter": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "signature": {
+          "$ref": "device-common.schema.json#/$defs/signature",
+          "description": "By a pinned offline root key, over the RFC 8785 form of this object without signature."
+        }
+      },
+      "additionalProperties": false,
+      "if": {
+        "type": "object",
+        "properties": {
+          "alg": {
+            "const": "es256"
+          }
+        },
+        "required": [
+          "alg"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "publicKey": {
+            "$ref": "device-common.schema.json#/$defs/p256Key"
+          }
+        }
+      },
+      "else": {
+        "type": "object",
+        "properties": {
+          "publicKey": {
+            "$ref": "device-key-set.schema.json#/$defs/rawKey"
+          }
+        }
+      },
+      "description": "A delegation key's certificate, signed by a pinned offline root key; it lives at most 30 days (FAC-SEM-069)."
+    },
+    "revocations": {
+      "type": "object",
+      "required": [
+        "protocol",
+        "kind",
+        "revision",
+        "issuedAt",
+        "revoked",
+        "signature"
+      ],
+      "properties": {
+        "protocol": {
+          "$ref": "device-common.schema.json#/$defs/protocol"
+        },
+        "kind": {
+          "const": "delegation-revocations"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "issuedAt": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "revoked": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "activity-common.schema.json#/$defs/opaqueId"
+          }
+        },
+        "signature": {
+          "$ref": "device-common.schema.json#/$defs/signature"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
