@@ -39,29 +39,29 @@ function harness(admission: () => AdmissionResult = () => admitted(), nonce = re
 }
 const auth = (over: Record<string, unknown> = {}) => JSON.stringify({ ...relay.auth.frame, ...over });
 
-test("hello names the protocol, this relay and a nonce; every frame sent is schema-valid", () => {
+test("hello names the protocol, this relay and a nonce; every frame sent is schema-valid", async () => {
   const h = harness();
   assert.equal(h.sent[0]?.type, "hello");
   assert.deepEqual([h.sent[0]?.protocol, h.sent[0]?.relay, h.sent[0]?.nonce], ["fabric-relay/0.1", relay.auth.context.relay, relay.auth.context.nonce]);
-  h.session.receive(auth());
-  h.session.receive(JSON.stringify({ v: 1, type: "ping", id: "p1" }));
-  h.session.receive(JSON.stringify({ v: 1, type: "send", id: "s1", to: "x#sig", msgId: "m", body: "AA", ttl: 60 }));
-  h.session.receive(JSON.stringify({ v: 1, type: "teleport", id: "t1" }));
+  await h.session.receive(auth());
+  await h.session.receive(JSON.stringify({ v: 1, type: "ping", id: "p1" }));
+  await h.session.receive(JSON.stringify({ v: 1, type: "send", id: "s1", to: "x#sig", msgId: "m", body: "AA", ttl: 60 }));
+  await h.session.receive(JSON.stringify({ v: 1, type: "teleport", id: "t1" }));
   for (const frame of h.sent) assert.ok(frameValid(frame), `${frame.type}: ${JSON.stringify(frameValid.errors)}`);
 });
 
-test("admits the vector machine and welcomes it with the verified revision and the empty delta head", () => {
+test("admits the vector machine and welcomes it with the verified revision and the empty delta head", async () => {
   const h = harness();
-  h.session.receive(auth());
+  await h.session.receive(auth());
   assert.equal(h.session.state, "admitted");
   assert.equal(h.session.kid, relay.auth.frame.kid);
   assert.deepEqual(h.sent[1], { v: 1, id: "r2", type: "welcome", session: "s-1", estateRevision: 3, deltaHead: EMPTY_DELTA_HEAD, heartbeat: null });
   assert.equal(h.closed.length, 0);
 });
 
-test("admits the same machine when the set holds its key as DEC-0053's SEC 1 octets", () => {
+test("admits the same machine when the set holds its key as DEC-0053's SEC 1 octets", async () => {
   const h = harness(() => admitted(new Map([[relay.auth.frame.kid, Buffer.from(relay.machineKeyOctets, "base64")]])));
-  h.session.receive(auth());
+  await h.session.receive(auth());
   assert.equal(h.session.state, "admitted");
 });
 
@@ -78,9 +78,9 @@ const refusals: Array<[string, () => ReturnType<typeof harness>, string, string,
   ["text that is not a frame", () => harness(), "not json", "unauthenticated", 4401],
 ];
 for (const [name, make, frame, code, close] of refusals) {
-  test(`refuses ${name}: error ${code}, close ${close}`, () => {
+  test(`refuses ${name}: error ${code}, close ${close}`, async () => {
     const h = make();
-    h.session.receive(frame);
+    await h.session.receive(frame);
     assert.equal(h.sent.at(-1)?.type, "error");
     assert.equal(h.sent.at(-1)?.code, code);
     assert.ok(frameValid(h.sent.at(-1)), JSON.stringify(frameValid.errors));
@@ -89,38 +89,38 @@ for (const [name, make, frame, code, close] of refusals) {
   });
 }
 
-test("a second auth on one connection is a replay: the nonce admits once", () => {
+test("a second auth on one connection is a replay: the nonce admits once", async () => {
   const h = harness();
-  h.session.receive(auth());
-  h.session.receive(auth());
+  await h.session.receive(auth());
+  await h.session.receive(auth());
   assert.equal(h.sent.at(-1)?.code, "replay");
   assert.deepEqual(h.closed.map((c) => c.code), [4401]);
 });
 
-test("after welcome: ping gets pong, a known frame not served yet a named refusal, an unknown type an error; the session stays open", () => {
+test("after welcome: ping gets pong, a known frame not served yet a named refusal, an unknown type an error; the session stays open", async () => {
   const h = harness();
-  h.session.receive(auth());
-  h.session.receive(JSON.stringify({ v: 1, type: "ping", id: "p1" }));
+  await h.session.receive(auth());
+  await h.session.receive(JSON.stringify({ v: 1, type: "ping", id: "p1" }));
   assert.deepEqual(h.sent.at(-1), { v: 1, id: "p1", type: "pong" });
-  h.session.receive(JSON.stringify({ v: 1, type: "send", id: "s1" }));
+  await h.session.receive(JSON.stringify({ v: 1, type: "send", id: "s1" }));
   assert.deepEqual([h.sent.at(-1)?.code, h.sent.at(-1)?.replyTo], ["internal", "s1"]);
-  h.session.receive(JSON.stringify({ v: 1, type: "teleport", id: "t1" }));
+  await h.session.receive(JSON.stringify({ v: 1, type: "teleport", id: "t1" }));
   assert.equal(h.sent.at(-1)?.code, "unknown-type");
-  h.session.receive("{");
+  await h.session.receive("{");
   assert.equal(h.sent.at(-1)?.code, "unknown-type");
   assert.equal(h.closed.length, 0);
 });
 
-test("closes a binary frame with 1003 and a frame over 1 MiB with 1009", () => {
+test("closes a binary frame with 1003 and a frame over 1 MiB with 1009", async () => {
   const binary = harness();
-  binary.session.receive(new Uint8Array([1, 2, 3]));
+  await binary.session.receive(new Uint8Array([1, 2, 3]));
   assert.deepEqual(binary.closed.map((c) => c.code), [1003]);
   const large = harness();
-  large.session.receive(JSON.stringify({ v: 1, type: "ping", id: "x".repeat(1_048_577) }));
+  await large.session.receive(JSON.stringify({ v: 1, type: "ping", id: "x".repeat(1_048_577) }));
   assert.deepEqual([large.sent.at(-1)?.code, large.closed.map((c) => c.code)], ["too-large", [1009]]);
 });
 
-test("refuses a machine silent past the 10 s auth deadline, and closes an admitted one after 90 s of silence", () => {
+test("refuses a machine silent past the 10 s auth deadline, and closes an admitted one after 90 s of silence", async () => {
   const slow = harness();
   slow.advance(10_000);
   slow.session.tick();
@@ -129,18 +129,18 @@ test("refuses a machine silent past the 10 s auth deadline, and closes an admitt
   slow.session.tick();
   assert.deepEqual([slow.sent.at(-1)?.code, slow.closed.map((c) => c.code)], ["unauthenticated", [4401]]);
   const idle = harness();
-  idle.session.receive(auth());
+  await idle.session.receive(auth());
   idle.advance(90_000);
   idle.session.tick();
   assert.equal(idle.closed.length, 0);
   idle.advance(1);
   idle.session.tick();
   assert.deepEqual(idle.closed.map((c) => c.code), [1001]);
-  idle.session.receive(auth()); // a closed session ignores everything
+  await idle.session.receive(auth()); // a closed session ignores everything
   assert.equal(idle.closed.length, 1);
 });
 
-test("AdmissionHolder: holds what the contract accepted, refuses the rest unchanged, fails closed at the window's end", () => {
+test("AdmissionHolder: holds what the contract accepted, refuses the rest unchanged, fails closed at the window's end", async () => {
   let at = new Date(estate.cases[0].trust.at);
   const holder = new AdmissionHolder({ pinned: [estate.keys.passkeyEs256.authority], schemaValid: (r) => validateEstateRecord(r) as boolean, now: () => at });
   assert.deepEqual(holder.current(), { ok: false, refusal: "no-record" });

@@ -88,17 +88,16 @@ export class RelaySession extends DurableObject<Env> {
       },
     );
     server.addEventListener("message", (event) => {
-      try {
-        session.receive(event.data as string | ArrayBuffer);
-      } catch (error) {
+      session.receive(event.data as string | ArrayBuffer).catch((error: unknown) => {
         // A fault in the relay is reported and closes the connection as an internal error, never silently.
         log({ event: "session-fault", error: (error as Error).name, message: String((error as Error).message).slice(0, 200) });
         if (timer) clearInterval(timer);
         server.close(1011, "internal error");
-      }
+      });
     });
     server.addEventListener("close", () => {
       if (timer) clearInterval(timer);
+      session.disconnected();
     });
     session.open();
     timer = setInterval(() => session.tick(), TICK_MS);

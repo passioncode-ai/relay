@@ -8,6 +8,7 @@
     "src/contract/p256.ts": "c9f14c21ee7c21afcc84171bc576c878d5647dd40b80c7f847cf3859caeaea55",
     "src/contract/package-rules.ts": "1d241e046686197c63f2398d789e03d5612245f03c79ec3413ce67e02792ab22",
     "src/contract/relay.ts": "8db93c4b5746d20d8213062e01ac55501d581ad743eae7b010e7b7da3c1bfff4",
+    "src/contract/relay-rules.ts": "90f4809cc471d54dd3ed29a9b7a6b8e46a44ca46f1e665a41acee12eca877f8a",
     "src/contract/secret-envelope.ts": "d5c642fa7196c9ec2b1fa6f9d4304215fa9557a5672ecd4fb1357a7c5633e83d",
     "src/contract/secret-shape.ts": "4b0c27a4f94c2416f3df845f79632434988e24c24514774bf8d70e4a0894ebdc",
     "src/contract/webauthn.ts": "d281562d3b8f2c832a04c8171892e924a4c8e8ba3adeb7b465a88670d9e6d68e",

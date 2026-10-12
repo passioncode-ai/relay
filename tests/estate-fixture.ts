@@ -10,20 +10,28 @@ const vectors = JSON.parse(readFileSync(path.resolve(import.meta.dirname, "vecto
 const sha = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest();
 
 export const MACHINE_KID = "m-4c1e#sig";
+export const SECOND_KID = "m-9a07#sig";
 export type Passkey = "EdDSA" | "ES256";
 
 export interface Estate {
   record: Record<string, any>;
   pinned: unknown[];
   machine: { kid: string; privateKey: KeyObject; jwk: Record<string, string> };
+  second: { kid: string; privateKey: KeyObject; jwk: Record<string, string> };
+}
+
+function key(kid: string) {
+  const pair = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const jwk = pair.publicKey.export({ format: "jwk" }) as Record<string, string>;
+  const octets = Buffer.concat([Buffer.from([4]), Buffer.from(jwk.x!, "base64url"), Buffer.from(jwk.y!, "base64url")]).toString("base64");
+  return { kid, privateKey: pair.privateKey, jwk, octets };
 }
 
 export function estate(now = new Date(), passkey: Passkey = "EdDSA"): Estate {
-  const machine = generateKeyPairSync("ec", { namedCurve: "P-256" });
-  const jwk = machine.publicKey.export({ format: "jwk" }) as Record<string, string>;
-  const octets = Buffer.concat([Buffer.from([4]), Buffer.from(jwk.x!, "base64url"), Buffer.from(jwk.y!, "base64url")]).toString("base64");
+  const first = key(MACHINE_KID), second = key(SECOND_KID);
   const { digest: _digest, signature: _signature, ...body } = structuredClone(vectors.cases[0].record) as Record<string, any>;
-  for (const m of body.machines) for (const key of m.deviceKeys) if (key.kid === MACHINE_KID) key.publicKey = octets;
+  // m-9a07's #sig is Ed25519 in the vectors; a relay participant signs ES256 (DEC-0047 item 8), so both become P-256.
+  for (const m of body.machines) for (const k of m.deviceKeys) for (const own of [first, second]) if (k.kid === own.kid) Object.assign(k, { alg: "es256", publicKey: own.octets });
   body.issuedAt = new Date(now.getTime() - 3_600_000).toISOString().replace(/\.\d{3}Z$/, "Z");
   body.validUntil = new Date(now.getTime() + 86_400_000).toISOString().replace(/\.\d{3}Z$/, "Z");
   const authority = passkey === "EdDSA" ? vectors.keys.passkeyEdDSA.authority : vectors.keys.passkeyEs256.authority;
@@ -37,5 +45,6 @@ export function estate(now = new Date(), passkey: Passkey = "EdDSA"): Estate {
   const signature = sign(passkey === "EdDSA" ? null : "sha256", Buffer.concat([authData, sha(clientData)]), signer);
   const record = { ...body, digest, signature: { format: "webauthn-assertion", credentialId: authority.credentialId, alg: passkey,
     authenticatorData: authData.toString("base64url"), clientDataJSON: clientData.toString("base64url"), sig: signature.toString("base64url") } };
-  return { record, pinned: [authority], machine: { kid: MACHINE_KID, privateKey: machine.privateKey, jwk } };
+  const strip = ({ kid, privateKey, jwk }: ReturnType<typeof key>) => ({ kid, privateKey, jwk });
+  return { record, pinned: [authority], machine: strip(first), second: strip(second) };
 }
