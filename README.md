@@ -6,7 +6,7 @@ It ships as two builds of one runtime-neutral core:
 - **Hosted:** a Cloudflare Worker with Durable Objects and R2. PassionCode.ai runs it.
 - **Portable:** one Node server for self-hosting.
 
-Its wire protocol belongs to [fabric-agent-contract](https://github.com/passioncode-ai/fabric-agent-contract), not to this code. The protocol is **DEC-0047**, still a draft. Until DEC-0047 is accepted, both builds answer health and refuse every session.
+Its wire protocol belongs to [fabric-agent-contract](https://github.com/passioncode-ai/fabric-agent-contract), not to this code: **DEC-0047** (`fabric-relay/0.1`), with the contract's reference code vendored at the commit [`fabric-contract.lock.json`](fabric-contract.lock.json) pins. A machine opens a session on `wss://<relay>/v1/connect` and is admitted only from a verified estate record (DEC-0055); how is in [docs/protocol/sessions.md](docs/protocol/sessions.md).
 
 ## Quick start for a new teammate
 
@@ -16,10 +16,12 @@ Its wire protocol belongs to [fabric-agent-contract](https://github.com/passionc
 - `RELAY_DATA_DIR` (required)
 - `RELAY_HOST` (default `127.0.0.1`)
 - `RELAY_PORT` (default `8787`)
+- `RELAY_ORIGIN` (the public origin machines sign; default `http://RELAY_HOST:RELAY_PORT`, local machines only)
 
-None of the three is a secret.
+None of them is a secret. The estate the relay admits from (the pinned passkeys and the record's revisions) is kept
+under `RELAY_DATA_DIR/estate/` in the portable build and under `estate/` in the R2 bucket in the hosted one.
 
-**MCP.** None: the relay is not an MCP server. Fabric's remote surfaces reach it as a client (Fabric ADR-0088). The only call that proves it is up today is `GET /healthz`.
+**MCP.** None: the relay is not an MCP server. Fabric's remote surfaces reach it as a client (Fabric ADR-0088). `GET /healthz` proves it is up; a session proves admission works.
 
 **Develop.**
 

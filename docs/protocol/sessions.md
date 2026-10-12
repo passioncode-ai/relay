@@ -1,0 +1,84 @@
+# Sessions and admission (RLY-02)
+
+How this relay runs a `fabric-relay/0.1` session. The protocol is fabric-agent-contract's DEC-0047 (merged at
+`8060254`), on top of DEC-0055's estate record. This page says how the code applies it; the contract's
+[relay specification](https://github.com/passioncode-ai/fabric-agent-contract/blob/main/docs/specification/relay.md)
+is the authority on every rule.
+
+## The contract, vendored
+
+- `fabric-contract.lock.json` pins one contract commit.
+- `scripts/vendor-contract.ts <checkout>` copies, byte for byte, the closure of the contract's `src/relay.ts` and
+  `src/secret-envelope.ts` into `src/contract/`. It also copies the contract's vectors into `tests/vectors/`.
+- The script records each file's SHA-256 in `src/contract/VENDORED.json`. `tests/contract.test.ts` refuses a drifted
+  file or a manifest of another commit, and runs the vectors.
+- The relay never re-implements a check the contract owns.
+- **The estate-record schema validator is compiled ahead of time.** Ajv 8.17.1 generates standalone code, and esbuild
+  bundles it into `src/contract/estate-record.validate.js`. The reason: Ajv compiles with `new Function`, which a
+  Worker forbids. The bundled module has no `require` and loads the same way under Node and in workerd.
+- **Moving the pin** is one change:
+  1. update the lock;
+  2. re-run the script;
+  3. run `npm run check`.
+
+## Admission
+
+- **From a verified record only.** A relay admits only from an estate record it has verified (`src/core/admission.ts`,
+  over the contract's `relayAdmissionSet`):
+  - the relay holds the estate's first passkeys, pinned when it was set up for the estate;
+  - each revision is applied only when it is valid against the bundled schema and the contract's
+    `verifyEstateRecord` accepts it against the revision held (revision 1: against the pinned passkeys);
+  - revisions are offered in order, and the first one refused stops the walk;
+  - a refused revision changes nothing.
+- **Fails closed.** With no verified record, or once the held revision's window has ended, the relay admits nobody
+  (`not-admitted`, close 4403).
+- **Where the estate is kept.** It is never in this repository:
+  - hosted: R2 `estate/pinned.json` and `estate/revisions/<n>.json`;
+  - portable: `RELAY_DATA_DIR/estate/pinned.json` and `revisions/<n>.json`.
+- **When it is read.** Each connection reads the estate when it opens.
+
+## One session
+
+`src/core/session.ts` runs the session the same way in both builds:
+
+1. **`hello`** carries `{protocol, relay, nonce, time}`. The nonce is 32 random bytes, used once.
+2. **`auth`** must arrive within 10 s. It is checked by the contract's `admit` against the admission set, keyed by
+   `kid`.
+3. **`welcome`** answers a successful `auth` with `{session, estateRevision, deltaHead, heartbeat: null}`.
+   - `estateRevision` is the verified revision.
+   - Until DEC-0054 defines the revocation delta, `deltaHead` is `{sequence: 0, sha256: <SHA-256 of no bytes>}`.
+4. **Refusals.** A failed `auth` is answered with a named `error`, then a close:
+   - `unauthenticated`, `unsupported-alg`, `not-yet-valid`, `protocol-unsupported` and `replay` close with 4401;
+   - `not-admitted` closes with 4403.
+5. **After `welcome`:**
+   - `ping` is answered with `pong`;
+   - a known frame type not yet served (messages, blobs, presence, deltas: RLY-03, RLY-06) gets `error` `internal`
+     "not served by this relay version yet";
+   - an unknown type gets `unknown-type`, and the session stays open.
+6. **Transport closes:**
+   - a binary frame closes with 1003;
+   - a frame over 1 MiB gets `too-large`, then 1009;
+   - 90 s of silence closes with 1001;
+   - a fault while handling a frame is logged as `session-fault` and closes with 1011.
+
+The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and the subprotocol `fabric-relay.v1`
+(`upgradeRefusal`). A plain request gets 426, and a missing subprotocol gets 400.
+
+## The two adapters
+
+- **Hosted.** One Durable Object per connection (`SESSIONS.newUniqueId()`) holds a `WebSocketPair`. The relay origin
+  signed into `relay-auth/1` is the request's origin.
+- **Portable.** The `ws` package (8.22.0) upgrades the connection and selects `fabric-relay.v1`. The origin is
+  `RELAY_ORIGIN`, which must be the public `https://` URL behind a TLS terminator.
+  - If `RELAY_ORIGIN` is unset, the relay uses `http://RELAY_HOST:RELAY_PORT` and logs `origin-defaulted`. Only a
+    local machine can then authenticate.
+
+## Found on the way
+
+The contract's reference verifiers passed a `KeyObject` inside `node:crypto`'s `verify` options. A Worker throws on
+that.
+- `verifyEs256` and `openEnvelope` threw outright.
+- The ES256 passkey path of `webauthn.ts` turned the throw into `bad-signature`.
+- Fixed upstream in fabric-agent-contract#59: the key is now passed as a JWK with `format: "jwk"`.
+- `tests/worker.test.ts` admits a machine in workerd from revisions signed by both test passkeys. With the old form
+  restored, the ES256 case fails.
