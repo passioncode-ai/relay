@@ -7,6 +7,7 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promise
 import { join } from "node:path";
 import type { EstateSource } from "../core/admission.ts";
 import type { BlobStore } from "../core/digest.ts";
+import type { BlobIndex, BlobMeta } from "../core/blobs.ts";
 import { isDigest } from "../core/digest.ts";
 
 export class FsBlobStore implements BlobStore {
@@ -31,6 +32,10 @@ export class FsBlobStore implements BlobStore {
       await rm(temporary, { force: true });
       throw error;
     }
+  }
+
+  async delete(digest: string): Promise<void> {
+    await rm(this.#path(digest), { force: true });
   }
 
   async read(digest: string): Promise<Uint8Array | null> {
@@ -70,6 +75,36 @@ export class FsEstateSource implements EstateSource {
       throw error;
     }
     return Promise.all(names.map(async (name) => JSON.parse(await readFile(join(this.#root, "revisions", name), "utf8")) as unknown));
+  }
+}
+
+/** Each blob's recipients and fetches: one owner-only JSON file per digest under <dataDir>/blobs/index/. */
+export class FsBlobIndex implements BlobIndex {
+  readonly #root: string;
+  constructor(dataDir: string) {
+    this.#root = join(dataDir, "blobs", "index");
+  }
+  #path(digest: string): string {
+    if (!isDigest(digest)) throw new TypeError("not a sha256 digest");
+    return join(this.#root, `${digest.slice("sha256:".length)}.json`);
+  }
+  async get(digest: string): Promise<BlobMeta | null> {
+    try {
+      return JSON.parse(await readFile(this.#path(digest), "utf8")) as BlobMeta;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+  }
+  async put(digest: string, meta: BlobMeta): Promise<void> {
+    await mkdir(this.#root, { recursive: true, mode: 0o700 });
+    const target = this.#path(digest);
+    const temporary = `${target}.${randomBytes(6).toString("hex")}.tmp`;
+    await writeFile(temporary, JSON.stringify(meta), { mode: 0o600, flag: "wx" });
+    await rename(temporary, target);
+  }
+  async delete(digest: string): Promise<void> {
+    await rm(this.#path(digest), { force: true });
   }
 }
 // #endregion portable-store

@@ -4,8 +4,8 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { after, before, test } from "node:test";
 import { Miniflare } from "miniflare";
-import { sign as signBytes } from "node:crypto";
-import { relayAuthSigningInput } from "../src/contract/relay.ts";
+import { createHash, sign as signBytes } from "node:crypto";
+import { relayAuthSigningInput, relayBlobSigningInput, relayRequestHeader } from "../src/contract/relay.ts";
 import { estate } from "./estate-fixture.ts";
 
 const SCRIPT = "dist/worker/worker.js";
@@ -139,3 +139,29 @@ test("two machines of the record exchange a message through the Worker: send, ac
   await bucket.delete(["estate/pinned.json", "estate/revisions/1.json"]);
 });
 
+
+test("a blob goes through the Worker: PUT by one machine of the record, GET by its recipient, then it is gone", async () => {
+  const e = estate(new Date(), "ES256");
+  const bucket = await mf.getR2Bucket("BLOBS");
+  await bucket.put("estate/pinned.json", JSON.stringify(e.pinned));
+  await bucket.put("estate/revisions/1.json", JSON.stringify(e.record));
+  const bytes = new TextEncoder().encode("sealed envelope bytes");
+  const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+  const header = (m: { kid: string; privateKey: import("node:crypto").KeyObject }, method: "PUT" | "GET") => {
+    const iat = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+    const recipients = [e.second.kid];
+    const sig = signBytes("sha256", Buffer.from(relayBlobSigningInput({ relay: "http://relay.test", method, digest, recipients, iat })), { key: m.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
+    return relayRequestHeader({ alg: "ES256", kid: m.kid, recipients, iat, sig });
+  };
+  const put = await mf.dispatchFetch(`http://relay.test/v1/blobs/${digest}`, { method: "PUT", body: bytes, headers: { "Fabric-Relay-Request": header(e.machine, "PUT") } });
+  assert.equal(put.status, 201, await put.text());
+  const got = await mf.dispatchFetch(`http://relay.test/v1/blobs/${digest}`, { headers: { "Fabric-Relay-Request": header(e.second, "GET") } });
+  assert.equal(got.status, 200);
+  assert.deepEqual(new Uint8Array(await got.arrayBuffer()), bytes);
+  assert.equal(await bucket.get(digest), null);
+  assert.equal(await bucket.get(`blobindex/${digest}`), null);
+  const stranger = await mf.dispatchFetch(`http://relay.test/v1/blobs/${digest}`, { headers: { "Fabric-Relay-Request": header(e.machine, "GET") } });
+  assert.equal(stranger.status, 403);
+  await stranger.arrayBuffer();
+  await bucket.delete(["estate/pinned.json", "estate/revisions/1.json"]);
+});

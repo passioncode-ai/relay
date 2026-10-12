@@ -55,5 +55,658 @@
       "sig": "g45nvIWaEnI-HqTNztTa1x8LytlalPkhFt9v4UsyHCCwlSz_9r7Mu5FwDW4TMpwCAnIvOm0Ey_p0JqjQfGJ2Nw"
     },
     "expect": "unsupported-alg"
+  },
+  "blobRequest": {
+    "about": "Fabric-Relay-Request (DEC-0047 item 8, annotated 2026-10-12): base64url of RFC 8785 {alg, kid, recipients, iat, sig}; sig is ES256 over relayBlobSigningInput. Keys are one-off (private halves discarded); `admitted` is the relay's current admission set by kid; `stored` the blob's recipients when the relay holds it.",
+    "relay": "https://relay.example",
+    "digest": "sha256:abababababababababababababababababababababababababababababababab",
+    "now": "2026-10-12T12:00:30Z",
+    "cases": [
+      {
+        "name": "a PUT by an admitted machine to admitted recipients",
+        "method": "PUT",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiQ242QWg5ZEVjTEh4RHhWQ3VoT2o0eHlVVDEzSWNxSG5MNlZFcGxFV2dNajRxNnQ5SW80ZHVTOGxSc0dscXpLWXNNczYwc1N0c1dNUXUyVDY5RDhBOXcifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": true,
+          "kid": "urn:fabric:machine:a#sig",
+          "recipients": [
+            "urn:fabric:machine:b#sig"
+          ],
+          "repeat": false
+        }
+      },
+      {
+        "name": "the same PUT again with the same recipients: no change",
+        "method": "PUT",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiQ242QWg5ZEVjTEh4RHhWQ3VoT2o0eHlVVDEzSWNxSG5MNlZFcGxFV2dNajRxNnQ5SW80ZHVTOGxSc0dscXpLWXNNczYwc1N0c1dNUXUyVDY5RDhBOXcifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "stored": {
+          "recipients": [
+            "urn:fabric:machine:b#sig"
+          ]
+        },
+        "expect": {
+          "ok": true,
+          "kid": "urn:fabric:machine:a#sig",
+          "recipients": [
+            "urn:fabric:machine:b#sig"
+          ],
+          "repeat": true
+        }
+      },
+      {
+        "name": "a PUT of a held blob with another recipient list",
+        "method": "PUT",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiQ242QWg5ZEVjTEh4RHhWQ3VoT2o0eHlVVDEzSWNxSG5MNlZFcGxFV2dNajRxNnQ5SW80ZHVTOGxSc0dscXpLWXNNczYwc1N0c1dNUXUyVDY5RDhBOXcifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "stored": {
+          "recipients": [
+            "urn:fabric:machine:a#sig",
+            "urn:fabric:machine:b#sig"
+          ]
+        },
+        "expect": {
+          "ok": false,
+          "status": 409,
+          "code": "recipients-mismatch"
+        }
+      },
+      {
+        "name": "a GET by a stored recipient with the stored list",
+        "method": "GET",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmIjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiSUhPdjd4a0NVOV9kWmNGSjM1ZUJzTnRlcEEtaTRidUtqeUZEdFpaUld2Z0VHT2RCdVJsYU9vMWtnT0M5Z3dGTDRNRFFGbzQ2aWNBa3lBakI1cWtrWncifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "stored": {
+          "recipients": [
+            "urn:fabric:machine:b#sig"
+          ]
+        },
+        "expect": {
+          "ok": true,
+          "kid": "urn:fabric:machine:b#sig",
+          "recipients": [
+            "urn:fabric:machine:b#sig"
+          ],
+          "repeat": false
+        }
+      },
+      {
+        "name": "a GET by a machine that is not a recipient",
+        "method": "GET",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoicjA4Yjg3enhlbzBDT3lUeUc5X1pXV09QYzMxQ2lZcUhzMmhZMW5kLVpROTRnbTdaVk1LaEc3YXVrT3Fjc0RJSy05TDVUZlJjSC1IaW1OczJteFBFOFEifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "stored": {
+          "recipients": [
+            "urn:fabric:machine:b#sig"
+          ]
+        },
+        "expect": {
+          "ok": false,
+          "status": 403,
+          "code": "not-admitted"
+        }
+      },
+      {
+        "name": "a GET whose signed list differs from the stored one",
+        "method": "GET",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmIjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6YSNzaWciXSwic2lnIjoiYjRROGJUV0t1TUgyQldKbk9PM0xSbTQyRGR6QmFFaFNYU3hHd1NiM2Q0UF8xYWRJTzhiM3dfZmlqV3NkVTVfUUpLMDRHMlpsRGZ3NWU1SDJoTEk4WVEifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "stored": {
+          "recipients": [
+            "urn:fabric:machine:b#sig"
+          ]
+        },
+        "expect": {
+          "ok": false,
+          "status": 403,
+          "code": "not-admitted"
+        }
+      },
+      {
+        "name": "a GET by a recipient no longer admitted (revoked)",
+        "method": "GET",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmIjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiSUhPdjd4a0NVOV9kWmNGSjM1ZUJzTnRlcEEtaTRidUtqeUZEdFpaUld2Z0VHT2RCdVJsYU9vMWtnT0M5Z3dGTDRNRFFGbzQ2aWNBa3lBakI1cWtrWncifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          }
+        },
+        "stored": {
+          "recipients": [
+            "urn:fabric:machine:b#sig"
+          ]
+        },
+        "expect": {
+          "ok": false,
+          "status": 403,
+          "code": "not-admitted"
+        }
+      },
+      {
+        "name": "a GET of a blob the relay does not hold",
+        "method": "GET",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmIjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiSUhPdjd4a0NVOV9kWmNGSjM1ZUJzTnRlcEEtaTRidUtqeUZEdFpaUld2Z0VHT2RCdVJsYU9vMWtnT0M5Z3dGTDRNRFFGbzQ2aWNBa3lBakI1cWtrWncifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 403,
+          "code": "not-admitted"
+        }
+      },
+      {
+        "name": "a PUT naming a recipient outside the admission set",
+        "method": "PUT",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiQ242QWg5ZEVjTEh4RHhWQ3VoT2o0eHlVVDEzSWNxSG5MNlZFcGxFV2dNajRxNnQ5SW80ZHVTOGxSc0dscXpLWXNNczYwc1N0c1dNUXUyVDY5RDhBOXcifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 403,
+          "code": "unknown-recipient"
+        }
+      },
+      {
+        "name": "a PUT by a machine outside the admission set",
+        "method": "PUT",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiQ242QWg5ZEVjTEh4RHhWQ3VoT2o0eHlVVDEzSWNxSG5MNlZFcGxFV2dNajRxNnQ5SW80ZHVTOGxSc0dscXpLWXNNczYwc1N0c1dNUXUyVDY5RDhBOXcifQ",
+        "admitted": {
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 403,
+          "code": "not-admitted"
+        }
+      },
+      {
+        "name": "a signer whose admitted key is Ed25519",
+        "method": "PUT",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiQ242QWg5ZEVjTEh4RHhWQ3VoT2o0eHlVVDEzSWNxSG5MNlZFcGxFV2dNajRxNnQ5SW80ZHVTOGxSc0dscXpLWXNNczYwc1N0c1dNUXUyVDY5RDhBOXcifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": "30kUR00Jfo9TasjWkc-tnONNb_xfjooRXxmGk8r3w-w"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 401,
+          "code": "unsupported-alg"
+        }
+      },
+      {
+        "name": "alg other than ES256",
+        "method": "PUT",
+        "header": "eyJhbGciOiJFZERTQSIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiaVpELUUyYy14a0hHTHhXWEhZSXZTS1IyNktTTlQ1T2xnNkhMSkd4aUxEc2FTbmlwd0RKNVZiUTBRam5QaDg4MXlWNG14S3ViMFJGSTF5NFM4QXlpNFEifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 401,
+          "code": "unsupported-alg"
+        }
+      },
+      {
+        "name": "a signature made for another digest",
+        "method": "PUT",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiTlBwVXpXaTRTQWc0M1lUM2h4VjBJblFiZFpsWDc5N1paaDRrU2I1WWpseVBHZEliZndjNUw0Q0RyUXBuLVpXTXpfejlaX2g4QnY5V19sbEdSbmhVTXcifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 401,
+          "code": "unauthenticated"
+        }
+      },
+      {
+        "name": "a GET signature used for a PUT",
+        "method": "PUT",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiTklGLW5MMkM1SDNfY0R0VXRlWGEyR2NvWElTOE5qRXRZQ0J4MUFTTjN5ejdDUlAtYjAxODVHbk0wR1dNcV9LcHFvaXFfQzNPLS1hTG1fUE5FSTdOeVEifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 401,
+          "code": "unauthenticated"
+        }
+      },
+      {
+        "name": "iat 61 s old",
+        "method": "PUT",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTE6NTk6MjlaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoic01ScGtLaWtVOFdOY0tsVTgybkdONVVLVEhMMHRTNG5BOVU5SjhyUGVZUFF0ZnFOMEFYS2w3bjNfeHBHbWNMdVNzZ1JOemdDX3NjWHNGdVpLQXZRLVEifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 401,
+          "code": "unauthenticated"
+        }
+      },
+      {
+        "name": "iat 61 s ahead",
+        "method": "PUT",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDE6MzFaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoia0ZiMjBRTC14NENCUzIyUjZUV2pNNnR1eEVVWEotRkRNRHRHbURpLXM2Mzc2X0M4emg3UHd0WUhsMF9wZ29HLTg5SGt5blRXaHdHWGlHQWlqcVlyd2cifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 401,
+          "code": "not-yet-valid"
+        }
+      },
+      {
+        "name": "iat that matches the pattern and is no date",
+        "method": "PUT",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTMtNDVUMjU6NjE6NjFaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoicEhlanVzVkJYV0hRaGYtSVJ2WGhyaUlfU0d6OU5lQkpodi10Q3NmS1MtQkJzanVYQ29FcXFmOV90WWthNW9fb0dsOU1TdE9CVTkzdmN4cndQbURhcFEifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 400,
+          "code": "malformed"
+        }
+      },
+      {
+        "name": "padding on the base64url",
+        "method": "PUT",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiQ242QWg5ZEVjTEh4RHhWQ3VoT2o0eHlVVDEzSWNxSG5MNlZFcGxFV2dNajRxNnQ5SW80ZHVTOGxSc0dscXpLWXNNczYwc1N0c1dNUXUyVDY5RDhBOXcifQ==",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 400,
+          "code": "malformed"
+        }
+      },
+      {
+        "name": "a non-canonical last base64url character",
+        "method": "PUT",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiQ242QWg5ZEVjTEh4RHhWQ3VoT2o0eHlVVDEzSWNxSG5MNlZFcGxFV2dNajRxNnQ5SW80ZHVTOGxSc0dscXpLWXNNczYwc1N0c1dNUXUyVDY5RDhBOXcifR",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 400,
+          "code": "malformed"
+        }
+      },
+      {
+        "name": "JSON that is not RFC 8785 (members out of order)",
+        "method": "PUT",
+        "header": "eyJzaWciOiJDbjZBaDlkRWNMSHhEeFZDdWhPajR4eVVUMTNJY3FIbkw2VkVwbEVXZ01qNHE2dDlJbzRkdVM4bFJzR2xxektZc01zNjBzU3RzV01RdTJUNjlEOEE5dyIsImtpZCI6InVybjpmYWJyaWM6bWFjaGluZTphI3NpZyIsImFsZyI6IkVTMjU2IiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwiaWF0IjoiMjAyNi0xMC0xMlQxMjowMDowMFoifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 400,
+          "code": "malformed"
+        }
+      },
+      {
+        "name": "an extra member",
+        "method": "PUT",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwibm90ZSI6IngiLCJyZWNpcGllbnRzIjpbInVybjpmYWJyaWM6bWFjaGluZTpiI3NpZyJdLCJzaWciOiJDbjZBaDlkRWNMSHhEeFZDdWhPajR4eVVUMTNJY3FIbkw2VkVwbEVXZ01qNHE2dDlJbzRkdVM4bFJzR2xxektZc01zNjBzU3RzV01RdTJUNjlEOEE5dyJ9",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 400,
+          "code": "malformed"
+        }
+      },
+      {
+        "name": "no recipients",
+        "method": "PUT",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6W10sInNpZyI6ImNIQXR4ZnZaYmZMTDNScjlGcGhfMUMwbEpoT2I2aHNGQzJ2Q2RlYnNQUzhmTmNEY1RhdGhodDdzcmFTZHNSb2cxbTMxZ29YZ2pLOWVqbDFKeDZtaXNnIn0",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 400,
+          "code": "malformed"
+        }
+      },
+      {
+        "name": "65 recipients",
+        "method": "PUT",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6bTAjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0xI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMiNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTMjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm00I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTYjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm03I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptOCNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTkjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0xMCNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTExI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMTIjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0xMyNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTE0I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMTUjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0xNiNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTE3I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMTgjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0xOSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTIwI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMjEjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0yMiNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTIzI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMjQjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0yNSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTI2I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMjcjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0yOCNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTI5I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMzAjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0zMSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTMyI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMzMjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0zNCNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTM1I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMzYjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0zNyNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTM4I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMzkjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm00MCNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTQxI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNDIjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm00MyNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTQ0I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNDUjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm00NiNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTQ3I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNDgjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm00OSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTUwI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNTEjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm01MiNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTUzI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNTQjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm01NSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTU2I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNTcjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm01OCNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTU5I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNjAjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm02MSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTYyI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNjMjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm02NCNzaWciXSwic2lnIjoiYVNKNFc2eUFSaDNINE05a3lPRHRXajJpTmFQN0RPTkNKa0Y2cGlPeVU4RzktRGdKSUlmVTZHZ0VGZE9IdHlfY1lGWUlCcU5XUXFoci1rbnQ5WTJnQncifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 400,
+          "code": "malformed"
+        }
+      },
+      {
+        "name": "a recipient that is a #kem key",
+        "method": "PUT",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNrZW0iXSwic2lnIjoiUUF0QXZvbi1sTEo0Z0ZUZndEVzB1SlhYZ3B6NGxmYW9ZOWNhVzJMY294V0xJcHMtVFlnWGRweWRuY0pFNGM5MXFteUF4Rzc0Mk5jajk2c2prbk5MTmcifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 400,
+          "code": "malformed"
+        }
+      },
+      {
+        "name": "a header over 8192 bytes",
+        "method": "PUT",
+        "header": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 431,
+          "code": "too-large"
+        }
+      },
+      {
+        "name": "no header at all",
+        "method": "PUT",
+        "header": "",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
+            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
+            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 400,
+          "code": "malformed"
+        }
+      }
+    ]
   }
 }

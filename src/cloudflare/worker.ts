@@ -7,6 +7,7 @@ import { DurableObject } from "cloudflare:workers";
 import validateEstateRecord from "../contract/estate-record.validate.js";
 import { loadAdmission, type EstateSource } from "../core/admission.ts";
 import type { BlobStore } from "../core/digest.ts";
+import type { BlobIndex, BlobMeta } from "../core/blobs.ts";
 import { CONNECT_PATH, handle, SUBPROTOCOL, upgradeRefusal } from "../core/relay.ts";
 import { MAILBOX_LIMIT, type AppendResult, type DeliveryHub, type MailboxStore, type MailEntry } from "../core/mailbox.ts";
 import { RelaySession as Session } from "../core/session.ts";
@@ -30,6 +31,24 @@ export class R2BlobStore implements BlobStore {
   async read(digest: string): Promise<Uint8Array | null> {
     const object = await this.bucket.get(digest);
     return object ? new Uint8Array(await object.arrayBuffer()) : null;
+  }
+  async delete(digest: string): Promise<void> {
+    await this.bucket.delete(digest);
+  }
+}
+
+/** Each blob's recipients and fetches, as `blobindex/<digest>` objects beside the blobs. */
+export class R2BlobIndex implements BlobIndex {
+  constructor(private readonly bucket: R2Bucket) {}
+  async get(digest: string): Promise<BlobMeta | null> {
+    const object = await this.bucket.get(`blobindex/${digest}`);
+    return object ? (JSON.parse(await object.text()) as BlobMeta) : null;
+  }
+  async put(digest: string, meta: BlobMeta): Promise<void> {
+    await this.bucket.put(`blobindex/${digest}`, JSON.stringify(meta));
+  }
+  async delete(digest: string): Promise<void> {
+    await this.bucket.delete(`blobindex/${digest}`);
   }
 }
 
@@ -209,7 +228,15 @@ export default {
       // One Durable Object per connection: a session holds nothing another connection may read.
       return env.SESSIONS.get(env.SESSIONS.newUniqueId()).fetch(request);
     }
-    return handle(request, { runtime: "cloudflare", blobs: new R2BlobStore(env.BLOBS) });
+    return handle(request, {
+      runtime: "cloudflare",
+      blobs: new R2BlobStore(env.BLOBS),
+      blobAccess: {
+        origin: new URL(request.url).origin,
+        index: new R2BlobIndex(env.BLOBS),
+        admission: async () => (await loadAdmission(new R2EstateSource(env.BLOBS), (record) => validateEstateRecord(record), () => new Date())).holder.current(),
+      },
+    });
   },
 } satisfies ExportedHandler<Env>;
 // #endregion cloudflare-adapter

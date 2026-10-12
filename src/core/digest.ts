@@ -27,6 +27,8 @@ export interface BlobStore {
   /** Stores bytes the caller has already verified against `digest`; use putVerified, never this directly. */
   write(digest: string, bytes: Uint8Array): Promise<void>;
   read(digest: string): Promise<Uint8Array | null>;
+  /** Forgets a blob (retention); a blob it does not hold is not an error. */
+  delete(digest: string): Promise<void>;
 }
 
 export async function putVerified(store: BlobStore, digest: string, bytes: Uint8Array): Promise<void> {
@@ -53,6 +55,9 @@ export class MemoryBlobStore implements BlobStore {
   }
   async read(digest: string): Promise<Uint8Array | null> {
     return this.#blobs.get(digest)?.slice() ?? null;
+  }
+  async delete(digest: string): Promise<void> {
+    this.#blobs.delete(digest);
   }
 }
 // #endregion digest

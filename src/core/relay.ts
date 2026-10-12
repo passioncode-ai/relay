@@ -8,18 +8,22 @@
 // record (admission.ts). `upgradeRefusal` is the one check both adapters run before upgrading.
 
 import type { BlobStore } from "./digest.ts";
+import { handleBlob, type BlobAccess } from "./blobs.ts";
 
 export const SERVICE = "relay";
 export const VERSION = "0.0.0";
 export const PROTOCOL = { decision: "DEC-0047", state: "accepted", version: "fabric-relay/0.1" } as const;
 export const CONNECT_PATH = "/v1/connect";
 export const SUBPROTOCOL = "fabric-relay.v1";
+export const BLOBS_PATH = "/v1/blobs/";
 
 export type Runtime = "cloudflare" | "portable";
 
 export interface RelayDeps {
   runtime: Runtime;
   blobs: BlobStore;
+  /** The blob routes' admission, index and origin (RLY-03); without it /v1/blobs/ is not served. */
+  blobAccess?: BlobAccess;
 }
 
 export type ErrorCode = "not-found" | "method-not-allowed" | "upgrade-required" | "protocol-unsupported";
@@ -67,6 +71,9 @@ export async function handle(request: Request, deps: RelayDeps): Promise<Respons
   if (pathname === CONNECT_PATH) {
     // Reached only by a request an adapter did not upgrade: say why it was not.
     return upgradeRefusal(request) ?? errorResponse(426, "upgrade-required", `${CONNECT_PATH} is a WebSocket endpoint`);
+  }
+  if (pathname.startsWith(BLOBS_PATH) && deps.blobAccess) {
+    return handleBlob(request, decodeURIComponent(pathname.slice(BLOBS_PATH.length)), deps.blobs, deps.blobAccess);
   }
   return errorResponse(404, "not-found", "no such route");
 }

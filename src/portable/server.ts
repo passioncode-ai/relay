@@ -10,6 +10,7 @@ import validateEstateRecord from "../contract/estate-record.validate.js";
 import { loadAdmission, type EstateSource } from "../core/admission.ts";
 import { CONNECT_PATH, handle, SUBPROTOCOL, upgradeRefusal, type RelayDeps } from "../core/relay.ts";
 import { MemoryHub, type MailboxStore } from "../core/mailbox.ts";
+import type { BlobIndex } from "../core/blobs.ts";
 import { RelaySession } from "../core/session.ts";
 
 /** How often a session checks its 10 s auth deadline and its 90 s idle close. */
@@ -49,12 +50,23 @@ export interface ServeOptions {
   origin?: string;
   /** Where the estate the relay admits from is kept; without one the relay admits nobody. */
   estate?: EstateSource;
+  /** Each blob's recipients and fetches (RLY-03); with an estate, the blob routes are served. */
+  blobIndex?: BlobIndex;
   /** Where queued messages are kept (RLY-03); without one, messages are answered "not served yet". */
   mailbox?: MailboxStore;
   log?: (event: Record<string, unknown>) => void;
 }
 
 export function serve(deps: RelayDeps, options: ServeOptions): Promise<Server> {
+  // With an estate, the blob routes are served too: the same admission as sessions, read when each request comes.
+  if (options.estate && options.blobIndex && !deps.blobAccess) {
+    const estate = options.estate;
+    deps = { ...deps, blobAccess: {
+      origin: options.origin ?? `http://${options.host}:${options.port}`,
+      index: options.blobIndex,
+      admission: async () => (await loadAdmission(estate, (record) => validateEstateRecord(record), () => new Date())).holder.current(),
+    } };
+  }
   const log = options.log ?? (() => {});
   const server = createServer(async (message, reply) => {
     const started = Date.now();

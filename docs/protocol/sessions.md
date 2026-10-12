@@ -52,8 +52,9 @@ is the authority on every rule.
    - `not-admitted` closes with 4403.
 5. **After `welcome`:**
    - `ping` is answered with `pong`;
-   - a known frame type not yet served (messages, blobs, presence, deltas: RLY-03, RLY-06) gets `error` `internal`
-     "not served by this relay version yet";
+   - `send`, `deliver` and `ack` are store-and-forward (see [Messages](#messages));
+   - a known frame type not yet served (presence, deltas: RLY-06) gets `error` `internal` "not served by this relay
+     version yet";
    - an unknown type gets `unknown-type`, and the session stays open.
 6. **Transport closes:**
    - a binary frame closes with 1003;
@@ -63,6 +64,43 @@ is the authority on every rule.
 
 The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and the subprotocol `fabric-relay.v1`
 (`upgradeRefusal`). A plain request gets 426, and a missing subprotocol gets 400.
+
+## Messages
+
+- **`send`.** It is checked by the contract's FAC-SEM-071 (`relay-rules.ts`): a `#sig` recipient, a `ttl` of 1 s to
+  7 days, a body of at most 765 KiB decoded.
+  - A body over the limit gets `too-large`.
+  - Any other violation, or a missing `msgId`, `to` or `body`, gets `unknown-type`, naming the rule's path.
+  - The recipient must be a machine the relay admits, else `unknown-recipient`.
+  - If the recipient's mailbox already holds 1000 messages, the answer is `mailbox-full`. DEC-0047 leaves quotas
+    undecided; 1000 is this relay's own limit.
+  - On success the relay answers `accepted {msgId, seq}`. `seq` is monotonic per mailbox.
+  - A repeat of the same `(from, msgId)` while it is still queued answers its first `seq` and is not delivered again.
+- **`deliver`.** Every connection the recipient holds gets each unacknowledged message once, in `seq` order. A
+  connection that opens later gets what waited for it.
+- **`ack {seq}`.** It deletes the message for every connection.
+- **Expiry.** An expired message is deleted when it is met.
+- **Where mail is kept.**
+  - Hosted: one Durable Object per recipient (`MAILBOX`, SQLite storage). It wakes the session objects of the
+    recipient's live connections.
+  - Portable: `RELAY_DATA_DIR/mailbox.sqlite` (owner-only).
+
+## Blobs
+
+- **The wire form is the contract's.** `PUT`/`GET /v1/blobs/<digest>` carry `Fabric-Relay-Request`, whose wire form is
+  annotated under DEC-0047 (fabric-agent-contract #60). The contract's `verifyBlobRequest` decides who may ask,
+  against the same verified admission set as sessions, read on each request.
+- **Storing a blob.**
+  - The relay recomputes the digest on `PUT`: a mismatch gets 422 `digest-mismatch`.
+  - It keeps the blob's recipient list.
+  - It refuses a body over 32 MiB with 413.
+- **Serving a blob.** It re-checks the digest on `GET` before serving.
+- **Deletion.** A blob is deleted once every stored recipient fetched it (counted per kid), or after 7 days.
+  - A `GET` for a blob the relay does not hold gets 403 `not-admitted`, the same answer as a machine that may not
+    fetch it. The relay does not say whether a blob exists.
+- **Where blobs are kept.**
+  - Hosted: R2, the blob under its digest and its index under `blobindex/<digest>`.
+  - Portable: `RELAY_DATA_DIR/blobs/sha256/` and `blobs/index/`.
 
 ## The two adapters
 
