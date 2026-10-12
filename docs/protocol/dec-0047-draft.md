@@ -7,7 +7,9 @@
 > Written by Project Observatory, the relay's code owner, on 2026-10-12.
 
 - **Date:** 2026-10-12 (draft)
-- **Status:** Draft for the contract owner's review.
+- **Status:** Draft, accepted in principle by the contract owner on 2026-10-12. It lands by a pull request in
+  fabric-agent-contract, after that repository's wave-3 packet P3-02, which introduces the P-256 device key form
+  in DEC-0031. DEC-0047 cites P3-02's decision.
 - **Amends:** nothing. This is a new protocol under the DEC-0016 extension policy. It uses DEC-0031 (devices),
   DEC-0039 and DEC-0045 (delegation, trust tiers, the small-order check) and DEC-0043 (canonical forms).
 - **Designed together with** the organization architecture's "secure transport" set (contract board item
@@ -88,6 +90,9 @@ relay can delay, drop or count messages; it cannot forge, read or replay one pas
   the sender itself (§5).
 - **Until the record exists.** Until `estate-record/1` is accepted, a deployment configures its admission set
   out of band. This is the same posture DEC-0031 takes for trusted policy keys before OQ-0010.
+- **Removal point (named, per the contract owner's plan).** Once `estate-record/1` is accepted (contract packet
+  P3-03), the admission set comes from the record only. From then on, a relay refuses to start with a
+  deployment-configured admission set.
 
 #### 3.2 Keys
 
@@ -106,7 +111,9 @@ relay can delay, drop or count messages; it cannot forge, read or replay one pas
   - an Ed25519 key anywhere in the protocol (a delegation issuer under DEC-0039's EdDSA, for as long as it is
     admitted) by DEC-0045's small-order check (CT-29, `isSmallOrderKey`).
 
-  A key that fails either check is refused as `bad-key`, and nothing is verified under it.
+  A key that fails either check is refused as `bad-key`, and nothing is verified under it. The P-256 check is one
+  function in the contract, `src/p256.ts`, beside `src/ed25519.ts`, with vectors. Packages (DEC-0051) and
+  `estate-record/1` use the same function.
 
 ### 4. Messages: store and forward, never reported done by the relay
 
@@ -231,7 +238,7 @@ Package blobs travel the same way, with their own type and signatures (`fabric-p
 | Decision | Carries |
 |---|---|
 | **DEC-0047** (this draft) | the relay's frames, the handshake, admission, messages and presence, the secret envelope, key separation and key validation, blob carriage, and how deltas and heartbeats travel |
-| **an adjacent DEC** (to reserve) | the revocation delta and timestamp heartbeat as documents: their fields, signing keys, head hash, the 72-hour rule, extensions, and their vectors (the contract owner's review condition 4) |
+| **DEC-0054** (reserved, key `revocation-delta-20261012`) | the revocation delta and timestamp heartbeat as documents: their fields, signing keys, head hash, the 72-hour rule, extensions, and their vectors (the contract owner's review condition 4) |
 | with `V4-DELEGATION` | the "T1 by machine identity" rule and its scope, DPoP for outside people |
 | with their own items | the window lease and the signing challenge types: neither travels as a relay frame of its own |
 
@@ -281,11 +288,15 @@ Package blobs travel the same way, with their own type and signatures (`fabric-p
 - Mailbox quotas per estate.
 - Whether a self-hosted relay federates with the hosted one.
 
-## Questions for the contract owner
+## The contract owner's answers (2026-10-12)
 
-1. **Key algorithm.** Review condition 2 names Ed25519 device keys. The organization architecture makes device
-   keys P-256 (ES256), because platform keystores hold P-256. This draft therefore validates P-256 keys by SEC 1,
-   and applies DEC-0045's small-order check to every Ed25519 key the protocol meets. Is that the reading you want?
-2. **The split in §8:** one DEC-0047, or DEC-0047 plus an adjacent revocation decision?
-3. **Admission before `estate-record/1`:** is a deployment-configured admission set acceptable as the interim, as
-   DEC-0031 does for trusted policy keys before OQ-0010?
+1. Device keys are P-256: ES256 to sign, ECDH P-256 for `#kem`, validated by SEC 1 §3.2.2. The P-256 form enters
+   DEC-0031 through packet P3-02. The check is `src/p256.ts`, with vectors for the point at infinity, a coordinate
+   out of range and a point not on the curve.
+2. The split is accepted. The revocation delta and heartbeat get **DEC-0054**.
+3. The interim admission set is accepted, with its removal point named (§3.1): `estate-record/1` (P3-03).
+
+**How it lands:** Project Observatory opens the PR under its own leases on `docs/DECISIONS.md` and
+`docs/specification/conformance.md`. The PR carries schemas, vectors, tests, and rule codes reserved through
+`agent_sync.py reserve SEM`. `pnpm run check`, including `privacy:check`, must pass before the PR is opened. The
+base is main after P3-02.
