@@ -18,7 +18,7 @@
 - the hosted relay is run by PassionCode.ai;
 - the self-hosted relay stays, as the portable build.
 
-**The exact next task: RLY-01.** Draft DEC-0047 in fabric-agent-contract, under that repository's lease on
+**The exact next task: RLY-01, review round.** The draft is [protocol/dec-0047-draft.md](protocol/dec-0047-draft.md), sent to the contract owner on 2026-10-12. It carries three open questions. Land it in fabric-agent-contract under that repository's lease on
 `docs/DECISIONS.md`. Design it together with the contract's v4 revocation delta, heartbeat and secret envelope,
 and meet the contract owner's four review conditions:
 1. RFC 8785 for everything signed or hashed;
