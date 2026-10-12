@@ -167,3 +167,23 @@ test("the offline rule: a sender learns its message was queued, never that it wa
   assert.deepEqual(after.map((f) => [f.type, f.kid]), [["presence", B.kid]]);
   assert.ok(!JSON.stringify(after).includes("cmd-1"));
 });
+
+test("a presence store that fails to record lastSeen is logged and costs the machine nothing", async () => {
+  const failing = new MemoryPresence();
+  failing.touch = async () => { throw new Error("store down"); };
+  const events: Array<Record<string, unknown>> = [];
+  const sent: Array<Record<string, any>> = [];
+  let now = T0;
+  const nonce = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
+  const admission = (): AdmissionResult => ({ ok: true, held: {}, revision: 1, set: new Map([[A.kid, A.jwk]]) as unknown as Map<string, Uint8Array> });
+  const session = new RelaySession({ send: (t) => sent.push(JSON.parse(t)), close: () => assert.fail("closed") },
+    { relay: "https://relay.example", now: () => now, nonce: () => nonce, sessionId: () => "s", admission, presence: failing, log: (e) => events.push(e) });
+  session.open();
+  const fields = { relay: "https://relay.example", nonce, estate: "e", kid: A.kid, iat: T0.toISOString().replace(/\.\d{3}Z$/, "Z") };
+  const sig = sign("sha256", Buffer.from(relayAuthSigningInput(fields)), { key: A.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
+  await session.receive(JSON.stringify({ v: 1, type: "auth", id: "a", protocol: "fabric-relay/0.1", alg: "ES256", ...fields, sig }));
+  now = at(TOUCH_INTERVAL_SECONDS);
+  await session.receive(JSON.stringify({ v: 1, type: "ping", id: "p1" }));
+  assert.deepEqual([sent.at(-1)!.type, sent.at(-1)!.id], ["pong", "p1"]);
+  assert.deepEqual(events.filter((e) => e.event === "presence-fault").map((e) => e.message), ["store down"]);
+});

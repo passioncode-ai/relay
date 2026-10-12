@@ -5,7 +5,7 @@
 - **RLY-02 is done (relay#1).** A machine opens a `fabric-relay/0.1` session and is admitted only from
   a verified estate record. Both builds do this; how is in [protocol/sessions.md](protocol/sessions.md).
   - The contract's reference code is vendored at the pinned commit, and its vectors run here.
-  - `npm run check` is green: typecheck clean, 73 tests (after RLY-06).
+  - `npm run check` is green: typecheck clean, 74 tests (after RLY-06).
   - The Worker's tests run a whole session in workerd, for estate records signed by an EdDSA and by an ES256 passkey.
 - **Pin.** fabric-agent-contract `51719e4`, the merge of #61 (distinct blob recipients). Before it: `c00a0c3`, the merge of #59: the fix this work found (the contract's verifiers
   threw in a Worker).

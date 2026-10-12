@@ -166,7 +166,12 @@ export class RelaySession {
     const now = this.env.now();
     if (now.getTime() - this.lastTouch < TOUCH_INTERVAL_SECONDS * 1000) return;
     this.lastTouch = now.getTime();
-    await this.env.presence.touch(this.kid as string, now);
+    // A last-seen time that could not be written is logged; it never costs the machine its session.
+    await this.env.presence.touch(this.kid as string, now).catch((error: unknown) => this.presenceFault(error));
+  }
+
+  private presenceFault(error: unknown): void {
+    this.env.log?.({ event: "presence-fault", error: (error as Error).name, message: String((error as Error).message).slice(0, 200) });
   }
 
   /**
@@ -266,8 +271,7 @@ export class RelaySession {
     this.unsubscribe?.();
     this.unsubscribePresence?.();
     if (admitted && this.env.presence) {
-      this.env.presence.disconnected(this.kid as string, this.connection, this.env.now()).catch((error: unknown) =>
-        this.env.log?.({ event: "presence-fault", error: (error as Error).name, message: String((error as Error).message).slice(0, 200) }));
+      this.env.presence.disconnected(this.kid as string, this.connection, this.env.now()).catch((error: unknown) => this.presenceFault(error));
     }
   }
 }
