@@ -4,7 +4,8 @@
 //   RELAY_PORT      port (default 8787)
 //   RELAY_ORIGIN    the public origin machines sign into relay-auth/1 (behind a TLS terminator: its https:// URL).
 //                   Normalised (src/portable/origin.ts); a path, query, fragment, credentials or another scheme refuse
-//                   to start (exit 2). http:// only on a loopback literal (127.0.0.0/8, [::1]; never "localhost").
+//                   to start (exit 2). http:// only on a loopback literal (127.0.0.0/8, [::1]; never "localhost"),
+//                   and only when RELAY_HOST is a loopback literal too.
 //                   Unset: allowed only when RELAY_HOST is a loopback literal; the origin is then
 //                   http://RELAY_HOST:<bound port>, which only a local machine can reach (logged origin-defaulted).
 // Queued messages are kept in RELAY_DATA_DIR/mailbox.sqlite and each machine's last-seen time in
@@ -48,7 +49,7 @@ const server = served.server;
 const address = server.address() as AddressInfo;
 log({ event: "listening", host: address.address, port: address.port, origin: served.origin, version: VERSION, protocol: PROTOCOL });
 
-// SIGTERM or SIGINT: a graceful stop (every session closed 1001, lastSeen written, stores closed), exit 0. Past the
+// SIGTERM, SIGINT or SIGHUP (the terminal that started the relay closed): a graceful stop (every session closed 1001, lastSeen written, stores closed), exit 0. Past the
 // ceiling it exits 1 with stop-timeout; a stop that fails exits 1 with stop-failed. A second signal from the operator (a
 // second Ctrl-C) exits 1 at once with stop-forced. The same signal again within REPEAT_MS of the first is not a second
 // press: `npm run portable` forwards the terminal's SIGINT, so node sees one Ctrl-C twice. A supervisor must wait
@@ -57,7 +58,7 @@ const GRACE_MS = 5000;
 const CEILING_MS = GRACE_MS + 5000;
 const REPEAT_MS = 1000;
 let first: { signal: string; at: number } | undefined;
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
   process.on(signal, () => {
     if (first) {
       if (first.signal === signal && Date.now() - first.at < REPEAT_MS) {

@@ -49,7 +49,7 @@ PassionCode Relay: carries sessions, sealed secret envelopes and package blobs b
 
 - The repository installs no resident process, no launchd job and no MCP server.
 - `npm run dev` (wrangler) and `npm run portable` run in the foreground of the terminal that started them and
-  stop with it (Ctrl-C, SIGINT or SIGTERM). The portable relay stops gracefully: every session is closed 1001, its
+  stop with it (Ctrl-C, SIGINT, SIGTERM, or SIGHUP when the terminal closes). The portable relay stops gracefully: every session is closed 1001, its
   SQLite files are closed, and it exits 0 within 10 s (docs/protocol/sessions.md, "Stopping").
 - Tests start workerd through Miniflare and dispose of it when they finish.
 - The hosted relay runs on Cloudflare once RLY-05 deploys it. All of an estate's sessions live in one hibernating

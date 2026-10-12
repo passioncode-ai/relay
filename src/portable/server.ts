@@ -115,6 +115,9 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
   // every session admits from, and one timer for every session's deadline.
   const empty: EstateSource = { pinned: async () => [], revisions: async () => [] };
   let holder = new AdmissionHolder({ pinned: [], schemaValid: () => false, now: () => new Date() });
+  // Upgrades whose estate read is still in flight, and upgrades refused because the stop began during that read: a stop
+  // waits for both up to its grace period, then terminates what is left.
+  const pending = new Set<WebSocket>();
   const refusing = new Set<WebSocket>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const hub: EstateHub<WebSocket> = new EstateHub<WebSocket>({
@@ -146,24 +149,39 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
       return;
     }
     sockets.handleUpgrade(message, socket, head, async (ws) => {
+      // Watched from the start: a socket that closes while its estate is read never joins the hub.
+      pending.add(ws);
+      let gone = false;
+      ws.once("close", () => {
+        gone = true;
+        pending.delete(ws);
+        refusing.delete(ws);
+      });
+      ws.on("error", (error) => log({ event: "socket-error", error: error.name }));
       // The estate is read again when a connection opens, and what verifies is what every session of the hub admits from.
-      const loaded = await loadAdmission(options.estate ?? empty, (record) => validateEstateRecord(record), () => new Date());
-      if (loaded.refused.length > 0) log({ event: "estate-revision-refused", refused: loaded.refused });
-      // A read never rolls open sessions back to an older revision than the one the hub holds.
-      const held = Number(holder.revision?.revision ?? 0), read = Number(loaded.holder.revision?.revision ?? 0);
-      if (read >= held) holder = loaded.holder;
-      else log({ event: "estate-rollback-refused", held, read });
+      // A read that fails is logged and the hub keeps what it held; it never takes the relay down.
+      try {
+        const loaded = await loadAdmission(options.estate ?? empty, (record) => validateEstateRecord(record), () => new Date());
+        if (loaded.refused.length > 0) log({ event: "estate-revision-refused", refused: loaded.refused });
+        // A read never rolls open sessions back to an older revision than the one the hub holds.
+        const held = Number(holder.revision?.revision ?? 0), read = Number(loaded.holder.revision?.revision ?? 0);
+        if (read >= held) holder = loaded.holder;
+        else log({ event: "estate-rollback-refused", held, read });
+      } catch (error) {
+        log({ event: "estate-unreadable", error: (error as Error)?.name ?? "Error", message: String((error as Error)?.message ?? error).slice(0, 200) });
+      } finally {
+        pending.delete(ws);
+      }
+      if (gone) return;
       if (stopping) {
         // The stop began while the estate was read: this socket is refused, and terminated at the grace period if it
         // has not closed by then.
         refusing.add(ws);
-        ws.on("close", () => refusing.delete(ws));
         ws.close(1001, "relay stopping");
         return;
       }
       ws.on("message", (data, isBinary) => void hub.receive(ws, isBinary ? new Uint8Array(data as Buffer) : (data as Buffer).toString("utf8")));
       ws.on("close", () => hub.closed(ws));
-      ws.on("error", (error) => log({ event: "socket-error", error: error.name }));
       hub.connect(ws, { send: (text) => ws.send(text), close: (code, reason) => ws.close(code, reason) }, origin);
     });
   });
@@ -186,15 +204,16 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
   const stop = async ({ graceMs = 5000 }: { graceMs?: number } = {}) => {
     const started = Date.now();
     const result = await hub.stop({ code: 1001, reason: "relay stopping", graceMs });
-    // Sockets refused while the stop began get what is left of the grace period, then are terminated with the rest.
+    // Upgrades still reading the estate, and those refused because the stop began meanwhile, get what is left of the
+    // grace period, then are terminated with the rest.
     const left = graceMs - (Date.now() - started);
-    if (refusing.size > 0 && left > 0) {
+    if (pending.size + refusing.size > 0 && left > 0) {
       await new Promise<void>((resolve) => {
-        const check = setInterval(() => { if (refusing.size === 0) { clearInterval(check); resolve(); } }, 20);
-        setTimeout(() => { clearInterval(check); resolve(); }, left);
+        const check = setInterval(() => { if (pending.size + refusing.size === 0) { clearInterval(check); clearTimeout(limit); resolve(); } }, 20);
+        const limit = setTimeout(() => { clearInterval(check); resolve(); }, left);
       });
     }
-    const unclosed = [...result.unclosed, ...refusing];
+    const unclosed = [...new Set([...result.unclosed, ...pending, ...refusing])];
     for (const ws of unclosed) ws.terminate();
     clearTimeout(timer);
     await new Promise<void>((resolve) => {

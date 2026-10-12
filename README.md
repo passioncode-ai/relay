@@ -16,7 +16,7 @@ Its wire protocol belongs to [fabric-agent-contract](https://github.com/passionc
 - `RELAY_DATA_DIR` (required)
 - `RELAY_HOST` (default `127.0.0.1`)
 - `RELAY_PORT` (default `8787`)
-- `RELAY_ORIGIN` (the public `https://` origin machines sign, normalised; a path, query, fragment or credentials refuse to start. `http://` only on a loopback literal, `127.0.0.0/8` or `[::1]`, never `localhost`. Unset, it is allowed only when `RELAY_HOST` is a loopback literal, and defaults to `http://RELAY_HOST:<bound port>`, local machines only)
+- `RELAY_ORIGIN` (the public `https://` origin machines sign, normalised; a path, query, fragment or credentials refuse to start. `http://` only on a loopback literal, `127.0.0.0/8` or `[::1]`, never `localhost`, and only when `RELAY_HOST` is a loopback literal too. Unset, it is allowed only when `RELAY_HOST` is a loopback literal, and defaults to `http://RELAY_HOST:<bound port>`, local machines only)
 
 None of them is a secret. Logs: one JSON object per line on stdout, `{at, service, runtime, event, …}`. The estate the relay admits from (the pinned passkeys and the record's revisions) is kept
 under `RELAY_DATA_DIR/estate/` in the portable build and under `estate/` in the R2 bucket in the hosted one.
