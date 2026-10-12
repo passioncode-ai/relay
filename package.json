@@ -2,7 +2,7 @@
   "name": "@passioncode/relay",
   "version": "0.0.0",
   "private": true,
-  "description": "PassionCode relay: carries sessions, sealed envelopes and package blobs between a person's or an organization's machines. Holds no authority and no plaintext.",
+  "description": "PassionCode relay: carries sessions, sealed envelopes and package blobs between a person's or an organization's machines. Holds no authority; a secret is never in plaintext at the relay.",
   "license": "AGPL-3.0-only OR LicenseRef-PassionCode-Commercial",
   "type": "module",
   "engines": {
