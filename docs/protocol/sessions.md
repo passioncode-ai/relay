@@ -155,5 +155,5 @@ that.
 - `verifyEs256` and `openEnvelope` threw outright.
 - The ES256 passkey path of `webauthn.ts` turned the throw into `bad-signature`.
 - Fixed upstream in fabric-agent-contract#59: the key is now passed as a JWK with `format: "jwk"`.
-- `tests/worker.test.ts` admits a machine in workerd from revisions signed by both test passkeys. With the old form
+- `tests/worker-estate.test.ts` admits a machine in workerd from revisions signed by both test passkeys. With the old form
   restored, the ES256 case fails.
