@@ -1,117 +1,36 @@
 // #region cloudflare-adapter — docs: docs/adr/0001-relay-repository.md#two-builds
-// The hosted relay: a Worker in front of the runtime-neutral core, one Durable Object per connection for its session,
-// and R2 for blobs and for the estate record the relay admits from. Bindings are declared in wrangler.jsonc; no
-// deployment's values live in this repository.
+// The hosted relay: a Worker in front of the runtime-neutral core. Every session's socket goes to the estate hub, one
+// hibernating Durable Object per estate (estate.ts, docs/adr/0002-estate-hub.md); each recipient's mail to a mailbox
+// object (mailbox.ts); blobs and the estate record the relay admits from to R2. Bindings are declared in wrangler.jsonc;
+// no deployment's values live in this repository.
 
-import { DurableObject } from "cloudflare:workers";
 import validateEstateRecord from "../contract/estate-record.validate.js";
 import { loadAdmission } from "../core/admission.ts";
-import { CONNECT_PATH, handle, SUBPROTOCOL, upgradeRefusal } from "../core/relay.ts";
-import { jsonLog } from "../core/log.ts";
-import { RelaySession as Session } from "../core/session.ts";
-import type { PresenceRecord } from "../core/presence.ts";
+import { CONNECT_PATH, handle } from "../core/relay.ts";
 import { R2BlobIndex, R2BlobStore } from "./blob-store.ts";
+import { hubName } from "./context.ts";
+import type { RelayEstate } from "./estate.ts";
 import { R2EstateSource } from "./estate-source.ts";
-import { DurableMailbox, type RelayMailbox } from "./mailbox.ts";
-import { DurableSessionHub, type RelayPresence } from "./presence.ts";
+import type { RelayMailbox } from "./mailbox.ts";
 
 // Every Durable Object class a binding names is exported by the Worker's main module.
 export { R2BlobIndex, R2BlobStore } from "./blob-store.ts";
+export { RelayEstate } from "./estate.ts";
 export { R2EstateSource } from "./estate-source.ts";
 export { RelayMailbox } from "./mailbox.ts";
-export { RelayPresence } from "./presence.ts";
 
 export interface Env {
-  SESSIONS: DurableObjectNamespace<RelaySession>;
+  ESTATE: DurableObjectNamespace<RelayEstate>;
   MAILBOX: DurableObjectNamespace<RelayMailbox>;
-  PRESENCE: DurableObjectNamespace<RelayPresence>;
   BLOBS: R2Bucket;
-}
-
-/** How often a session checks its 10 s auth deadline and its 90 s idle close. */
-const TICK_MS = 1000;
-
-const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-const log = jsonLog("cloudflare");
-
-/** One connection's session. It reads the estate when the connection opens and admits only from what verifies. */
-export class RelaySession extends DurableObject<Env> {
-  #session: Session | undefined;
-  #open = false;
-
-  /** Called by a mailbox object when a message for this connection's machine is queued. */
-  async wake(): Promise<void> {
-    if (!this.#session || !this.#open) throw new Error("no live connection");
-    void this.#session.wake();
-  }
-
-  /** Called by the presence object when another machine of the estate comes online or goes offline. */
-  async presence(record: PresenceRecord): Promise<void> {
-    if (!this.#session || !this.#open) throw new Error("no live connection");
-    this.#session.presence(record);
-  }
-
-  /** Asked by the presence object: does this object still hold an open connection? */
-  async alive(): Promise<boolean> {
-    return this.#open;
-  }
-
-  override async fetch(request: Request): Promise<Response> {
-    const refusal = upgradeRefusal(request);
-    if (refusal) return refusal;
-    const { holder, refused } = await loadAdmission(new R2EstateSource(this.env.BLOBS), (record) => validateEstateRecord(record), () => new Date());
-    if (refused.length > 0) log({ event: "estate-revision-refused", refused });
-    const admission = holder.current();
-    log({ event: "admission", ...(admission.ok ? { revision: admission.revision, machines: admission.set.size } : { refusal: admission.refusal }) });
-    const pair = new WebSocketPair();
-    const [client, server] = [pair[0], pair[1]];
-    server.accept();
-    let timer: ReturnType<typeof setInterval> | undefined;
-    const session = new Session(
-      {
-        send: (text) => server.send(text),
-        close: (code, reason) => {
-          if (timer) clearInterval(timer);
-          this.#open = false;
-          server.close(code, reason);
-        },
-      },
-      {
-        relay: new URL(request.url).origin,
-        now: () => new Date(),
-        nonce: () => base64url(crypto.getRandomValues(new Uint8Array(32))),
-        sessionId: () => crypto.randomUUID(),
-        admission: () => holder.current(),
-        mailbox: new DurableMailbox(this.env),
-        hub: new DurableSessionHub(this.env, this.ctx.id.toString(), log),
-        log,
-      },
-    );
-    this.#session = session;
-    server.addEventListener("message", (event) => {
-      session.receive(event.data as string | ArrayBuffer).catch((error: unknown) => {
-        if (timer) clearInterval(timer);
-        session.fault(error);
-      });
-    });
-    server.addEventListener("close", () => {
-      if (timer) clearInterval(timer);
-      this.#open = false;
-      session.disconnected();
-    });
-    this.#open = true;
-    session.open();
-    timer = setInterval(() => session.tick(), TICK_MS);
-    return new Response(null, { status: 101, webSocket: client, headers: { "sec-websocket-protocol": SUBPROTOCOL } });
-  }
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const { pathname } = new URL(request.url);
     if (pathname === CONNECT_PATH && (request.headers.get("upgrade") ?? "").toLowerCase() === "websocket") {
-      // One Durable Object per connection: a session holds nothing another connection may read.
-      return env.SESSIONS.get(env.SESSIONS.newUniqueId()).fetch(request);
+      // Every session of the estate lives in its one hub: the hub holds only machines of one estate record.
+      return env.ESTATE.get(env.ESTATE.idFromName(hubName())).fetch(request);
     }
     return handle(request, {
       runtime: "cloudflare",

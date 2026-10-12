@@ -99,8 +99,8 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
 - **`ack {seq}`.** It deletes the message for every connection.
 - **Expiry.** An expired message is deleted when it is met.
 - **Where mail is kept.**
-  - Hosted: one Durable Object per recipient (`MAILBOX`, SQLite storage). It wakes the session objects of the
-    recipient's live connections.
+  - Hosted: one Durable Object per recipient (`MAILBOX`, SQLite storage). Once a message is stored it calls the estate
+    hub's `wake(kid)`; it keeps no list of sessions.
   - Portable: `RELAY_DATA_DIR/mailbox.sqlite` (owner-only).
 
 ## Presence
@@ -131,12 +131,8 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
     that the sender heard only that it came online.
 - **Where presence is kept.** Who is online is derived by the estate hub from its live connections, so a runtime that
   drops every socket at once leaves nothing stale.
-  - Hosted: one Durable Object for the estate (`PRESENCE`, SQLite storage). It holds:
-    - the live session objects of each machine;
-    - each machine's `lastSeen`;
-    - the sessions to tell.
-    A session object that does not answer is taken as a connection that ended: when it is told a change, and before a
-    query is answered.
+  - Hosted: `lastSeen` is kept in the estate hub object's SQLite storage. A deploy restarts the object and drops every
+    socket; the new object starts from the runtime's (empty) socket list, so nothing about connections is stale.
   - Portable: `lastSeen` is kept in `RELAY_DATA_DIR/presence.sqlite` (owner-only, `SqliteLastSeen`), so it survives a
     restart.
 
@@ -159,8 +155,11 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
 
 ## The two adapters
 
-- **Hosted.** One Durable Object per connection (`SESSIONS.newUniqueId()`) holds a `WebSocketPair`. The relay origin
-  signed into `relay-auth/1` is the request's origin.
+- **Hosted.** Every upgrade goes to the estate hub, one Durable Object per estate (`ESTATE`, `src/cloudflare/estate.ts`),
+  named through `contextKey()` (a constant while one relay origin serves one context; never the estate id). It accepts
+  the socket with the WebSocket Hibernation API, keeps each session's record in the socket's attachment, and runs one
+  alarm at the earliest deadline. After a hibernation wake it rebuilds its set from the sockets the runtime kept. The
+  relay origin signed into `relay-auth/1` is the request's origin.
 - **Portable.** The `ws` package (8.22.0) upgrades the connection and selects `fabric-relay.v1`. The origin is
   `RELAY_ORIGIN`, which must be the public `https://` URL behind a TLS terminator.
   - If `RELAY_ORIGIN` is unset, the relay uses `http://RELAY_HOST:RELAY_PORT` and logs `origin-defaulted`. Only a

@@ -20,12 +20,12 @@ test("the Worker answers health as the cloudflare runtime", async () => {
   assert.equal(body.ready, true);
 });
 
-test("the Worker and its session object refuse anything but a fabric-relay.v1 upgrade", async () => {
+test("the Worker and its estate hub object refuse anything but a fabric-relay.v1 upgrade", async () => {
   const plain = await mf.dispatchFetch("http://relay.test/v1/connect");
   assert.equal(plain.status, 426);
   await plain.arrayBuffer();
-  const namespace = await mf.getDurableObjectNamespace("SESSIONS");
-  const stub = namespace.get(namespace.newUniqueId());
+  const namespace = await mf.getDurableObjectNamespace("ESTATE");
+  const stub = namespace.get(namespace.idFromName("estate"));
   const noProtocol = await stub.fetch("http://relay.test/v1/connect", { headers: { upgrade: "websocket" } });
   assert.equal(noProtocol.status, 400);
   assert.equal(((await noProtocol.json()) as { error: { code: string } }).error.code, "protocol-unsupported");

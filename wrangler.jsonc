@@ -7,17 +7,18 @@
   "compatibility_date": "2026-08-01",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
+  // ESTATE is the estate hub, one hibernating Durable Object per estate (docs/adr/0002-estate-hub.md); MAILBOX is one
+  // object per recipient. The migrations were collapsed to one v1 in release iteration 1 because no deployment exists
+  // (docs/HANDOFF.md): before the first deploy, `wrangler deployments list` is checked, and if anything was deployed an
+  // additive v2 with "deleted_classes": ["RelaySession", "RelayPresence"] replaces the collapse.
   "durable_objects": {
     "bindings": [
-      { "name": "SESSIONS", "class_name": "RelaySession" },
-      { "name": "MAILBOX", "class_name": "RelayMailbox" },
-      { "name": "PRESENCE", "class_name": "RelayPresence" }
+      { "name": "ESTATE", "class_name": "RelayEstate" },
+      { "name": "MAILBOX", "class_name": "RelayMailbox" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["RelaySession"] },
-    { "tag": "v2", "new_sqlite_classes": ["RelayMailbox"] },
-    { "tag": "v3", "new_sqlite_classes": ["RelayPresence"] }
+    { "tag": "v1", "new_sqlite_classes": ["RelayEstate", "RelayMailbox"] }
   ],
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "relay-blobs" }],
   "observability": { "enabled": true }

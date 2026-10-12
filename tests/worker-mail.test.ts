@@ -38,3 +38,23 @@ test("two machines of the record exchange a message through the Worker: send, ac
   for (const c of [a, b, again]) c.ws.close(1000, "done");
   await remove();
 });
+
+test("a message queued for a machine that is offline is delivered when it connects; one queued while it is online wakes the hub", async () => {
+  const e = estate(new Date(), "ES256");
+  const remove = await placeEstate(mf, e);
+  const a = await session(mf);
+  await a.until(() => a.frames.length >= 1);
+  a.ws.send(auth(e.machine, a.frames[0]!.nonce));
+  await a.until(() => a.frames.some((f) => f.type === "welcome"));
+  a.ws.send(JSON.stringify({ v: 1, type: "send", id: "s1", to: e.second.kid, msgId: "offline-1", body: "AA", ttl: 600 }));
+  await a.until(() => a.frames.some((f) => f.type === "accepted"));
+  const b = await session(mf);
+  await b.until(() => b.frames.length >= 1);
+  b.ws.send(auth(e.second, b.frames[0]!.nonce));
+  await b.until(() => b.frames.some((f) => f.type === "deliver" && f.msgId === "offline-1"));
+  a.ws.send(JSON.stringify({ v: 1, type: "send", id: "s2", to: e.second.kid, msgId: "online-1", body: "AA", ttl: 600 }));
+  await b.until(() => b.frames.some((f) => f.type === "deliver" && f.msgId === "online-1"));
+  assert.deepEqual(b.frames.filter((f) => f.type === "deliver").map((f) => f.msgId), ["offline-1", "online-1"]);
+  for (const c of [a, b]) c.ws.close(1000, "done");
+  await remove();
+});

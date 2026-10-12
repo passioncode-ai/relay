@@ -165,6 +165,7 @@ export class EstateHub<C = unknown> implements SessionHub {
         this.deps.log?.({ event: "refresh-fault", ...errorFields(error) });
       }
     }
+    this.#armed = Number.NaN; // the timer that fired is spent: arm again whatever is due next
     this.#arm();
   }
 
