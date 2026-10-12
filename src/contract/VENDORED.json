@@ -1,5 +1,5 @@
 {
-  "commit": "1dbbda2de957951ed07449fd642febe26c69918d",
+  "commit": "51719e49162973ca9cdca9bde009f43c58341a9f",
   "files": {
     "src/contract/canonical.ts": "930f7cb8445a842abf094b970f936271bff8449e3163c744680c3457224585fe",
     "src/contract/ed25519.ts": "0b22a24d5f26795176465dd18ed6e885993231dff6ff6f8442a10bf37b638d33",
@@ -7,12 +7,12 @@
     "src/contract/findings.ts": "ebbc25af3234ac6c642c7523f43fa8fe3692d4f08cdf0b5a6add3259e664a0df",
     "src/contract/p256.ts": "c9f14c21ee7c21afcc84171bc576c878d5647dd40b80c7f847cf3859caeaea55",
     "src/contract/package-rules.ts": "1d241e046686197c63f2398d789e03d5612245f03c79ec3413ce67e02792ab22",
-    "src/contract/relay.ts": "dc7f35af62c56604c85c79d93ce299a8581a3b68e6f0596584f03f6d919e3229",
+    "src/contract/relay.ts": "bc6ba2a811c9b43948c834b780dff2baac4908edd755ee3a5a943938b4beb218",
     "src/contract/relay-rules.ts": "90f4809cc471d54dd3ed29a9b7a6b8e46a44ca46f1e665a41acee12eca877f8a",
     "src/contract/secret-envelope.ts": "d5c642fa7196c9ec2b1fa6f9d4304215fa9557a5672ecd4fb1357a7c5633e83d",
     "src/contract/secret-shape.ts": "4b0c27a4f94c2416f3df845f79632434988e24c24514774bf8d70e4a0894ebdc",
     "src/contract/webauthn.ts": "d281562d3b8f2c832a04c8171892e924a4c8e8ba3adeb7b465a88670d9e6d68e",
-    "tests/vectors/relay.json": "f1942adaeab45749113b658556d30e0e54ca887f584750c701d191a25edadeff",
+    "tests/vectors/relay.json": "470bc46c479ae0a6172d73bd9d5458789ca0911c0c082b56bc050466bae32be0",
     "tests/vectors/secret-envelope.json": "e9f849b8bc21da0f361133058030b023aac131ce2f528cf67d2ef685f3ec8ad5",
     "tests/vectors/estate-record.json": "329ff1668958d3034a1af26e7f5d8c2603fc4a645aa6a024af6f7940189abe3b",
     "tests/vectors/p256.json": "8dbfdb7cf8f80dcda4bfcfd7c577860db6d4d18ad2d03975beef38df80c0313b",
@@ -32,6 +32,6 @@
     "src/contract/schemas/governance.schema.json": "f8af842c0cb180836722e04182c8b1131b2e23aca9e69d8ded75245c906d5963",
     "src/contract/schemas/registry-models.schema.json": "29a1b3ea8e0d67fe7115c79e14d4f9f103533a634e65bdb8cff6da7db768b5ce",
     "src/contract/schemas/relay-frame.schema.json": "1e51a6dfb9f7f5f9751907f22612c8bee15028bc1505cbf8817a4925e3dd13af",
-    "src/contract/estate-record.validate.js": "6196d9137ce8b949bb5dafdb4a2005528adcfdde50b8b6edb7a1cda79963fa46"
+    "src/contract/estate-record.validate.js": "05462ddaee5deee82e0570900c7b96c256aaa32e87ab821c1e504d311b7b4241"
   }
 }

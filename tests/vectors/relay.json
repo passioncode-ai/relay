@@ -65,18 +65,18 @@
       {
         "name": "a PUT by an admitted machine to admitted recipients",
         "method": "PUT",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiQ242QWg5ZEVjTEh4RHhWQ3VoT2o0eHlVVDEzSWNxSG5MNlZFcGxFV2dNajRxNnQ5SW80ZHVTOGxSc0dscXpLWXNNczYwc1N0c1dNUXUyVDY5RDhBOXcifQ",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiSGFlcjN4Y1plOXJuQXpiRWY5V1dUMGc2UkszUG5DbVdXOHA1WnAtbmRuc0w3T3MxRTdtcGxGX3JIQ2VTTkVyLWhuUjhSc3VwXzFXUkNDTDZmQ0RXVEEifQ",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -92,18 +92,18 @@
       {
         "name": "the same PUT again with the same recipients: no change",
         "method": "PUT",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiQ242QWg5ZEVjTEh4RHhWQ3VoT2o0eHlVVDEzSWNxSG5MNlZFcGxFV2dNajRxNnQ5SW80ZHVTOGxSc0dscXpLWXNNczYwc1N0c1dNUXUyVDY5RDhBOXcifQ",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiSGFlcjN4Y1plOXJuQXpiRWY5V1dUMGc2UkszUG5DbVdXOHA1WnAtbmRuc0w3T3MxRTdtcGxGX3JIQ2VTTkVyLWhuUjhSc3VwXzFXUkNDTDZmQ0RXVEEifQ",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -124,18 +124,18 @@
       {
         "name": "a PUT of a held blob with another recipient list",
         "method": "PUT",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiQ242QWg5ZEVjTEh4RHhWQ3VoT2o0eHlVVDEzSWNxSG5MNlZFcGxFV2dNajRxNnQ5SW80ZHVTOGxSc0dscXpLWXNNczYwc1N0c1dNUXUyVDY5RDhBOXcifQ",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiSGFlcjN4Y1plOXJuQXpiRWY5V1dUMGc2UkszUG5DbVdXOHA1WnAtbmRuc0w3T3MxRTdtcGxGX3JIQ2VTTkVyLWhuUjhSc3VwXzFXUkNDTDZmQ0RXVEEifQ",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -154,18 +154,18 @@
       {
         "name": "a GET by a stored recipient with the stored list",
         "method": "GET",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmIjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiSUhPdjd4a0NVOV9kWmNGSjM1ZUJzTnRlcEEtaTRidUtqeUZEdFpaUld2Z0VHT2RCdVJsYU9vMWtnT0M5Z3dGTDRNRFFGbzQ2aWNBa3lBakI1cWtrWncifQ",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmIjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiajNITVV2bzdFZGNIMkI1YVpiXzExY1MwakZ3Ni1jcmJzZ29zTHBiOUk2SlI2MnVQRkZlN1pPTzV6Y0dOS2xfNEJoSjZXOE9GLUd4azQtcmdyWXBRd2cifQ",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -186,18 +186,18 @@
       {
         "name": "a GET by a machine that is not a recipient",
         "method": "GET",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoicjA4Yjg3enhlbzBDT3lUeUc5X1pXV09QYzMxQ2lZcUhzMmhZMW5kLVpROTRnbTdaVk1LaEc3YXVrT3Fjc0RJSy05TDVUZlJjSC1IaW1OczJteFBFOFEifQ",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiQVVCSDNDbVEyRHR1MmxPNUFFeFBwYktFWkZQczJjNFhRbGlKVnQxMVpIdVNHZ1E4eXA4QXJoQ0Ytdk9reTlEZk80V1d5R29OVDVFQ0syR1lEbTV3SXcifQ",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -215,18 +215,18 @@
       {
         "name": "a GET whose signed list differs from the stored one",
         "method": "GET",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmIjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6YSNzaWciXSwic2lnIjoiYjRROGJUV0t1TUgyQldKbk9PM0xSbTQyRGR6QmFFaFNYU3hHd1NiM2Q0UF8xYWRJTzhiM3dfZmlqV3NkVTVfUUpLMDRHMlpsRGZ3NWU1SDJoTEk4WVEifQ",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmIjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6YSNzaWciXSwic2lnIjoiVEZVYXZyeGpjZ2xIbW9GR2lqMlctTll3U3B1MTFGajY1bEtOM054M0pLWGE5NHJtNlFmYXQzTVJ5ZVpuV0pMYkl1YzhjeFh2NXFZa3NCMkxfbnlWZUEifQ",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -244,12 +244,12 @@
       {
         "name": "a GET by a recipient no longer admitted (revoked)",
         "method": "GET",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmIjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiSUhPdjd4a0NVOV9kWmNGSjM1ZUJzTnRlcEEtaTRidUtqeUZEdFpaUld2Z0VHT2RCdVJsYU9vMWtnT0M5Z3dGTDRNRFFGbzQ2aWNBa3lBakI1cWtrWncifQ",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmIjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiajNITVV2bzdFZGNIMkI1YVpiXzExY1MwakZ3Ni1jcmJzZ29zTHBiOUk2SlI2MnVQRkZlN1pPTzV6Y0dOS2xfNEJoSjZXOE9GLUd4azQtcmdyWXBRd2cifQ",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           }
         },
@@ -267,18 +267,18 @@
       {
         "name": "a GET of a blob the relay does not hold",
         "method": "GET",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmIjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiSUhPdjd4a0NVOV9kWmNGSjM1ZUJzTnRlcEEtaTRidUtqeUZEdFpaUld2Z0VHT2RCdVJsYU9vMWtnT0M5Z3dGTDRNRFFGbzQ2aWNBa3lBakI1cWtrWncifQ",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmIjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiajNITVV2bzdFZGNIMkI1YVpiXzExY1MwakZ3Ni1jcmJzZ29zTHBiOUk2SlI2MnVQRkZlN1pPTzV6Y0dOS2xfNEJoSjZXOE9GLUd4azQtcmdyWXBRd2cifQ",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -291,12 +291,12 @@
       {
         "name": "a PUT naming a recipient outside the admission set",
         "method": "PUT",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiQ242QWg5ZEVjTEh4RHhWQ3VoT2o0eHlVVDEzSWNxSG5MNlZFcGxFV2dNajRxNnQ5SW80ZHVTOGxSc0dscXpLWXNNczYwc1N0c1dNUXUyVDY5RDhBOXcifQ",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiSGFlcjN4Y1plOXJuQXpiRWY5V1dUMGc2UkszUG5DbVdXOHA1WnAtbmRuc0w3T3MxRTdtcGxGX3JIQ2VTTkVyLWhuUjhSc3VwXzFXUkNDTDZmQ0RXVEEifQ",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           }
         },
@@ -309,12 +309,12 @@
       {
         "name": "a PUT by a machine outside the admission set",
         "method": "PUT",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiQ242QWg5ZEVjTEh4RHhWQ3VoT2o0eHlVVDEzSWNxSG5MNlZFcGxFV2dNajRxNnQ5SW80ZHVTOGxSc0dscXpLWXNNczYwc1N0c1dNUXUyVDY5RDhBOXcifQ",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiSGFlcjN4Y1plOXJuQXpiRWY5V1dUMGc2UkszUG5DbVdXOHA1WnAtbmRuc0w3T3MxRTdtcGxGX3JIQ2VTTkVyLWhuUjhSc3VwXzFXUkNDTDZmQ0RXVEEifQ",
         "admitted": {
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -327,17 +327,17 @@
       {
         "name": "a signer whose admitted key is Ed25519",
         "method": "PUT",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiQ242QWg5ZEVjTEh4RHhWQ3VoT2o0eHlVVDEzSWNxSG5MNlZFcGxFV2dNajRxNnQ5SW80ZHVTOGxSc0dscXpLWXNNczYwc1N0c1dNUXUyVDY5RDhBOXcifQ",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiSGFlcjN4Y1plOXJuQXpiRWY5V1dUMGc2UkszUG5DbVdXOHA1WnAtbmRuc0w3T3MxRTdtcGxGX3JIQ2VTTkVyLWhuUjhSc3VwXzFXUkNDTDZmQ0RXVEEifQ",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "OKP",
             "crv": "Ed25519",
-            "x": "30kUR00Jfo9TasjWkc-tnONNb_xfjooRXxmGk8r3w-w"
+            "x": "7tod2YAflXtPd-ajxCsIcGxnF2hy9tb8ol7ctGHHPkQ"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -350,18 +350,18 @@
       {
         "name": "alg other than ES256",
         "method": "PUT",
-        "header": "eyJhbGciOiJFZERTQSIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiaVpELUUyYy14a0hHTHhXWEhZSXZTS1IyNktTTlQ1T2xnNkhMSkd4aUxEc2FTbmlwd0RKNVZiUTBRam5QaDg4MXlWNG14S3ViMFJGSTF5NFM4QXlpNFEifQ",
+        "header": "eyJhbGciOiJFZERTQSIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiaGRjWUtCd3dZRVZFcERhSGRXbmZJU0tlN3hRcDlQd25IT2tCU0loWHZTVzZLb0o2d1RzVE1sOExKVFBkYW5DcjgzRFd0c1AzN3k3THNsU1ZWMUNDM0EifQ",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -374,18 +374,18 @@
       {
         "name": "a signature made for another digest",
         "method": "PUT",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiTlBwVXpXaTRTQWc0M1lUM2h4VjBJblFiZFpsWDc5N1paaDRrU2I1WWpseVBHZEliZndjNUw0Q0RyUXBuLVpXTXpfejlaX2g4QnY5V19sbEdSbmhVTXcifQ",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiM1ZrOVp1azlMNmU0TXU1OFpRVVdCUUI4dFFyaDNjWVA0Z1U1V0d0bmItOGZhbjcxLTlNRmhPWllYbE1RTUgwdEUwUnNvajUtY29pNzJ5S2h1eTBjQkEifQ",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -398,18 +398,18 @@
       {
         "name": "a GET signature used for a PUT",
         "method": "PUT",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiTklGLW5MMkM1SDNfY0R0VXRlWGEyR2NvWElTOE5qRXRZQ0J4MUFTTjN5ejdDUlAtYjAxODVHbk0wR1dNcV9LcHFvaXFfQzNPLS1hTG1fUE5FSTdOeVEifQ",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiMk9uTkRyYzc0ZWJWbzkzRkhhS2E4TVRreGEyZGNnVmoybkttZkpEbFduZ0RFZmZHY1FiTXdGaWJESHFIVlJBRlpDUWZRQkdhb1FDQ1llY2lwckh5V1EifQ",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -422,18 +422,18 @@
       {
         "name": "iat 61 s old",
         "method": "PUT",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTE6NTk6MjlaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoic01ScGtLaWtVOFdOY0tsVTgybkdONVVLVEhMMHRTNG5BOVU5SjhyUGVZUFF0ZnFOMEFYS2w3bjNfeHBHbWNMdVNzZ1JOemdDX3NjWHNGdVpLQXZRLVEifQ",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTE6NTk6MjlaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiRWdud1pLWmE2Q1BZRkRkRW00ZnpKX2NCRFBTU3pCdFdPTG1FMk5vWGpBNDlIUXgtVXM4a1JYQ2JRZUo5eGlITEVJSUlDTXVkY2R2dmFYdDJwWjJUN2cifQ",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -446,18 +446,18 @@
       {
         "name": "iat 61 s ahead",
         "method": "PUT",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDE6MzFaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoia0ZiMjBRTC14NENCUzIyUjZUV2pNNnR1eEVVWEotRkRNRHRHbURpLXM2Mzc2X0M4emg3UHd0WUhsMF9wZ29HLTg5SGt5blRXaHdHWGlHQWlqcVlyd2cifQ",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDE6MzFaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoidGp6blVxdlVEU1ZPUm90Q3hXTTlVQXRMNnRPNmdOZVVXR2Z3ektvR3ZfRENtVjFMLU9lUVdWbUxadUMzVVV5R2xBLW5OX2JPUWNsdWszWkhSXzhxalEifQ",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -470,18 +470,18 @@
       {
         "name": "iat that matches the pattern and is no date",
         "method": "PUT",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTMtNDVUMjU6NjE6NjFaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoicEhlanVzVkJYV0hRaGYtSVJ2WGhyaUlfU0d6OU5lQkpodi10Q3NmS1MtQkJzanVYQ29FcXFmOV90WWthNW9fb0dsOU1TdE9CVTkzdmN4cndQbURhcFEifQ",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTMtNDVUMjU6NjE6NjFaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiVmxvSGZOT0lGQUdueThkbVZYSHg5NXZZYWdWUDBHTzJkSHU4ZEMySHgxMkNKLXNlb2wxTjhXN2VUbFRrbjkyeWtzeUk3N2dVZ2RmajJkUlowR3lMT3cifQ",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -494,18 +494,18 @@
       {
         "name": "padding on the base64url",
         "method": "PUT",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiQ242QWg5ZEVjTEh4RHhWQ3VoT2o0eHlVVDEzSWNxSG5MNlZFcGxFV2dNajRxNnQ5SW80ZHVTOGxSc0dscXpLWXNNczYwc1N0c1dNUXUyVDY5RDhBOXcifQ==",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiSGFlcjN4Y1plOXJuQXpiRWY5V1dUMGc2UkszUG5DbVdXOHA1WnAtbmRuc0w3T3MxRTdtcGxGX3JIQ2VTTkVyLWhuUjhSc3VwXzFXUkNDTDZmQ0RXVEEifQ==",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -518,18 +518,18 @@
       {
         "name": "a non-canonical last base64url character",
         "method": "PUT",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiQ242QWg5ZEVjTEh4RHhWQ3VoT2o0eHlVVDEzSWNxSG5MNlZFcGxFV2dNajRxNnQ5SW80ZHVTOGxSc0dscXpLWXNNczYwc1N0c1dNUXUyVDY5RDhBOXcifR",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiSGFlcjN4Y1plOXJuQXpiRWY5V1dUMGc2UkszUG5DbVdXOHA1WnAtbmRuc0w3T3MxRTdtcGxGX3JIQ2VTTkVyLWhuUjhSc3VwXzFXUkNDTDZmQ0RXVEEifR",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -542,18 +542,18 @@
       {
         "name": "JSON that is not RFC 8785 (members out of order)",
         "method": "PUT",
-        "header": "eyJzaWciOiJDbjZBaDlkRWNMSHhEeFZDdWhPajR4eVVUMTNJY3FIbkw2VkVwbEVXZ01qNHE2dDlJbzRkdVM4bFJzR2xxektZc01zNjBzU3RzV01RdTJUNjlEOEE5dyIsImtpZCI6InVybjpmYWJyaWM6bWFjaGluZTphI3NpZyIsImFsZyI6IkVTMjU2IiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwiaWF0IjoiMjAyNi0xMC0xMlQxMjowMDowMFoifQ",
+        "header": "eyJzaWciOiJIYWVyM3hjWmU5cm5BemJFZjlXV1QwZzZSSzNQbkNtV1c4cDVacC1uZG5zTDdPczFFN21wbEZfckhDZVNORXItaG5SOFJzdXBfMVdSQ0NMNmZDRFdUQSIsImtpZCI6InVybjpmYWJyaWM6bWFjaGluZTphI3NpZyIsImFsZyI6IkVTMjU2IiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwiaWF0IjoiMjAyNi0xMC0xMlQxMjowMDowMFoifQ",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -566,18 +566,18 @@
       {
         "name": "an extra member",
         "method": "PUT",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwibm90ZSI6IngiLCJyZWNpcGllbnRzIjpbInVybjpmYWJyaWM6bWFjaGluZTpiI3NpZyJdLCJzaWciOiJDbjZBaDlkRWNMSHhEeFZDdWhPajR4eVVUMTNJY3FIbkw2VkVwbEVXZ01qNHE2dDlJbzRkdVM4bFJzR2xxektZc01zNjBzU3RzV01RdTJUNjlEOEE5dyJ9",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwibm90ZSI6IngiLCJyZWNpcGllbnRzIjpbInVybjpmYWJyaWM6bWFjaGluZTpiI3NpZyJdLCJzaWciOiJIYWVyM3hjWmU5cm5BemJFZjlXV1QwZzZSSzNQbkNtV1c4cDVacC1uZG5zTDdPczFFN21wbEZfckhDZVNORXItaG5SOFJzdXBfMVdSQ0NMNmZDRFdUQSJ9",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -590,18 +590,18 @@
       {
         "name": "no recipients",
         "method": "PUT",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6W10sInNpZyI6ImNIQXR4ZnZaYmZMTDNScjlGcGhfMUMwbEpoT2I2aHNGQzJ2Q2RlYnNQUzhmTmNEY1RhdGhodDdzcmFTZHNSb2cxbTMxZ29YZ2pLOWVqbDFKeDZtaXNnIn0",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6W10sInNpZyI6InZmVmE2aGNDNlBUVmVBYlBRRUZiMTN1V2dQcC1XWDBpRkdxeEpmUFlPbUp6TUVJZFdrc1NLZVBva3h5SEtoazIzU1dNU3NhQWltZmtZOGpOY1Z2b3p3In0",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -614,18 +614,42 @@
       {
         "name": "65 recipients",
         "method": "PUT",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6bTAjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0xI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMiNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTMjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm00I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTYjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm03I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptOCNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTkjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0xMCNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTExI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMTIjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0xMyNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTE0I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMTUjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0xNiNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTE3I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMTgjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0xOSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTIwI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMjEjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0yMiNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTIzI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMjQjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0yNSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTI2I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMjcjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0yOCNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTI5I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMzAjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0zMSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTMyI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMzMjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0zNCNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTM1I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMzYjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0zNyNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTM4I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMzkjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm00MCNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTQxI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNDIjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm00MyNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTQ0I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNDUjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm00NiNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTQ3I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNDgjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm00OSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTUwI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNTEjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm01MiNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTUzI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNTQjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm01NSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTU2I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNTcjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm01OCNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTU5I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNjAjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm02MSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTYyI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNjMjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm02NCNzaWciXSwic2lnIjoiYVNKNFc2eUFSaDNINE05a3lPRHRXajJpTmFQN0RPTkNKa0Y2cGlPeVU4RzktRGdKSUlmVTZHZ0VGZE9IdHlfY1lGWUlCcU5XUXFoci1rbnQ5WTJnQncifQ",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6bTAjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0xI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMiNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTMjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm00I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTYjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm03I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptOCNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTkjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0xMCNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTExI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMTIjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0xMyNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTE0I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMTUjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0xNiNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTE3I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMTgjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0xOSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTIwI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMjEjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0yMiNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTIzI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMjQjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0yNSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTI2I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMjcjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0yOCNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTI5I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMzAjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0zMSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTMyI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMzMjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0zNCNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTM1I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMzYjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm0zNyNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTM4I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptMzkjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm00MCNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTQxI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNDIjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm00MyNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTQ0I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNDUjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm00NiNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTQ3I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNDgjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm00OSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTUwI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNTEjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm01MiNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTUzI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNTQjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm01NSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTU2I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNTcjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm01OCNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTU5I3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNjAjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm02MSNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6bTYyI3NpZyIsInVybjpmYWJyaWM6bWFjaGluZTptNjMjc2lnIiwidXJuOmZhYnJpYzptYWNoaW5lOm02NCNzaWciXSwic2lnIjoiU1ZZUzIxbEQ2THRfVXU3ZjFpUXBSQ2pxeUJkSHlYSGlhcmJqdkZ6Yk1Pek5Hc1NxNVlrcHoySzkwQ0R3NjlwZEJjWnhRX29uZFlhOVF3VEFVVGlxeGcifQ",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
+            "crv": "P-256"
+          }
+        },
+        "expect": {
+          "ok": false,
+          "status": 400,
+          "code": "malformed"
+        }
+      },
+      {
+        "name": "the same recipient twice",
+        "method": "PUT",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciLCJ1cm46ZmFicmljOm1hY2hpbmU6YiNzaWciXSwic2lnIjoiX3BnNkMxLXRDZG82TXV1WDBrMkVaX1pmQ2tWeHRoNGF1TFd3VzBkQzNGWmc5cm1ta3kzaUVaSlRJSF9XZ3M4SmJyeGZHVFBxNFQxcHVEYVhMYkNCTncifQ",
+        "admitted": {
+          "urn:fabric:machine:a#sig": {
+            "kty": "EC",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
+            "crv": "P-256"
+          },
+          "urn:fabric:machine:b#sig": {
+            "kty": "EC",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -638,18 +662,18 @@
       {
         "name": "a recipient that is a #kem key",
         "method": "PUT",
-        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNrZW0iXSwic2lnIjoiUUF0QXZvbi1sTEo0Z0ZUZndEVzB1SlhYZ3B6NGxmYW9ZOWNhVzJMY294V0xJcHMtVFlnWGRweWRuY0pFNGM5MXFteUF4Rzc0Mk5jajk2c2prbk5MTmcifQ",
+        "header": "eyJhbGciOiJFUzI1NiIsImlhdCI6IjIwMjYtMTAtMTJUMTI6MDA6MDBaIiwia2lkIjoidXJuOmZhYnJpYzptYWNoaW5lOmEjc2lnIiwicmVjaXBpZW50cyI6WyJ1cm46ZmFicmljOm1hY2hpbmU6YiNrZW0iXSwic2lnIjoiMWJEMTc3ZVc5eml6TEZZS0tKXzkxejliRmV0OUFBNzdORVZSYjloZGtwSXVnTWN1V3h1d1k2ZlY5X0U2VmdxRGM5MEJuaDUxQUN0dC04aHNXckNzelEifQ",
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -666,14 +690,14 @@
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },
@@ -690,14 +714,14 @@
         "admitted": {
           "urn:fabric:machine:a#sig": {
             "kty": "EC",
-            "x": "6L2XXhsM4gnUgxKZEQ0Ta1JbQ8V7N8Wz9I3FHIfL9sA",
-            "y": "r680pnDLX0NKmGd0rVrgvk0efEintsZ7NPCSHmYYG-c",
+            "x": "6CFzXxJEqAiVlRg83SeqeHCWtjmRCq4q9x4c3hbhnV8",
+            "y": "aypg44TEsDGfNJkUXB_QDO4hBfpdrehNAci-gA24cc4",
             "crv": "P-256"
           },
           "urn:fabric:machine:b#sig": {
             "kty": "EC",
-            "x": "o-jbReEcYuojgzVTWv1D4qNsYw_MYp541O_Pedm-MwM",
-            "y": "uVdm5pU-lHFvJBPSChEvVa_Z4xC0sYRjRL5bdAQrfTM",
+            "x": "nr-_xzD0EvPCUQ5H-rrZI7ljpkFY0MENuDLhobac9tM",
+            "y": "UOt_v3SkU4wazKmb54f7bIY-oHXkKtQyiWjoL7Vo0T4",
             "crv": "P-256"
           }
         },

@@ -46,6 +46,13 @@ test("a PUT stores the bytes under their digest with its recipients; the same PU
   assert.deepEqual(await code(await r.put(A, [B.kid, C.kid])), [409, "recipients-mismatch"]);
 });
 
+test("a PUT that names a recipient twice is 400 malformed, and nothing is kept", async () => {
+  const r = relay();
+  assert.deepEqual(await code(await r.put(A, [B.kid, B.kid])), [400, "malformed"]);
+  assert.equal(await r.index.get(digest), null);
+  assert.equal(await r.blobs.read(digest), null);
+});
+
 test("a PUT whose bytes do not hash to the path's digest is 422, and nothing is kept", async () => {
   const r = relay();
   assert.deepEqual(await code(await r.put(A, [B.kid], new TextEncoder().encode("other bytes"))), [422, "digest-mismatch"]);

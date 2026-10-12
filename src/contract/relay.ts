@@ -231,6 +231,7 @@ const isSigKid = (value: unknown) => typeof value === "string" && value.length >
  * Reads a `Fabric-Relay-Request` value strictly: at most 8192 bytes; canonical base64url without padding (re-encoding
  * the bytes gives the same string); a JSON object whose RFC 8785 serialisation is those exact bytes; exactly the members
  * `alg`, `kid`, `recipients`, `iat`, `sig`, all strings except `recipients`, an array. Anything else is 400 `malformed`.
+ * (Distinct recipients and the other limits are `verifyBlobRequest`'s.)
  */
 export function parseRelayRequest(value: string | null | undefined): { ok: true; request: RelayRequest } | BlobRefusal {
   if (typeof value !== "string" || value.length === 0) return { ok: false, status: 400, code: "malformed" };
@@ -266,7 +267,7 @@ export interface BlobRequestContext {
 
 /**
  * The relay's check of a blob request (DEC-0047 item 8 and its 2026-10-12 annotation), in order: the header's form;
- * `alg`; the recipients (1–64 `#sig` kids, each ≤ 256 characters) and the signer's kid; `iat` (60 s either way); who may
+ * `alg`; the recipients (1–64 distinct `#sig` kids, each ≤ 256 characters) and the signer's kid; `iat` (60 s either way); who may
  * ask — a PUT's signer and every recipient in the admission set, a GET's signer in the admission set and in the stored
  * recipients, with the signed list equal to the stored one letter for letter; a PUT of a held blob with another list
  * is 409 `recipients-mismatch`; then the signature. A GET signature reused within its 60 s fetches the same blob for
@@ -277,7 +278,8 @@ export function verifyBlobRequest(header: string | null | undefined, ctx: BlobRe
   if (!parsed.ok) return parsed;
   const { alg, kid, recipients, iat, sig } = parsed.request;
   if (alg !== RELAY_ALG) return { ok: false, status: 401, code: "unsupported-alg" };
-  if (!isSigKid(kid) || recipients.length < 1 || recipients.length > MAX_BLOB_RECIPIENTS || !recipients.every(isSigKid)) {
+  if (!isSigKid(kid) || recipients.length < 1 || recipients.length > MAX_BLOB_RECIPIENTS || !recipients.every(isSigKid)
+      || new Set(recipients).size !== recipients.length) {
     return { ok: false, status: 400, code: "malformed" };
   }
   const t = instant(iat);

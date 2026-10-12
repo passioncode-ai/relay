@@ -7,7 +7,7 @@
   - The contract's reference code is vendored at the pinned commit, and its vectors run here.
   - `npm run check` is green: typecheck clean, 45 tests.
   - The Worker's tests run a whole session in workerd, for estate records signed by an EdDSA and by an ES256 passkey.
-- **Pin.** fabric-agent-contract `c00a0c3`, the merge of #59: the fix this work found (the contract's verifiers
+- **Pin.** fabric-agent-contract `51719e4`, the merge of #61 (distinct blob recipients). Before it: `c00a0c3`, the merge of #59: the fix this work found (the contract's verifiers
   threw in a Worker).
 - **Sessions live in memory.** A Durable Object holds one connection; the portable build holds its sockets.
   - Durable state starts with RLY-03 (mailboxes): SQLite in the Durable Object, files or SQLite in the portable
