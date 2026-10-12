@@ -176,6 +176,12 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
   - `RELAY_ORIGIN` unset: allowed only when `RELAY_HOST` is a loopback literal. The origin is then
     `http://RELAY_HOST:<bound port>`, computed after listen, and logged as `origin-defaulted`; only a local machine can
     authenticate. On any other host the relay refuses to start.
+  - **Stopping (RLY-010).** SIGTERM or SIGINT stops gracefully. New upgrades get 503, and HTTP answers carry
+    `connection: close`. Every session is closed 1001 through the estate hub, so each machine's `lastSeen` is written.
+    A socket still open after 5 s is terminated. Then the listener, the connections and both SQLite stores close, and
+    the relay logs `stopped {sessions, forced, ms}` and exits 0. Past a 10 s ceiling it logs `stop-timeout` and exits 1;
+    a second signal logs `stop-forced` and exits 1 at once. A supervisor waits longer than the ceiling (systemd
+    `TimeoutStopSec=20`, launchd `ExitTimeOut=20`).
 
 ## Found on the way
 

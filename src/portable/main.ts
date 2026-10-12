@@ -48,9 +48,27 @@ const server = served.server;
 const address = server.address() as AddressInfo;
 log({ event: "listening", host: address.address, port: address.port, origin: served.origin, version: VERSION, protocol: PROTOCOL });
 
+// SIGTERM or SIGINT: a graceful stop (every session closed 1001, lastSeen written, stores closed), exit 0. Past the
+// ceiling it exits 1 with stop-timeout; a second signal exits 1 at once with stop-forced. A supervisor must wait longer
+// than the ceiling before it kills (systemd TimeoutStopSec=20, launchd ExitTimeOut=20).
+const GRACE_MS = 5000;
+const CEILING_MS = GRACE_MS + 5000;
+let signalled = false;
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.once(signal, () => {
+  process.on(signal, () => {
+    if (signalled) {
+      log({ event: "stop-forced", signal });
+      process.exit(1);
+    }
+    signalled = true;
     log({ event: "stopping", signal });
-    server.close(() => process.exit(0));
+    setTimeout(() => {
+      log({ event: "stop-timeout", ms: CEILING_MS });
+      process.exit(1);
+    }, CEILING_MS).unref();
+    served.stop({ graceMs: GRACE_MS }).then(() => process.exit(0), (error: unknown) => {
+      log({ event: "stop-timeout", error: (error as Error).name });
+      process.exit(1);
+    });
   });
 }
