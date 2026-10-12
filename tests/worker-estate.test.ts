@@ -4,11 +4,12 @@ import { after, before, test } from "node:test";
 import type { Miniflare } from "miniflare";
 import { sign as signBytes } from "node:crypto";
 import { relayAuthSigningInput } from "../src/contract/relay.ts";
-import { estate } from "./estate-fixture.ts";
-import { session, startWorker } from "./worker-harness.ts";
+import { estate, revise } from "./estate-fixture.ts";
+import { authFrame, session, startLoggedWorker } from "./worker-harness.ts";
 
 let mf: Miniflare;
-before(async () => { mf = await startWorker(); });
+let events: (name: string) => Array<Record<string, any>>;
+before(async () => { ({ mf, events } = await startLoggedWorker()); });
 after(async () => { await mf?.dispose(); });
 
 test("the Worker answers health as the cloudflare runtime", async () => {
@@ -59,5 +60,27 @@ for (const passkey of ["EdDSA", "ES256"] as const) test(`a machine of an estate 
   stranger.ws.send(sign("m-stranger#sig", stranger.frames[0]!.nonce));
   await stranger.until(() => stranger.closed() !== undefined);
   assert.deepEqual([stranger.frames.at(-1)!.code, stranger.closed()], ["not-admitted", 4403]);
+  await bucket.delete(["estate/pinned.json", "estate/revisions/1.json"]);
+});
+
+test("a read that finds an older revision than the one held is not applied: the hub stays on the newer one", async () => {
+  const e = estate(new Date(), "ES256");
+  const bucket = await mf.getR2Bucket("BLOBS");
+  await bucket.put("estate/pinned.json", JSON.stringify(e.pinned));
+  await bucket.put("estate/revisions/1.json", JSON.stringify(e.record));
+  await bucket.put("estate/revisions/2.json", JSON.stringify(revise(e).record));
+  const welcomed = async () => {
+    const c = await session(mf);
+    await c.until(() => c.frames.length >= 1);
+    c.ws.send(authFrame(e.machine, c.frames[0]!.nonce));
+    await c.until(() => c.frames.some((f) => f.type === "welcome" || f.type === "error"));
+    c.ws.close(1000, "done");
+    return c.frames.find((f) => f.type === "welcome")?.estateRevision;
+  };
+  assert.equal(await welcomed(), 2);
+  await bucket.delete("estate/revisions/2.json");
+  const before = events("estate-rollback-refused").length;
+  assert.equal(await welcomed(), 2, "the read of revision 1 alone does not roll the hub back");
+  assert.deepEqual(events("estate-rollback-refused").slice(before).map((l) => [l.held, l.read]), [[2, 1]]);
   await bucket.delete(["estate/pinned.json", "estate/revisions/1.json"]);
 });

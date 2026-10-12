@@ -226,3 +226,64 @@ test("a distinct second press, over a second after the first, forces the stop: s
     relay.kill();
   }
 });
+
+/** The estate as the data directory holds it, read `delayMs` late: the window in which a stop or a close can land. */
+function slowEstate(root: string, delayMs: number) {
+  const inner = new FsEstateSource(root);
+  return { pinned: async () => { await new Promise((resolve) => setTimeout(resolve, delayMs)); return inner.pinned(); }, revisions: () => inner.revisions() };
+}
+
+/** A raw upgrade that completes the handshake and then never answers a close frame. */
+async function stuckUpgrade(port: number) {
+  const socket = tcp(port, "127.0.0.1");
+  await new Promise<void>((resolve) => socket.on("connect", () => resolve()));
+  socket.write(["GET /v1/connect HTTP/1.1", "Host: 127.0.0.1", "Upgrade: websocket", "Connection: Upgrade", "Sec-WebSocket-Version: 13",
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Protocol: fabric-relay.v1", "", ""].join("\r\n"));
+  socket.on("data", () => {});
+  socket.on("error", () => {});
+  return socket;
+}
+
+test("an upgrade still reading the estate when the stop begins is refused and terminated at the grace period", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const events: Array<Record<string, any>> = [];
+  const relay = await serve({ runtime: "portable", blobs: new FsBlobStore(root) }, { host: "127.0.0.1", port: 0, estate: slowEstate(root, 300), log: (event) => events.push(event) });
+  const port = (relay.server.address() as AddressInfo).port;
+  const stuck = await stuckUpgrade(port);
+  await new Promise((resolve) => setTimeout(resolve, 100)); // the handshake is done; the estate read is in flight
+  const started = Date.now();
+  const result = await within(relay.stop({ graceMs: 600 }), 3000);
+  assert.ok(result, "stop() did not resolve");
+  assert.ok(Date.now() - started < 1000, `stop took ${Date.now() - started} ms`);
+  assert.ok(result.forced >= 1, JSON.stringify(result));
+  assert.equal(result.sessions, 0, "the refused upgrade never became a session");
+  stuck.destroy();
+});
+
+test("a socket that closes while its estate is read never joins the hub", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const relay = await serve({ runtime: "portable", blobs: new FsBlobStore(root) }, { host: "127.0.0.1", port: 0, estate: slowEstate(root, 300) });
+  const port = (relay.server.address() as AddressInfo).port;
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/v1/connect`, "fabric-relay.v1");
+  await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve()));
+  ws.close(); // before the estate read ends
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  assert.deepEqual(await within(relay.stop({ graceMs: 100 }), 3000), { sessions: 0, forced: 0 });
+});
+
+test("SIGHUP (the terminal that started the relay closed) stops it gracefully: 1001, stopped, exit 0", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const relay = await launch(root, false);
+  try {
+    const a = await admitted(`ws://127.0.0.1:${relay.port}/v1/connect`, e.machine, "https://relay.test");
+    relay.child.kill("SIGHUP");
+    assert.equal((await within(a.closed, 5000))?.code, 1001);
+    assert.equal(await within(relay.exited, 8000), 0);
+    assert.ok(relay.lines.some((l) => l.event === "stopped"), JSON.stringify(relay.lines.map((l) => l.event)));
+  } finally {
+    relay.kill();
+  }
+});

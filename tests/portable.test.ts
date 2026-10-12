@@ -11,7 +11,7 @@ import { SqliteLastSeen } from "../src/portable/sqlite-last-seen.ts";
 import { mkdir } from "node:fs/promises";
 import { sign } from "node:crypto";
 import { relayAuthSigningInput } from "../src/contract/relay.ts";
-import { estate } from "./estate-fixture.ts";
+import { estate, revise } from "./estate-fixture.ts";
 import { serve } from "../src/portable/server.ts";
 
 const roots: string[] = [];
@@ -59,7 +59,7 @@ test("the file store will not build a path from anything but a digest", async ()
 
 test("the portable server routes through the same core: health, a non-upgrade connect refused, typed 404", async () => {
   const events: Record<string, unknown>[] = [];
-  const { server } = await serve(
+  const { server, stop } = await serve(
     { runtime: "portable", blobs: new FsBlobStore(await dataDir()) },
     { host: "127.0.0.1", port: 0, log: (event) => events.push(event) },
   );
@@ -80,12 +80,12 @@ test("the portable server routes through the same core: health, a non-upgrade co
     assert.deepEqual(events.filter((event) => event.event === "request").map((event) => [event.path, event.status]), [["/healthz", 200], ["/v1/connect", 405], ["/nope", 404]]);
     assert.ok(events.every((event) => !JSON.stringify(event).includes("hello")), "a request body never reaches the log");
   } finally {
-    await new Promise((resolve) => server.close(resolve));
+    await stop({ graceMs: 100 });
   }
 });
 
 test("the portable server refuses a declared body over its limit before reading it", async () => {
-  const { server } = await serve({ runtime: "portable", blobs: new FsBlobStore(await dataDir()) }, { host: "127.0.0.1", port: 0 });
+  const { server, stop } = await serve({ runtime: "portable", blobs: new FsBlobStore(await dataDir()) }, { host: "127.0.0.1", port: 0 });
   try {
     const { port } = server.address() as AddressInfo;
     const response = await new Promise<{ status: number; body: string }>((resolve, reject) => {
@@ -102,7 +102,7 @@ test("the portable server refuses a declared body over its limit before reading 
     assert.equal(response.status, 413);
     assert.equal(JSON.parse(response.body).error.code, "too-large");
   } finally {
-    await new Promise((resolve) => server.close(resolve));
+    await stop({ graceMs: 100 });
   }
 });
 
@@ -132,9 +132,9 @@ async function relayWithEstate(withEstate = true) {
     await writeFile(join(root, "estate", "revisions", "1.json"), JSON.stringify(e.record));
   }
   const events: Record<string, unknown>[] = [];
-  const { server } = await serve({ runtime: "portable", blobs: new FsBlobStore(root) }, { host: "127.0.0.1", port: 0, estate: new FsEstateSource(root), mailbox: new SqliteMailbox(join(root, "mailbox.sqlite")), lastSeen: new SqliteLastSeen(join(root, "presence.sqlite")), log: (event) => events.push(event) });
+  const { server, stop } = await serve({ runtime: "portable", blobs: new FsBlobStore(root) }, { host: "127.0.0.1", port: 0, estate: new FsEstateSource(root), mailbox: new SqliteMailbox(join(root, "mailbox.sqlite")), lastSeen: new SqliteLastSeen(join(root, "presence.sqlite")), log: (event) => events.push(event) });
   const port = (server.address() as AddressInfo).port;
-  return { server, e, events, root, url: `ws://127.0.0.1:${port}/v1/connect`, origin: `http://127.0.0.1:${port}` };
+  return { server, stop, e, events, root, url: `ws://127.0.0.1:${port}/v1/connect`, origin: `http://127.0.0.1:${port}` };
 }
 
 const authFrame = (e: ReturnType<typeof estate>, origin: string, nonce: string, kid = e.machine.kid, privateKey = e.machine.privateKey) => {
@@ -160,7 +160,7 @@ test("a machine of the verified estate record opens a session: hello, auth, welc
     assert.deepEqual([c.frames[2]!.type, c.frames[2]!.id], ["pong", "p1"]);
     c.ws.close();
   } finally {
-    await new Promise((resolve) => relay.server.close(resolve));
+    await relay.stop({ graceMs: 100 });
   }
 });
 
@@ -175,7 +175,7 @@ test("a machine the record does not list is refused 4403; with no estate at all,
       assert.equal(c.frames.at(-1)!.code, "not-admitted");
       assert.equal(c.closed()!.code, 4403);
     } finally {
-      await new Promise((resolve) => relay.server.close(resolve));
+      await relay.stop({ graceMs: 100 });
     }
   }
 });
@@ -188,7 +188,7 @@ test("an upgrade that does not offer fabric-relay.v1 is refused before any sessi
     assert.equal(c.frames.length, 0);
     assert.ok(relay.events.some((event) => event.event === "upgrade-refused" && event.status === 400));
   } finally {
-    await new Promise((resolve) => relay.server.close(resolve));
+    await relay.stop({ graceMs: 100 });
   }
 });
 
@@ -215,7 +215,7 @@ test("two machines of the record exchange a message through the portable relay: 
     box.close();
     a.ws.close(); b.ws.close();
   } finally {
-    await new Promise((resolve) => relay.server.close(resolve));
+    await relay.stop({ graceMs: 100 });
   }
 });
 
@@ -239,7 +239,7 @@ test("through the portable relay a machine sees another come online and go offli
     assert.deepEqual(b.frames.filter((f) => f.type === "presence").at(-1), { ...offline, id: b.frames.filter((f) => f.type === "presence").at(-1)!.id });
     b.ws.close();
   } finally {
-    await new Promise((resolve) => relay.server.close(resolve));
+    await relay.stop({ graceMs: 100 });
   }
 });
 
@@ -254,6 +254,41 @@ test("the portable hub's one timer refuses a machine that never authenticates, 1
     assert.deepEqual([c.frames.at(-1)!.code, c.closed()!.code], ["unauthenticated", 4401]);
     assert.ok(waited >= 10_000 && waited <= 12_000, `refused after ${waited} ms`);
   } finally {
-    await new Promise((resolve) => relay.server.close(resolve));
+    await relay.stop({ graceMs: 100 });
+  }
+});
+
+/** Opens a session for `machine` and answers the revision `welcome` names. */
+async function welcomeRevision(relay: Awaited<ReturnType<typeof relayWithEstate>>, machine = relay.e.machine) {
+  const c = connect(relay.url);
+  await c.until(() => c.frames.length >= 1);
+  c.ws.send(authFrame(relay.e, relay.origin, c.frames[0]!.nonce, machine.kid, machine.privateKey));
+  await c.until(() => c.frames.some((f) => f.type === "welcome" || f.type === "error"));
+  c.ws.close();
+  return c.frames.find((f) => f.type === "welcome")?.estateRevision as number | undefined;
+}
+
+test("a read that finds an older revision than the one held is not applied: the hub stays on the newer one", async () => {
+  const relay = await relayWithEstate();
+  try {
+    await writeFile(join(relay.root, "estate", "revisions", "2.json"), JSON.stringify(revise(relay.e).record));
+    assert.equal(await welcomeRevision(relay), 2);
+    await rm(join(relay.root, "estate", "revisions", "2.json"));
+    assert.equal(await welcomeRevision(relay), 2, "the read of revision 1 alone does not roll the hub back");
+    assert.deepEqual(relay.events.filter((e) => e.event === "estate-rollback-refused").map((e) => [e.held, e.read]), [[2, 1]]);
+  } finally {
+    await relay.stop({ graceMs: 100 });
+  }
+});
+
+test("a revision file that does not parse is refused like any bad revision: the ones before it still admit", async () => {
+  const relay = await relayWithEstate();
+  try {
+    await writeFile(join(relay.root, "estate", "revisions", "2.json"), "{not json");
+    assert.equal(await welcomeRevision(relay), 1);
+    const refused = relay.events.find((e) => e.event === "estate-revision-refused") as { refused: Array<{ revision: number }> } | undefined;
+    assert.deepEqual(refused?.refused.map((r) => r.revision), [2]);
+  } finally {
+    await relay.stop({ graceMs: 100 });
   }
 });

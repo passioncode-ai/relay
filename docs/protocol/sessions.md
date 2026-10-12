@@ -180,12 +180,13 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
   origin**, the same for sessions and blob routes (`src/portable/origin.ts`, RLY-017):
   - `RELAY_ORIGIN` set: it must be a bare `https://` origin (behind a TLS terminator). It is normalised, so the host is
     lowercased and `:443` and a trailing `/` are dropped. A path, query, fragment, credentials or another scheme refuse
-    to start (`refused-to-start`, exit 2). `http://` is accepted only on a loopback literal (`127.0.0.0/8`, `[::1]`);
-    the name `localhost` is refused, since a name resolves where a literal cannot.
+    to start (`refused-to-start`, exit 2). `http://` is accepted only on a loopback literal (`127.0.0.0/8`, `[::1]`),
+    and only when `RELAY_HOST` is a loopback literal too; the name `localhost` is refused, since a name resolves where
+    a literal cannot.
   - `RELAY_ORIGIN` unset: allowed only when `RELAY_HOST` is a loopback literal. The origin is then
     `http://RELAY_HOST:<bound port>`, computed after listen, and logged as `origin-defaulted`; only a local machine can
     authenticate. On any other host the relay refuses to start.
-  - **Stopping (RLY-010).** SIGTERM or SIGINT stops gracefully. New upgrades get 503, and HTTP answers carry
+  - **Stopping (RLY-010).** SIGTERM, SIGINT or SIGHUP (the terminal that started the relay closed) stops gracefully. New upgrades get 503, and HTTP answers carry
     `connection: close`. Every session is closed 1001 through the estate hub, so each machine's `lastSeen` is written.
     A socket still open after 5 s is terminated. Then the listener, the connections and both SQLite stores close, and
     the relay logs `stopped {sessions, forced, ms}` and exits 0. Past a 10 s ceiling it logs `stop-timeout` and exits 1;
@@ -194,8 +195,12 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
     (`npm run portable` forwards the terminal's SIGINT, so the relay sees one Ctrl-C twice) and is logged
     `signal-repeated`. A supervisor waits longer than the ceiling (systemd `TimeoutStopSec=20`, launchd
     `ExitTimeOut=20`).
-    - The 503 carries `retry-after: 5`. An upgrade that was already past that gate when the stop began is closed 1001,
-      and terminated with the others at the grace period if it has not closed.
+    - The 503 carries `retry-after: 5`. An upgrade that was already past that gate when the stop began (its estate
+      read in flight) is waited for, then closed 1001, and terminated with the others at the grace period if it has not
+      closed. A socket that closes while its estate is read never joins the hub.
+    - A revision file that does not parse is refused like any other bad revision, so the revisions before it still
+      hold; a read that fails as a whole (an unparsable `pinned.json`) is logged `estate-unreadable` and the hub keeps
+      what it held.
     - `/healthz` keeps answering 200 while the relay stops, until iteration node A-6 makes health report it.
 
 ## Found on the way

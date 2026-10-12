@@ -25,8 +25,11 @@ release iteration 1's inventory findings (Project Observatory `docs/runs/2026-10
     the origin is the loopback host and the bound port.
   - **Changed:** a non-loopback `RELAY_HOST` without `RELAY_ORIGIN` now refuses to start (exit 2); it used to
     default to an http origin.
-  - **Graceful stop** on SIGTERM/SIGINT (RLY-010): every session is closed 1001, `lastSeen` is written, the
-    SQLite stores are closed, and the process exits 0. One Ctrl-C through `npm run portable` is one press.
+  - **Graceful stop** on SIGTERM, SIGINT or SIGHUP (RLY-010): every session is closed 1001, `lastSeen` is written,
+    the SQLite stores are closed, and the process exits 0. One Ctrl-C through `npm run portable` is one press. An
+    upgrade whose estate read is in flight when the stop begins is refused and terminated at the grace period.
+  - An unparsable revision file is refused like any bad revision instead of taking the relay down; a socket that
+    closes during its estate read never joins the hub.
 - **Changed: open sessions follow the latest estate read**, for sends and presence (each connection used to keep
   the read it opened with). A read never rolls back to an older revision.
 - **One log line shape** in both builds: `{at, service, runtime, event, …}`.
