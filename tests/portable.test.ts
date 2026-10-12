@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { DigestMismatch, getVerified, putVerified, sha256Digest } from "../src/core/digest.ts";
-import { FsBlobStore } from "../src/portable/fs-store.ts";
+import { FsBlobStore, FsEstateSource } from "../src/portable/fs-store.ts";
+import { mkdir } from "node:fs/promises";
+import { sign } from "node:crypto";
+import { relayAuthSigningInput } from "../src/contract/relay.ts";
+import { estate } from "./estate-fixture.ts";
 import { serve } from "../src/portable/server.ts";
 
 const roots: string[] = [];
@@ -51,7 +55,7 @@ test("the file store will not build a path from anything but a digest", async ()
   await assert.rejects(store.write("sha256:../x", bytes("x")), TypeError);
 });
 
-test("the portable server routes through the same core: health, refused sessions, typed 404", async () => {
+test("the portable server routes through the same core: health, a non-upgrade connect refused, typed 404", async () => {
   const events: Record<string, unknown>[] = [];
   const server = await serve(
     { runtime: "portable", blobs: new FsBlobStore(await dataDir()) },
@@ -63,15 +67,15 @@ test("the portable server routes through the same core: health, refused sessions
     assert.equal(health.status, 200);
     assert.equal((await health.json()).runtime, "portable");
 
-    const connect = await fetch(`${base}/v0/connect`, { method: "POST", body: "hello" });
-    assert.equal(connect.status, 501);
-    assert.equal((await connect.json()).error.code, "protocol-not-ready");
+    const connect = await fetch(`${base}/v1/connect`, { method: "POST", body: "hello" });
+    assert.equal(connect.status, 405);
+    assert.equal((await connect.json()).error.code, "method-not-allowed");
 
     const missing = await fetch(`${base}/nope`);
     assert.equal(missing.status, 404);
     await missing.body?.cancel();
 
-    assert.deepEqual(events.map((event) => [event.path, event.status]), [["/healthz", 200], ["/v0/connect", 501], ["/nope", 404]]);
+    assert.deepEqual(events.map((event) => [event.path, event.status]), [["/healthz", 200], ["/v1/connect", 405], ["/nope", 404]]);
     assert.ok(events.every((event) => !JSON.stringify(event).includes("hello")), "a request body never reaches the log");
   } finally {
     await new Promise((resolve) => server.close(resolve));
@@ -84,7 +88,7 @@ test("the portable server refuses a declared body over its limit before reading 
     const { port } = server.address() as AddressInfo;
     const response = await new Promise<{ status: number; body: string }>((resolve, reject) => {
       import("node:http").then(({ request }) => {
-        const req = request({ host: "127.0.0.1", port, path: "/v0/connect", method: "POST", headers: { "content-length": String(64 * 1024 * 1024) } }, (res) => {
+        const req = request({ host: "127.0.0.1", port, path: "/v1/connect", method: "POST", headers: { "content-length": String(64 * 1024 * 1024) } }, (res) => {
           let body = "";
           res.on("data", (chunk) => (body += chunk));
           res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
@@ -99,3 +103,90 @@ test("the portable server refuses a declared body over its limit before reading 
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+/** Opens a WebSocket to the relay and collects what it sends until it closes. */
+function connect(url: string, protocols: string | string[] = "fabric-relay.v1") {
+  const ws = new WebSocket(url, protocols);
+  const frames: Array<Record<string, any>> = [];
+  const waiters: Array<() => void> = [];
+  let closed: { code: number } | undefined;
+  ws.addEventListener("message", (event) => { frames.push(JSON.parse(String(event.data))); waiters.splice(0).forEach((w) => w()); });
+  ws.addEventListener("close", (event) => { closed = { code: event.code }; waiters.splice(0).forEach((w) => w()); });
+  ws.addEventListener("error", () => waiters.splice(0).forEach((w) => w()));
+  const until = async (done: () => boolean, ms = 5000) => {
+    const end = Date.now() + ms;
+    while (!done() && Date.now() < end) await new Promise<void>((resolve) => { waiters.push(resolve); setTimeout(resolve, 50); });
+    assert.ok(done(), `timed out: ${JSON.stringify({ frames, closed })}`);
+  };
+  return { ws, frames, until, closed: () => closed };
+}
+
+async function relayWithEstate(withEstate = true) {
+  const root = await dataDir();
+  const e = estate();
+  if (withEstate) {
+    await mkdir(join(root, "estate", "revisions"), { recursive: true });
+    await writeFile(join(root, "estate", "pinned.json"), JSON.stringify(e.pinned));
+    await writeFile(join(root, "estate", "revisions", "1.json"), JSON.stringify(e.record));
+  }
+  const events: Record<string, unknown>[] = [];
+  const server = await serve({ runtime: "portable", blobs: new FsBlobStore(root) }, { host: "127.0.0.1", port: 0, estate: new FsEstateSource(root), log: (event) => events.push(event) });
+  const port = (server.address() as AddressInfo).port;
+  return { server, e, events, url: `ws://127.0.0.1:${port}/v1/connect`, origin: `http://127.0.0.1:${port}` };
+}
+
+const authFrame = (e: ReturnType<typeof estate>, origin: string, nonce: string, kid = e.machine.kid) => {
+  const iat = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  const fields = { relay: origin, nonce, estate: "estate-5d0f1a", kid, iat };
+  const sig = sign("sha256", Buffer.from(relayAuthSigningInput(fields)), { key: e.machine.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
+  return JSON.stringify({ v: 1, type: "auth", id: "a1", protocol: "fabric-relay/0.1", alg: "ES256", ...fields, sig });
+};
+
+test("a machine of the verified estate record opens a session: hello, auth, welcome, ping/pong", async () => {
+  const relay = await relayWithEstate();
+  try {
+    const c = connect(relay.url);
+    await c.until(() => c.frames.length >= 1);
+    assert.equal(c.ws.protocol, "fabric-relay.v1");
+    const hello = c.frames[0]!;
+    assert.deepEqual([hello.type, hello.relay], ["hello", relay.origin]);
+    c.ws.send(authFrame(relay.e, relay.origin, hello.nonce));
+    await c.until(() => c.frames.length >= 2);
+    assert.deepEqual([c.frames[1]!.type, c.frames[1]!.estateRevision], ["welcome", 1]);
+    c.ws.send(JSON.stringify({ v: 1, type: "ping", id: "p1" }));
+    await c.until(() => c.frames.length >= 3);
+    assert.deepEqual([c.frames[2]!.type, c.frames[2]!.id], ["pong", "p1"]);
+    c.ws.close();
+  } finally {
+    await new Promise((resolve) => relay.server.close(resolve));
+  }
+});
+
+test("a machine the record does not list is refused 4403; with no estate at all, so is every machine", async () => {
+  for (const withEstate of [true, false]) {
+    const relay = await relayWithEstate(withEstate);
+    try {
+      const c = connect(relay.url);
+      await c.until(() => c.frames.length >= 1);
+      c.ws.send(authFrame(relay.e, relay.origin, c.frames[0]!.nonce, withEstate ? "m-stranger#sig" : relay.e.machine.kid));
+      await c.until(() => c.closed() !== undefined);
+      assert.equal(c.frames.at(-1)!.code, "not-admitted");
+      assert.equal(c.closed()!.code, 4403);
+    } finally {
+      await new Promise((resolve) => relay.server.close(resolve));
+    }
+  }
+});
+
+test("an upgrade that does not offer fabric-relay.v1 is refused before any session", async () => {
+  const relay = await relayWithEstate();
+  try {
+    const c = connect(relay.url, "chat");
+    await c.until(() => c.closed() !== undefined);
+    assert.equal(c.frames.length, 0);
+    assert.ok(relay.events.some((event) => event.event === "upgrade-refused" && event.status === 400));
+  } finally {
+    await new Promise((resolve) => relay.server.close(resolve));
+  }
+});
+

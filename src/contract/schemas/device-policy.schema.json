@@ -1,0 +1,428 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fabric.passioncode.ai/agent-contract/0.1.0/schemas/device-policy.schema.json",
+  "title": "Signed device policy (fabric-device/0.1, DEC-0031)",
+  "description": "One layer of device policy. Precedence is mdm > server > user; a locked key cannot be overridden by a lower layer (FAC-SEM-042). Unknown keys are kept and ignored.",
+  "type": "object",
+  "required": [
+    "protocol",
+    "kind",
+    "org",
+    "source",
+    "revision",
+    "issuedAt",
+    "keys"
+  ],
+  "properties": {
+    "protocol": {
+      "$ref": "device-common.schema.json#/$defs/protocol"
+    },
+    "kind": {
+      "const": "policy"
+    },
+    "org": {
+      "$ref": "device-common.schema.json#/$defs/org"
+    },
+    "source": {
+      "$ref": "device-common.schema.json#/$defs/source"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "issuedAt": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "noticeVersion": {
+      "$ref": "activity-common.schema.json#/$defs/noticeVersion",
+      "description": "The version of the organization's notice this policy is issued under (DEC-0052). A device shows that notice; collection waits for its acknowledgement (collectionStart, DEC-0053)."
+    },
+    "noticeDeadline": {
+      "$ref": "common.schema.json#/$defs/timestamp",
+      "description": "In an mdm layer: when collection starts even without the notice's acknowledgement (collectionStart is the earlier of the two, DEC-0053). Ignored in any other layer."
+    },
+    "expiresAt": {
+      "$ref": "common.schema.json#/$defs/timestamp",
+      "description": "After this time the layer's locks stay in force, and grants, remote execution and calls with a person's key for others stop until a newer policy arrives (FAC-SEM-068, DEC-0053)."
+    },
+    "keys": {
+      "type": "object",
+      "maxProperties": 128,
+      "propertyNames": {
+        "pattern": "^(x-[a-z][a-z0-9-]{0,31}\\.)?[a-z][a-z0-9_]{0,31}(\\.[a-z][a-z0-9_]{0,31}){0,3}$"
+      },
+      "properties": {
+        "logging.required": {
+          "type": "object",
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "type": "boolean"
+            },
+            "locked": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "build_channel.allowed": {
+          "type": "object",
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "enum": [
+                "any",
+                "official",
+                "attested"
+              ]
+            },
+            "locked": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "telemetry.endpoint": {
+          "type": "object",
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "type": "string",
+              "pattern": "^https://[^\\s/?#@]+(/[^\\s?#]*)?$",
+              "maxLength": 512
+            },
+            "locked": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "telemetry.git_branch": {
+          "type": "object",
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "enum": [
+                "omit",
+                "hash",
+                "plain"
+              ]
+            },
+            "locked": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "retention.raw_days": {
+          "type": "object",
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3650
+            },
+            "locked": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "accounts.tenants": {
+          "type": "object",
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "required": [
+                  "provider",
+                  "tenantRef",
+                  "accountClass"
+                ],
+                "properties": {
+                  "provider": {
+                    "$ref": "activity-common.schema.json#/$defs/name"
+                  },
+                  "tenantRef": {
+                    "$ref": "activity-common.schema.json#/$defs/tenantRef"
+                  },
+                  "accountClass": {
+                    "const": "organization",
+                    "description": "Only the organization's own tenants are listed; an account on no listed tenant is personal or unknown."
+                  }
+                },
+                "additionalProperties": false
+              },
+              "description": "The organization's provider tenants (DEC-0053): a session on one of them is an organization session (account.class, DEC-0052)."
+            },
+            "locked": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "models.credentials": {
+          "type": "object",
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "required": [
+                  "credentialRef",
+                  "provider",
+                  "credentialKind",
+                  "fingerprint",
+                  "dataClasses"
+                ],
+                "properties": {
+                  "credentialRef": {
+                    "$ref": "activity-common.schema.json#/$defs/opaqueId",
+                    "description": "The organization's name for the key slot; never the key."
+                  },
+                  "provider": {
+                    "$ref": "activity-common.schema.json#/$defs/name"
+                  },
+                  "credentialKind": {
+                    "const": "api-org",
+                    "description": "Organization API keys only: never a subscription, a seat or a person's own key (DEC-0053)."
+                  },
+                  "fingerprint": {
+                    "type": "string",
+                    "pattern": "^hmac-sha256:[a-f0-9]{64}$",
+                    "description": "HMAC-SHA-256 of the key under the organization's salt: lets a node recognise the slot that holds this key, and so derive its provenance, without the policy carrying the key."
+                  },
+                  "callers": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "uniqueItems": true,
+                    "items": {
+                      "$ref": "activity-common.schema.json#/$defs/opaqueId"
+                    },
+                    "description": "Who may call through it: membership, group or service ids; absent means every member."
+                  },
+                  "quota": {
+                    "type": "object",
+                    "required": [
+                      "period",
+                      "usd"
+                    ],
+                    "properties": {
+                      "period": {
+                        "enum": [
+                          "day",
+                          "month"
+                        ]
+                      },
+                      "usd": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]{0,8})(\\.[0-9]{1,6})?$",
+                        "description": "A decimal string: a signed policy holds no fraction."
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "dataClasses": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "uniqueItems": true,
+                    "items": {
+                      "enum": [
+                        "public",
+                        "internal",
+                        "confidential",
+                        "restricted"
+                      ]
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "description": "The organization's API keys a device may use (DEC-0053). A personal key is never listed."
+            },
+            "locked": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "models.personal_key_sharing": {
+          "type": "object",
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "enum": [
+                "allowed",
+                "forbidden"
+              ],
+              "description": "Whether a person's own key may serve someone else's call; absent means forbidden (FAC-SEM-068)."
+            },
+            "locked": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "workspace.folders": {
+          "type": "object",
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "type": "array",
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "maxLength": 256,
+                "pattern": "^(?![/\\\\~])(?![A-Za-z]:)(?!(?:.*[/\\\\])?\\.\\.(?:[/\\\\]|$))[A-Za-z0-9._*/\\\\-]+$"
+              },
+              "description": "The organization's work folders, relative to the person's home directory, so a value never names a user; `*` matches one path segment."
+            },
+            "locked": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "machine.mode": {
+          "type": "object",
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "enum": [
+                "A",
+                "C"
+              ],
+              "description": "C (the default): the organization manages only its own work on the machine; A: the organization administers the whole machine, set only by an mdm layer (FAC-SEM-042, DEC-0053)."
+            },
+            "locked": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "properties": {
+          "value": {
+            "$ref": "device-common.schema.json#/$defs/canonicalValue"
+          },
+          "locked": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "signature": {
+      "type": "object",
+      "required": [
+        "alg",
+        "keyId",
+        "value"
+      ],
+      "properties": {
+        "alg": {
+          "const": "ed25519"
+        },
+        "keyId": {
+          "$ref": "activity-common.schema.json#/$defs/opaqueId"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]{86}==$"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "const": "server"
+          }
+        },
+        "required": [
+          "source"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "signature": true
+        },
+        "required": [
+          "signature"
+        ]
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "const": "user"
+          }
+        },
+        "required": [
+          "source"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "signature": false,
+          "keys": {
+            "type": "object",
+            "patternProperties": {
+              "^": {
+                "type": "object",
+                "properties": {
+                  "locked": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

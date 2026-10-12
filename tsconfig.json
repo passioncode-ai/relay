@@ -3,8 +3,13 @@
     "target": "ES2023",
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "lib": ["ES2023"],
-    "types": ["@cloudflare/workers-types"],
+    "lib": [
+      "ES2023"
+    ],
+    "types": [
+      "@cloudflare/workers-types",
+      "node"
+    ],
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
@@ -12,5 +17,9 @@
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true
   },
-  "include": ["src/core/**/*.ts", "src/cloudflare/**/*.ts"]
+  "include": [
+    "src/core/**/*.ts",
+    "src/cloudflare/**/*.ts",
+    "src/contract/**/*.ts"
+  ]
 }

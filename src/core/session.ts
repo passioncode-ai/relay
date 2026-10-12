@@ -1,0 +1,137 @@
+// #region relay-session — docs: docs/protocol/sessions.md
+// One relay connection, the same in both builds (the Worker's Durable Object and the portable server): `hello` with a
+// fresh nonce, the machine's `auth` within 10 s checked by the contract's `admit` against the admission set, then
+// `welcome` and the session's own frames. Every check of a signature or a key is the contract's (src/contract/); this
+// module only sequences them and keeps the transport rules of DEC-0047 item 3.
+//
+// What RLY-02 serves after `welcome`: `ping` → `pong`, and a named refusal for everything else. Messages, blobs,
+// presence and deltas are RLY-03 and RLY-06, and are answered `error` `internal` "not served yet" rather than dropped.
+
+import type { AdmissionResult } from "../contract/relay.ts";
+import {
+  AUTH_DEADLINE_SECONDS, CLOSE_CODES, FRAME_TYPES, IDLE_CLOSE_SECONDS, MAX_FRAME_BYTES, RELAY_PROTOCOL, admit,
+  type AuthFrame, type RelayErrorCode,
+} from "../contract/relay.ts";
+
+/** What the transport gives a session: send a text frame, close with a code. */
+export interface SessionIo {
+  send(text: string): void;
+  close(code: number, reason: string): void;
+}
+
+export interface SessionEnv {
+  relay: string; // this relay's origin, signed into every relay-auth/1
+  now: () => Date;
+  nonce: () => string; // 32 random bytes, base64url
+  sessionId: () => string;
+  admission: () => AdmissionResult;
+  log?: (event: Record<string, unknown>) => void;
+}
+
+export type SessionState = "awaiting-auth" | "admitted" | "closed";
+
+/**
+ * Until DEC-0054 defines the revocation delta, a relay has carried none: the head is sequence 0 over no bytes. It has
+ * the check-in's `records.revocationDelta` shape, so a node can report it unchanged.
+ */
+export const EMPTY_DELTA_HEAD = { sequence: 0, sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" } as const;
+
+const NOT_SERVED: ReadonlySet<string> = new Set(FRAME_TYPES.filter((type) => !["hello", "auth", "welcome", "ping", "pong", "error"].includes(type)));
+const isFrame = (value: unknown): value is { v: unknown; type: unknown; id: unknown } & Record<string, unknown> =>
+  !!value && typeof value === "object" && !Array.isArray(value);
+
+export class RelaySession {
+  state: SessionState = "awaiting-auth";
+  kid: string | undefined;
+  private nonce = "";
+  private nonceUsed = false;
+  private openedAt = 0;
+  private lastFrameAt = 0;
+  private outbound = 0;
+
+  constructor(private readonly io: SessionIo, private readonly env: SessionEnv) {}
+
+  /** The connection is open: greet with this connection's nonce. */
+  open(): void {
+    this.nonce = this.env.nonce();
+    this.openedAt = this.lastFrameAt = this.env.now().getTime();
+    this.send({ type: "hello", protocol: RELAY_PROTOCOL, relay: this.env.relay, nonce: this.nonce, time: this.env.now().toISOString() });
+  }
+
+  /** One frame from the machine. A binary frame or one over 1 MiB closes the connection; text is a JSON frame. */
+  receive(data: string | Uint8Array | ArrayBuffer): void {
+    if (this.state === "closed") return;
+    if (typeof data !== "string") return this.close(CLOSE_CODES.binary, "binary frames are not part of fabric-relay/0.1");
+    this.lastFrameAt = this.env.now().getTime();
+    if (new TextEncoder().encode(data).byteLength > MAX_FRAME_BYTES) {
+      this.error("too-large", `frames are at most ${MAX_FRAME_BYTES} bytes`);
+      return this.close(CLOSE_CODES.tooLarge, "frame too large");
+    }
+    let frame: unknown;
+    try {
+      frame = JSON.parse(data);
+    } catch {
+      frame = undefined;
+    }
+    if (!isFrame(frame) || frame.v !== 1 || typeof frame.type !== "string" || typeof frame.id !== "string") {
+      if (this.state === "awaiting-auth") return this.refuse("unauthenticated", "the first frame is a fabric-relay/0.1 auth frame");
+      return this.error("unknown-type", "not a fabric-relay/0.1 frame");
+    }
+    if (frame.type === "auth") return this.authenticate(frame as unknown as AuthFrame);
+    if (this.state === "awaiting-auth") return this.refuse("unauthenticated", "authenticate before any other frame");
+    if (frame.type === "ping") return this.send({ type: "pong", id: frame.id });
+    if (frame.type === "pong") return;
+    if (NOT_SERVED.has(frame.type)) return this.error("internal", `${frame.type} is not served by this relay version yet`, frame.id);
+    return this.error("unknown-type", `unknown frame type ${JSON.stringify(frame.type).slice(0, 64)}`, frame.id);
+  }
+
+  /** Called by the adapter's timer: the 10 s auth deadline and the 90 s idle close (DEC-0047 item 3). */
+  tick(): void {
+    if (this.state === "closed") return;
+    const now = this.env.now().getTime();
+    if (this.state === "awaiting-auth" && now - this.openedAt > AUTH_DEADLINE_SECONDS * 1000) {
+      return this.refuse("unauthenticated", `no auth within ${AUTH_DEADLINE_SECONDS} s`);
+    }
+    if (now - this.lastFrameAt > IDLE_CLOSE_SECONDS * 1000) this.close(CLOSE_CODES.idle, `silent for ${IDLE_CLOSE_SECONDS} s`);
+  }
+
+  private authenticate(frame: AuthFrame): void {
+    const admission = this.env.admission();
+    const result = admit(frame, {
+      relay: this.env.relay, nonce: this.nonce, nonceUsed: this.nonceUsed, now: this.env.now(),
+      admittedKey: (kid) => (admission.ok ? admission.set.get(kid) : undefined),
+    });
+    this.nonceUsed = true;
+    if (!result.ok) {
+      this.env.log?.({ event: "auth-refused", code: result.code, admission: admission.ok ? "held" : admission.refusal });
+      return this.refuse(result.code, admission.ok || result.code !== "not-admitted" ? result.code : `no verified estate record (${admission.refusal})`);
+    }
+    if (!admission.ok) return this.refuse("not-admitted", `no verified estate record (${admission.refusal})`); // unreachable: admit found no key
+    this.state = "admitted";
+    this.kid = result.kid;
+    this.env.log?.({ event: "admitted", kid: result.kid, revision: admission.revision });
+    this.send({ type: "welcome", session: this.env.sessionId(), estateRevision: admission.revision, deltaHead: EMPTY_DELTA_HEAD, heartbeat: null });
+  }
+
+  /** An error frame and, for an authentication failure, the close DEC-0047 item 3 names. */
+  private refuse(code: RelayErrorCode, message: string): void {
+    this.error(code, message);
+    this.close(code === "not-admitted" ? CLOSE_CODES.notAdmitted : CLOSE_CODES.unauthenticated, code);
+  }
+
+  private error(code: RelayErrorCode, message: string, id?: string): void {
+    this.send({ type: "error", ...(id ? { replyTo: id } : {}), code, message: message.replace(/[\r\n]+/g, " ") });
+  }
+
+  private send(frame: Record<string, unknown>): void {
+    this.outbound += 1;
+    this.io.send(JSON.stringify({ v: 1, id: `r${this.outbound}`, ...frame }));
+  }
+
+  private close(code: number, reason: string): void {
+    if (this.state === "closed") return;
+    this.state = "closed";
+    this.io.close(code, reason);
+  }
+}
+// #endregion relay-session

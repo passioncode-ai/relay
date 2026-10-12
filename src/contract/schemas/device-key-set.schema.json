@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fabric.passioncode.ai/agent-contract/0.1.0/schemas/device-key-set.schema.json",
+  "title": "Policy key set signed by the organization's root key (fabric-device/0.1, DEC-0031)",
+  "description": "The keys a device trusts for policy signatures, each with its validity window, signed by the root key from enrollment. A rotation overlaps: a key leaves the set only after its notAfter or by an explicit revocation (FAC-SEM-046).",
+  "type": "object",
+  "required": [
+    "protocol",
+    "kind",
+    "org",
+    "revision",
+    "issuedAt",
+    "keys",
+    "signature"
+  ],
+  "properties": {
+    "protocol": {
+      "$ref": "device-common.schema.json#/$defs/protocol"
+    },
+    "kind": {
+      "const": "policy-key-set"
+    },
+    "org": {
+      "$ref": "device-common.schema.json#/$defs/org"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "issuedAt": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "keys": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "required": [
+          "keyId",
+          "publicKey",
+          "notBefore",
+          "notAfter"
+        ],
+        "properties": {
+          "keyId": {
+            "$ref": "activity-common.schema.json#/$defs/opaqueId"
+          },
+          "publicKey": {
+            "$ref": "#/$defs/rawKey"
+          },
+          "notBefore": {
+            "$ref": "common.schema.json#/$defs/timestamp"
+          },
+          "notAfter": {
+            "$ref": "common.schema.json#/$defs/timestamp"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "revoked": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "$ref": "activity-common.schema.json#/$defs/opaqueId"
+      },
+      "description": "Key ids removed before their notAfter."
+    },
+    "signature": {
+      "type": "object",
+      "required": [
+        "alg",
+        "keyId",
+        "value"
+      ],
+      "properties": {
+        "alg": {
+          "enum": [
+            "ed25519",
+            "es256"
+          ],
+          "description": "The root key's algorithm (DEC-0053)."
+        },
+        "keyId": {
+          "$ref": "activity-common.schema.json#/$defs/opaqueId"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]{86}==$",
+          "description": "64 bytes, base64: an Ed25519 signature, or an ES256 signature as R ‖ S."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "rawKey": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$",
+      "not": {
+        "enum": [
+          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA=",
+          "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+          "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA=",
+          "JuiVj8KyJ7BFw/SJ8u+Y8NXfrAXTxjM5sTgCiG1T/AU=",
+          "JuiVj8KyJ7BFw/SJ8u+Y8NXfrAXTxjM5sTgCiG1T/IU=",
+          "xxdqcD1N2E+6PAt2DRBnDyogU/osOczGTsf9d5KsA3o=",
+          "xxdqcD1N2E+6PAt2DRBnDyogU/osOczGTsf9d5KsA/o=",
+          "7P///////////////////////////////////////38=",
+          "7P////////////////////////////////////////8=",
+          "7f///////////////////////////////////////38=",
+          "7f////////////////////////////////////////8=",
+          "7v///////////////////////////////////////38=",
+          "7v////////////////////////////////////////8="
+        ]
+      },
+      "description": "A raw 32-byte Ed25519 public key, base64, canonical (the last character's two spare bits zero). Never a key of small order (DEC-0045, CT-29): the enum lists libsodium's seven encodings with the sign bit clear and set."
+    },
+    "publicKey": {
+      "type": "object",
+      "required": [
+        "keyId",
+        "publicKey"
+      ],
+      "properties": {
+        "keyId": {
+          "$ref": "activity-common.schema.json#/$defs/opaqueId"
+        },
+        "publicKey": {
+          "$ref": "#/$defs/rawKey"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

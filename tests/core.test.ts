@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DigestMismatch, getVerified, isDigest, MemoryBlobStore, putVerified, sha256Digest } from "../src/core/digest.ts";
-import { handle, PROTOCOL } from "../src/core/relay.ts";
+import { handle, PROTOCOL, upgradeRefusal } from "../src/core/relay.ts";
 
 const deps = () => ({ runtime: "portable" as const, blobs: new MemoryBlobStore() });
 const bytes = (text: string) => new TextEncoder().encode(text);
 
-test("health names the service, the runtime and the protocol it is waiting for", async () => {
+test("health names the service, the runtime and the protocol it serves", async () => {
   const response = await handle(new Request("http://relay/healthz"), deps());
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "no-store");
@@ -14,8 +14,9 @@ test("health names the service, the runtime and the protocol it is waiting for",
   assert.equal(body.service, "relay");
   assert.equal(body.runtime, "portable");
   assert.deepEqual(body.protocol, PROTOCOL);
-  assert.equal(body.ready, false);
-  assert.deepEqual(body.degraded, ["protocol:draft"]);
+  assert.equal(body.protocol.version, "fabric-relay/0.1");
+  assert.equal(body.ready, true);
+  assert.deepEqual(body.degraded, []);
 });
 
 test("health answers GET and HEAD only", async () => {
@@ -24,14 +25,24 @@ test("health answers GET and HEAD only", async () => {
   assert.equal((await response.json()).error.code, "method-not-allowed");
 });
 
-test("a session is refused until DEC-0047 is accepted, a websocket upgrade included", async () => {
-  for (const init of [{}, { headers: { upgrade: "websocket", connection: "Upgrade" } }]) {
-    const response = await handle(new Request("http://relay/v0/connect", init), deps());
-    assert.equal(response.status, 501);
-    const body = await response.json();
-    assert.equal(body.error.code, "protocol-not-ready");
-    assert.match(body.error.message, /DEC-0047/);
+test("/v1/connect is a WebSocket endpoint: a GET upgrade offering fabric-relay.v1, nothing else", async () => {
+  const cases: Array<[RequestInit, number, string]> = [
+    [{}, 426, "upgrade-required"],
+    [{ method: "POST", body: "x" }, 405, "method-not-allowed"],
+    [{ headers: { upgrade: "websocket" } }, 400, "protocol-unsupported"],
+    [{ headers: { upgrade: "websocket", "sec-websocket-protocol": "chat, superchat" } }, 400, "protocol-unsupported"],
+  ];
+  for (const [init, status, code] of cases) {
+    const response = await handle(new Request("http://relay/v1/connect", init), deps());
+    assert.equal(response.status, status, code);
+    assert.equal((await response.json()).error.code, code);
   }
+  const ok = new Request("http://relay/v1/connect", { headers: { upgrade: "websocket", "sec-websocket-protocol": "x, fabric-relay.v1" } });
+  assert.equal(upgradeRefusal(ok), null);
+});
+
+test("the draft's /v0/connect is gone", async () => {
+  assert.equal((await handle(new Request("http://relay/v0/connect"), deps())).status, 404);
 });
 
 test("an unknown route is a typed not-found", async () => {

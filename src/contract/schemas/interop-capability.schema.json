@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fabric.passioncode.ai/agent-contract/0.1.0/schemas/interop-capability.schema.json",
+  "title": "fabric-interop/0.1 capability extension block",
+  "type": "object",
+  "properties": {
+    "job": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false
+}

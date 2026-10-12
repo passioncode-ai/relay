@@ -1,0 +1,59 @@
+{
+  "about": "fabric-relay/0.1 (DEC-0047 items 3–6): the relay-auth/1 signing input as RFC 8785 text (it names alg ES256) with its SHA-256, an auth frame signed by a one-off machine key (private half discarded), the same key as a JWK and as base64 SEC 1 octets (the form DEC-0053 records), a fabric-relay-message/1 body (compact JWS, ES256, RFC 8785 payload with a signed exp) with the frame it must match, and an Ed25519 #sig a relay refuses as unsupported-alg.",
+  "machineKey": {
+    "kty": "EC",
+    "x": "KTa8tmBkA3xJVLCLifgU-XJdl9Djcn4zWsTOQpj-g4M",
+    "y": "y6JHVsiYo_NuC1GhIo8EQTfqo7TLF5qSIBYrpCsa7vs",
+    "crv": "P-256"
+  },
+  "machineKeyOctets": "BCk2vLZgZAN8SVSwi4n4FPlyXZfQ43J+M1rEzkKY/oODy6JHVsiYo/NuC1GhIo8EQTfqo7TLF5qSIBYrpCsa7vs=",
+  "auth": {
+    "context": {
+      "relay": "https://relay.example",
+      "nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "now": "2026-10-12T00:00:30Z"
+    },
+    "signingInput": "{\"alg\":\"ES256\",\"estate\":\"urn:fabric:estate:example\",\"iat\":\"2026-10-12T00:00:00Z\",\"kid\":\"urn:fabric:machine:example-laptop#sig\",\"nonce\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\",\"relay\":\"https://relay.example\",\"type\":\"relay-auth/1\"}",
+    "sha256": "358f1b0c0e1aca36ccbe83200bdc676274df58cc2fa97f36d0d7cef3459cc84f",
+    "frame": {
+      "v": 1,
+      "type": "auth",
+      "id": "a1",
+      "protocol": "fabric-relay/0.1",
+      "alg": "ES256",
+      "estate": "urn:fabric:estate:example",
+      "kid": "urn:fabric:machine:example-laptop#sig",
+      "iat": "2026-10-12T00:00:00Z",
+      "sig": "g45nvIWaEnI-HqTNztTa1x8LytlalPkhFt9v4UsyHCCwlSz_9r7Mu5FwDW4TMpwCAnIvOm0Ey_p0JqjQfGJ2Nw"
+    }
+  },
+  "message": {
+    "frame": {
+      "from": "urn:fabric:machine:example-laptop#sig",
+      "to": "urn:fabric:machine:example-gpu-box#sig",
+      "msgId": "0b6f5f3e-6a51-4d6e-9d55-4b8f6a0d2c11",
+      "ttl": 3600
+    },
+    "now": "2026-10-12T00:10:00Z",
+    "body": "eyJhbGciOiJFUzI1NiIsImtpZCI6InVybjpmYWJyaWM6bWFjaGluZTpleGFtcGxlLWxhcHRvcCNzaWciLCJ0eXAiOiJmYWJyaWMtcmVsYXktbWVzc2FnZStqd3QifQ.eyJleHAiOiIyMDI2LTEwLTEyVDAxOjAwOjA1WiIsImZyb20iOiJ1cm46ZmFicmljOm1hY2hpbmU6ZXhhbXBsZS1sYXB0b3Ajc2lnIiwiaWF0IjoiMjAyNi0xMC0xMlQwMDowMDowNVoiLCJtc2dJZCI6IjBiNmY1ZjNlLTZhNTEtNGQ2ZS05ZDU1LTRiOGY2YTBkMmMxMSIsInBheWxvYWQiOnsiYXJncyI6eyJwcm9qZWN0IjoiZXhhbXBsZSJ9LCJjb21tYW5kIjoicHJvamVjdC5yZWFkIn0sInRvIjoidXJuOmZhYnJpYzptYWNoaW5lOmV4YW1wbGUtZ3B1LWJveCNzaWciLCJ0eXBlIjoiZmFicmljLXJlbGF5LW1lc3NhZ2UvMSJ9.Bgqx5GRAzr7ZseBGGytDTfCpM7QkGlN1Vy2RmqPZh-smxe9MXC46n-hcdeAuj5tvL-KVZoeCiY8RWf0uMOr8-w"
+  },
+  "ed25519": {
+    "key": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "UmwnKjOAJY7nTw5y-zy_zR8TI_f8GkcZDg_MsB3EFAI"
+    },
+    "frame": {
+      "v": 1,
+      "type": "auth",
+      "id": "a1",
+      "protocol": "fabric-relay/0.1",
+      "alg": "EdDSA",
+      "estate": "urn:fabric:estate:example",
+      "kid": "urn:fabric:machine:example-laptop#sig",
+      "iat": "2026-10-12T00:00:00Z",
+      "sig": "g45nvIWaEnI-HqTNztTa1x8LytlalPkhFt9v4UsyHCCwlSz_9r7Mu5FwDW4TMpwCAnIvOm0Ey_p0JqjQfGJ2Nw"
+    },
+    "expect": "unsupported-alg"
+  }
+}

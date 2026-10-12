@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fabric.passioncode.ai/agent-contract/0.1.0/schemas/delegation-jwks.schema.json",
+  "title": "The estate's published signing keys (fabric-delegation/0.1, DEC-0039)",
+  "description": "A JWK Set (RFC 7517) of Ed25519 public keys (RFC 8037). It carries public members only: a key with a private member is refused. During a rotation it holds the new key and the previous one.",
+  "type": "object",
+  "required": ["keys"],
+  "properties": {
+    "keys": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "required": ["kty", "crv", "x", "kid"],
+        "properties": {
+          "kty": { "const": "OKP" },
+          "crv": { "const": "Ed25519" },
+          "x": { "type": "string", "pattern": "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$", "not": { "enum": ["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA", "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA", "JuiVj8KyJ7BFw_SJ8u-Y8NXfrAXTxjM5sTgCiG1T_AU", "JuiVj8KyJ7BFw_SJ8u-Y8NXfrAXTxjM5sTgCiG1T_IU", "xxdqcD1N2E-6PAt2DRBnDyogU_osOczGTsf9d5KsA3o", "xxdqcD1N2E-6PAt2DRBnDyogU_osOczGTsf9d5KsA_o", "7P_______________________________________38", "7P________________________________________8", "7f_______________________________________38", "7f________________________________________8", "7v_______________________________________38", "7v________________________________________8"] }, "description": "The 32-byte public key, base64url without padding, canonical (the last character's two spare bits zero). Never a key of small order (DEC-0045, CT-29): the enum lists libsodium's seven encodings with the sign bit clear and set." },
+          "kid": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "use": { "const": "sig" },
+          "alg": { "const": "EdDSA" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
