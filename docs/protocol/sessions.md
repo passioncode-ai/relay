@@ -167,10 +167,15 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
   the socket with the WebSocket Hibernation API, keeps each session's record in the socket's attachment, and runs one
   alarm at the earliest deadline. After a hibernation wake it rebuilds its set from the sockets the runtime kept. The
   relay origin signed into `relay-auth/1` is the request's origin.
-- **Portable.** The `ws` package (8.22.0) upgrades the connection and selects `fabric-relay.v1`. The origin is
-  `RELAY_ORIGIN`, which must be the public `https://` URL behind a TLS terminator.
-  - If `RELAY_ORIGIN` is unset, the relay uses `http://RELAY_HOST:RELAY_PORT` and logs `origin-defaulted`. Only a
-    local machine can then authenticate.
+- **Portable.** The `ws` package (8.22.0) upgrades the connection and selects `fabric-relay.v1`. The relay has **one
+  origin**, the same for sessions and blob routes (`src/portable/origin.ts`, RLY-017):
+  - `RELAY_ORIGIN` set: it must be a bare `https://` origin (behind a TLS terminator). It is normalised, so the host is
+    lowercased and `:443` and a trailing `/` are dropped. A path, query, fragment, credentials or another scheme refuse
+    to start (`refused-to-start`, exit 2). `http://` is accepted only on a loopback literal (`127.0.0.0/8`, `[::1]`);
+    the name `localhost` is refused, since a name resolves where a literal cannot.
+  - `RELAY_ORIGIN` unset: allowed only when `RELAY_HOST` is a loopback literal. The origin is then
+    `http://RELAY_HOST:<bound port>`, computed after listen, and logged as `origin-defaulted`; only a local machine can
+    authenticate. On any other host the relay refuses to start.
 
 ## Found on the way
 
