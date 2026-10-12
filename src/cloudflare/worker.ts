@@ -11,10 +11,12 @@ import type { BlobIndex, BlobMeta } from "../core/blobs.ts";
 import { CONNECT_PATH, handle, SUBPROTOCOL, upgradeRefusal } from "../core/relay.ts";
 import { MAILBOX_LIMIT, type AppendResult, type DeliveryHub, type MailboxStore, type MailEntry } from "../core/mailbox.ts";
 import { RelaySession as Session } from "../core/session.ts";
+import type { PresenceRecord, PresenceStore } from "../core/presence.ts";
 
 export interface Env {
   SESSIONS: DurableObjectNamespace<RelaySession>;
   MAILBOX: DurableObjectNamespace<RelayMailbox>;
+  PRESENCE: DurableObjectNamespace<RelayPresence>;
   BLOBS: R2Bucket;
 }
 
@@ -149,14 +151,132 @@ class DurableMailbox implements MailboxStore {
   }
 }
 
+/**
+ * The estate's presence (RLY-06): one Durable Object for the relay's one estate. It holds which session objects are
+ * live connections of which machine, each machine's `lastSeen`, and the sessions to tell when a machine comes online or
+ * goes offline. A session object that no longer answers is taken for a connection that ended.
+ */
+export class RelayPresence extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS connections (session TEXT PRIMARY KEY, kid TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS last_seen (kid TEXT PRIMARY KEY, at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS subscribers (session TEXT PRIMARY KEY);`);
+  }
+
+  #live(kid: string): number {
+    return this.ctx.storage.sql.exec<{ n: number }>("SELECT count(*) AS n FROM connections WHERE kid = ?", kid).one().n;
+  }
+
+  /** Moves `lastSeen` forward, never back, and answers it. */
+  #seen(kid: string, atMs: number): string {
+    const at = new Date(atMs).toISOString();
+    this.ctx.storage.sql.exec("INSERT INTO last_seen (kid, at) VALUES (?, ?) ON CONFLICT (kid) DO UPDATE SET at = max(at, excluded.at)", kid, at);
+    return this.ctx.storage.sql.exec<{ at: string }>("SELECT at FROM last_seen WHERE kid = ?", kid).one().at;
+  }
+
+  #publish(record: PresenceRecord): void {
+    for (const row of this.ctx.storage.sql.exec<{ session: string }>("SELECT session FROM subscribers").toArray()) {
+      this.env.SESSIONS.get(this.env.SESSIONS.idFromString(row.session)).presence(record).catch(() => this.#gone(row.session));
+    }
+  }
+
+  /** A session object that did not answer: no longer a subscriber, and no longer a connection of its machine. */
+  async #gone(session: string): Promise<void> {
+    await this.unsubscribe(session);
+    const row = this.ctx.storage.sql.exec<{ kid: string }>("SELECT kid FROM connections WHERE session = ?", session).toArray()[0];
+    if (row) await this.disconnected(row.kid, session, Date.now());
+  }
+
+  async connected(kid: string, session: string, atMs: number): Promise<void> {
+    const first = this.#live(kid) === 0;
+    this.ctx.storage.sql.exec("INSERT OR IGNORE INTO connections (session, kid) VALUES (?, ?)", session, kid);
+    const lastSeen = this.#seen(kid, atMs);
+    if (first) this.#publish({ kid, state: "online", lastSeen });
+  }
+
+  async disconnected(kid: string, session: string, atMs: number): Promise<void> {
+    if (this.ctx.storage.sql.exec("DELETE FROM connections WHERE session = ? AND kid = ?", session, kid).rowsWritten === 0) return;
+    const lastSeen = this.#seen(kid, atMs);
+    if (this.#live(kid) === 0) this.#publish({ kid, state: "offline", lastSeen });
+  }
+
+  async touch(kid: string, atMs: number): Promise<void> {
+    this.#seen(kid, atMs);
+  }
+
+  /** Each kid seen, in the order asked; a connection whose session object does not answer is ended first. */
+  async query(kids: string[]): Promise<PresenceRecord[]> {
+    const out: PresenceRecord[] = [];
+    for (const kid of new Set(kids)) {
+      for (const row of this.ctx.storage.sql.exec<{ session: string }>("SELECT session FROM connections WHERE kid = ?", kid).toArray()) {
+        const alive = await this.env.SESSIONS.get(this.env.SESSIONS.idFromString(row.session)).alive().catch(() => false);
+        if (!alive) await this.disconnected(kid, row.session, Date.now());
+      }
+      const seen = this.ctx.storage.sql.exec<{ at: string }>("SELECT at FROM last_seen WHERE kid = ?", kid).toArray()[0];
+      if (seen) out.push({ kid, state: this.#live(kid) > 0 ? "online" : "offline", lastSeen: seen.at });
+    }
+    return out;
+  }
+
+  async subscribe(session: string): Promise<void> {
+    this.ctx.storage.sql.exec("INSERT OR IGNORE INTO subscribers (session) VALUES (?)", session);
+  }
+
+  async unsubscribe(session: string): Promise<void> {
+    this.ctx.storage.sql.exec("DELETE FROM subscribers WHERE session = ?", session);
+  }
+}
+
+/** The core's PresenceStore for one session object, over the estate's presence object; `self` names the connection. */
+class DurablePresence implements PresenceStore {
+  readonly #object: DurableObjectStub<RelayPresence>;
+  constructor(env: Env, private readonly self: string, private readonly listen: (listener: ((record: PresenceRecord) => void) | undefined) => void) {
+    this.#object = env.PRESENCE.get(env.PRESENCE.idFromName("estate"));
+  }
+  connected(kid: string, _connection: string, at: Date): Promise<void> {
+    return this.#object.connected(kid, this.self, at.getTime());
+  }
+  disconnected(kid: string, _connection: string, at: Date): Promise<void> {
+    return this.#object.disconnected(kid, this.self, at.getTime());
+  }
+  touch(kid: string, at: Date): Promise<void> {
+    return this.#object.touch(kid, at.getTime());
+  }
+  query(kids: readonly string[]): Promise<PresenceRecord[]> {
+    return this.#object.query([...kids]);
+  }
+  subscribe(_connection: string, listener: (record: PresenceRecord) => void): () => void {
+    this.listen(listener);
+    void this.#object.subscribe(this.self);
+    return () => {
+      this.listen(undefined);
+      void this.#object.unsubscribe(this.self);
+    };
+  }
+}
+
 /** One connection's session. It reads the estate when the connection opens and admits only from what verifies. */
 export class RelaySession extends DurableObject<Env> {
   #wake: (() => void) | undefined;
+  #presence: ((record: PresenceRecord) => void) | undefined;
+  #open = false;
 
   /** Called by a mailbox object when a message for this connection's machine is queued. */
   async wake(): Promise<void> {
     if (!this.#wake) throw new Error("no live connection");
     this.#wake();
+  }
+
+  /** Called by the presence object when another machine of the estate comes online or goes offline. */
+  async presence(record: PresenceRecord): Promise<void> {
+    if (!this.#presence) throw new Error("no live connection");
+    this.#presence(record);
+  }
+
+  /** Asked by the presence object: does this object still hold an open connection? */
+  async alive(): Promise<boolean> {
+    return this.#open;
   }
 
   override async fetch(request: Request): Promise<Response> {
@@ -189,6 +309,7 @@ export class RelaySession extends DurableObject<Env> {
         send: (text) => server.send(text),
         close: (code, reason) => {
           if (timer) clearInterval(timer);
+          this.#open = false;
           server.close(code, reason);
         },
       },
@@ -200,6 +321,7 @@ export class RelaySession extends DurableObject<Env> {
         admission: () => holder.current(),
         mailbox: new DurableMailbox(this.env),
         hub,
+        presence: new DurablePresence(this.env, self, (listener) => { this.#presence = listener; }),
         log,
       },
     );
@@ -213,8 +335,10 @@ export class RelaySession extends DurableObject<Env> {
     });
     server.addEventListener("close", () => {
       if (timer) clearInterval(timer);
+      this.#open = false;
       session.disconnected();
     });
+    this.#open = true;
     session.open();
     timer = setInterval(() => session.tick(), TICK_MS);
     return new Response(null, { status: 101, webSocket: client, headers: { "sec-websocket-protocol": SUBPROTOCOL } });

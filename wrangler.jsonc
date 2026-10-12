@@ -10,12 +10,14 @@
   "durable_objects": {
     "bindings": [
       { "name": "SESSIONS", "class_name": "RelaySession" },
-      { "name": "MAILBOX", "class_name": "RelayMailbox" }
+      { "name": "MAILBOX", "class_name": "RelayMailbox" },
+      { "name": "PRESENCE", "class_name": "RelayPresence" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["RelaySession"] },
-    { "tag": "v2", "new_sqlite_classes": ["RelayMailbox"] }
+    { "tag": "v2", "new_sqlite_classes": ["RelayMailbox"] },
+    { "tag": "v3", "new_sqlite_classes": ["RelayPresence"] }
   ],
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "relay-blobs" }],
   "observability": { "enabled": true }
