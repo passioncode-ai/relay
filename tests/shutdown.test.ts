@@ -176,18 +176,19 @@ async function launch(root: string, throughNpm: boolean) {
       buffered = buffered.slice(i + 1);
     }
   });
-  const exited = new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
+  const ended = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => child.on("exit", (code, signal) => resolve({ code, signal })));
+  const exited = ended.then(({ code }) => code);
   const end = Date.now() + 10_000;
   while (!lines.some((l) => l.event === "listening") && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50));
   const port = lines.find((l) => l.event === "listening")?.port as number;
   assert.ok(port, JSON.stringify(lines));
   const kill = () => { try { forwarded ? process.kill(-child.pid!, "SIGKILL") : child.kill("SIGKILL"); } catch { /* gone */ } };
-  return { child, lines, exited, port, kill, signalGroup: (signal: NodeJS.Signals) => process.kill(-child.pid!, signal) };
+  return { child, lines, exited, ended, port, kill, signalGroup: (signal: NodeJS.Signals) => process.kill(-child.pid!, signal) };
 }
 
 const within = <T>(promise: Promise<T>, ms: number) => Promise.race([promise, new Promise<undefined>((resolve) => setTimeout(resolve, ms))]);
 
-test("Ctrl-C on `npm run portable` with a session open: the forwarded SIGINT is the same press, the stop is clean, exit 0", async () => {
+test("Ctrl-C on `npm run portable` with a session open: the forwarded SIGINT is the same press, the stop is clean and the relay exits", async () => {
   const e = estate(new Date(), "ES256");
   const root = await dataDir(e);
   const relay = await launch(root, true);
@@ -196,9 +197,20 @@ test("Ctrl-C on `npm run portable` with a session open: the forwarded SIGINT is 
     relay.signalGroup("SIGINT"); // the terminal's Ctrl-C reaches the parent and the relay; the parent forwards it again
     const close = await within(a.closed, 5000);
     assert.equal(close?.code, 1001);
-    assert.equal(await within(relay.exited, 8000), 0, JSON.stringify(relay.lines.map((l) => l.event)));
-    assert.ok(relay.lines.some((l) => l.event === "stopped"), JSON.stringify(relay.lines.map((l) => l.event)));
-    assert.ok(!relay.lines.some((l) => l.event === "stop-forced"));
+    // The relay's own outcome is its log: a clean stop logs `stopped` and exits 0 right after, and no second press.
+    // What npm itself does with the group's SIGINT is npm's and the shell's: on macOS it exits 0 once the relay has; on
+    // Linux (dash as npm's script shell) it is ended by the SIGINT itself. Either is the operator's Ctrl-C working.
+    const npm = await within(relay.ended, 8000);
+    const events = JSON.stringify(relay.lines.map((l) => l.event));
+    assert.ok(npm && (npm.code === 0 || npm.code === 130 || npm.signal === "SIGINT"), `npm ended ${JSON.stringify(npm)}: ${events}`);
+    const end = Date.now() + 3000;
+    while (!relay.lines.some((l) => l.event === "stopped") && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(relay.lines.some((l) => l.event === "stopped"), events);
+    assert.ok(!relay.lines.some((l) => ["stop-forced", "stop-timeout", "stop-failed"].includes(l.event)), events);
+    // And the relay process itself is gone: nothing is left in the group npm led.
+    const alive = () => { try { process.kill(-relay.child.pid!, 0); return true; } catch { return false; } };
+    while (alive() && Date.now() < end + 3000) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(alive(), false, `a process of the group is still running: ${events}`);
   } finally {
     relay.kill();
   }
