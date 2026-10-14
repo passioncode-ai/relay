@@ -4,7 +4,7 @@
 
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Socket } from "node:net";
 import { Readable } from "node:stream";
 import { WebSocketServer } from "ws";
 import validateEstateRecord from "../contract/estate-record.validate.js";
@@ -20,6 +20,22 @@ import type { LastSeenStore } from "../core/presence.ts";
 const MAX_PAYLOAD = 1_048_576 + 1;
 
 const MAX_BODY_BYTES = 32 * 1024 * 1024;
+
+/** How long a refused upgrade's socket may take to flush its answer before it is destroyed anyway. */
+const REFUSAL_FLUSH_MS = 1000;
+
+/**
+ * Answers an upgrade the relay refuses and lets go of the socket. An upgraded socket has left the HTTP server's books
+ * (`closeAllConnections()` does not see it), so a client that keeps its side open (half-open) would otherwise hold
+ * `server.close()` for ever: the socket is destroyed once the answer is flushed, or after REFUSAL_FLUSH_MS at most.
+ */
+function refuseUpgrade(socket: Socket, response: string): void {
+  const backstop = setTimeout(() => socket.destroy(), REFUSAL_FLUSH_MS);
+  backstop.unref();
+  socket.once("close", () => clearTimeout(backstop));
+  socket.on("error", () => socket.destroy());
+  socket.end(response, () => socket.destroy());
+}
 
 function toRequest(message: IncomingMessage, origin: string): Request {
   const headers = new Headers();
@@ -70,8 +86,10 @@ export interface Served {
   /**
    * A graceful stop (RLY-010): new upgrades get 503 and HTTP answers `connection: close`; every session is closed 1001
    * through the estate hub, so each machine's `lastSeen` is written; a socket still open after `graceMs` is
-   * terminated; then the listener and every connection close, and so do the mailbox and `lastSeen` stores (closing
-   * SQLite checkpoints its WAL). Logs `stopped {sessions, forced, ms}`. A second call returns the first one's promise.
+   * terminated; then the listener and every connection close (any socket still open, an upgraded one included, is
+   * destroyed and counted in `forced`), and so do the mailbox and `lastSeen` stores (closing SQLite checkpoints its
+   * WAL). Logs `stopped {sessions, forced, ms}`. A second call returns the first one's promise. A refused upgrade (404,
+   * 400, 503) is answered and its socket destroyed, so a client that keeps its side open never holds the stop.
    */
   stop(options?: { graceMs?: number }): Promise<{ sessions: number; forced: number }>;
 }
@@ -134,17 +152,24 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
     },
     log,
   });
+  // Every TCP connection the server accepted, upgraded ones included: what is still open once the stop's grace period
+  // has ended is destroyed, so no client can hold `server.close()`.
+  const connections = new Set<Socket>();
+  server.on("connection", (socket: Socket) => {
+    connections.add(socket);
+    socket.once("close", () => connections.delete(socket));
+  });
   const sockets = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD, handleProtocols: (offered) => (offered.has(SUBPROTOCOL) ? SUBPROTOCOL : false) });
   server.on("upgrade", (message, socket, head) => {
     if (stopping) {
-      socket.end("HTTP/1.1 503 Service Unavailable\r\nconnection: close\r\nretry-after: 5\r\ncontent-length: 0\r\n\r\n");
+      refuseUpgrade(socket as Socket, "HTTP/1.1 503 Service Unavailable\r\nconnection: close\r\nretry-after: 5\r\ncontent-length: 0\r\n\r\n");
       log({ event: "upgrade-refused", status: 503 });
       return;
     }
     const request = toRequest(message, base);
     const refusal = new URL(request.url).pathname === CONNECT_PATH ? upgradeRefusal(request) : new Response(null, { status: 404 });
     if (refusal) {
-      socket.end(`HTTP/1.1 ${refusal.status} ${refusal.status === 404 ? "Not Found" : "Refused"}\r\nconnection: close\r\ncontent-length: 0\r\n\r\n`);
+      refuseUpgrade(socket as Socket, `HTTP/1.1 ${refusal.status} ${refusal.status === 404 ? "Not Found" : "Refused"}\r\nconnection: close\r\ncontent-length: 0\r\n\r\n`);
       log({ event: "upgrade-refused", status: refusal.status });
       return;
     }
@@ -216,11 +241,20 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
     const unclosed = [...new Set([...result.unclosed, ...pending, ...refusing])];
     for (const ws of unclosed) ws.terminate();
     clearTimeout(timer);
+    let lingering = 0;
     await new Promise<void>((resolve) => {
       sockets.close();
       server.close(() => resolve());
       server.closeAllConnections();
+      // The grace period is over: a connection the HTTP server no longer tracks (an upgraded socket nobody closed) is
+      // destroyed here rather than waited for.
+      for (const socket of connections) {
+        if (socket.destroyed) continue;
+        lingering += 1;
+        socket.destroy();
+      }
     });
+    if (lingering > 0) log({ event: "stop-destroyed", connections: lingering });
     for (const store of [options.mailbox, options.lastSeen]) {
       try {
         store?.close?.();
@@ -228,7 +262,7 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
         log({ event: "store-close-fault", error: (error as Error).name });
       }
     }
-    const outcome = { sessions: result.sessions, forced: unclosed.length };
+    const outcome = { sessions: result.sessions, forced: unclosed.length + lingering };
     log({ event: "stopped", ...outcome, ms: Date.now() - started });
     return outcome;
   };

@@ -183,18 +183,25 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
     to start (`refused-to-start`, exit 2). `http://` is accepted only on a loopback literal (`127.0.0.0/8`, `[::1]`),
     and only when `RELAY_HOST` is a loopback literal too; the name `localhost` is refused, since a name resolves where
     a literal cannot.
-  - `RELAY_ORIGIN` unset: allowed only when `RELAY_HOST` is a loopback literal. The origin is then
-    `http://RELAY_HOST:<bound port>`, computed after listen, and logged as `origin-defaulted`; only a local machine can
-    authenticate. On any other host the relay refuses to start.
+  - `RELAY_ORIGIN` unset: allowed only when `RELAY_HOST` is a loopback literal. The origin is then the URL parser's
+    origin of `http://RELAY_HOST:<bound port>`, computed after listen, and logged as `origin-defaulted`; only a local
+    machine can authenticate. It is canonical, not `RELAY_HOST` verbatim: `0:0:0:0:0:0:0:1` gives `http://[::1]:<port>`
+    and `127.000.000.001` gives `http://127.0.0.1:<port>`; a spelling a URL reads as another address (`127.010.0.1`,
+    whose parts are octal there) refuses to start. On any other host the relay refuses to start.
+  - `RELAY_HOST` is a bare address or name: a bracketed one (`[::1]`) refuses to start (`refused-to-start`, exit 2)
+    rather than failing in `listen`.
   - **Stopping (RLY-010).** SIGTERM, SIGINT or SIGHUP (the terminal that started the relay closed) stops gracefully. New upgrades get 503, and HTTP answers carry
     `connection: close`. Every session is closed 1001 through the estate hub, so each machine's `lastSeen` is written.
-    A socket still open after 5 s is terminated. Then the listener, the connections and both SQLite stores close, and
+    A socket still open after 5 s is terminated. Then the listener, the connections and both SQLite stores close (a
+    connection still open then, an upgraded one included, is destroyed and counted in `forced`), and
     the relay logs `stopped {sessions, forced, ms}` and exits 0. Past a 10 s ceiling it logs `stop-timeout` and exits 1;
     a stop that fails logs `stop-failed` and exits 1. A second press (a different signal, or the same one more than
     1 s after the first) logs `stop-forced` and exits 1 at once; the same signal within 1 s is the same press
     (`npm run portable` forwards the terminal's SIGINT, so the relay sees one Ctrl-C twice) and is logged
     `signal-repeated`. A supervisor waits longer than the ceiling (systemd `TimeoutStopSec=20`, launchd
     `ExitTimeOut=20`).
+    - A refused upgrade (404, 400, the 503 below) is answered and its socket destroyed once the answer is flushed (1 s
+      at most), so a client that keeps its side of the connection open cannot hold the stop.
     - The 503 carries `retry-after: 5`. An upgrade that was already past that gate when the stop began (its estate
       read in flight) is waited for, then closed 1001, and terminated with the others at the grace period if it has not
       closed. A socket that closes while its estate is read never joins the hub.

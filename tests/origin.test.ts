@@ -2,6 +2,7 @@
 // listen, and the same origin for sessions and blob routes. http:// is allowed only on loopback literals — 127.0.0.0/8
 // and [::1], never the name "localhost", which resolves where a literal cannot (the contract owner's answer to P9).
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createHash, sign } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
@@ -123,4 +124,53 @@ test("port 0 without an origin: the blob route verifies against the same origin 
   } finally {
     await r.stop();
   }
+});
+
+// Round 3: the defaulted origin is the URL parser's canonical form of RELAY_HOST, never RELAY_HOST verbatim.
+
+test("unset: the defaulted origin is canonical — ::1 for every spelling of it, 127.0.0.1 for 127.000.000.001", () => {
+  for (const [host, origin] of [["0:0:0:0:0:0:0:1", "http://[::1]:8787"], ["::1", "http://[::1]:8787"], ["0:0::1", "http://[::1]:8787"],
+    ["127.000.000.001", "http://127.0.0.1:8787"], ["127.0.0.1", "http://127.0.0.1:8787"]] as const) {
+    const rule = relayOrigin(undefined, host);
+    assert.ok(rule.ok, `${host}: ${JSON.stringify(rule)}`);
+    assert.equal(rule.at(8787), origin, host);
+  }
+  assert.equal((relayOrigin(undefined, "127.0.0.1") as { at(port: number): string }).at(80), "http://127.0.0.1", "the default port is dropped, as url.origin does");
+});
+
+test("unset: a loopback spelling the URL parser reads differently from the address (octal parts) or not at all is refused", () => {
+  for (const host of ["127.010.0.1", "127.08.0.1"]) {
+    const rule = relayOrigin(undefined, host);
+    assert.equal(rule.ok, false, host);
+    if (!rule.ok) assert.match(rule.reason, /RELAY_HOST/, host);
+  }
+});
+
+test("a bracketed RELAY_HOST is refused with the bare address to use, whether RELAY_ORIGIN is set or not", () => {
+  for (const origin of [undefined, "https://relay.example", "http://[::1]:9000"]) {
+    const rule = relayOrigin(origin, "[::1]");
+    assert.equal(rule.ok, false, String(origin));
+    if (!rule.ok) assert.match(rule.reason, /RELAY_HOST \[::1\] .*::1/, String(origin));
+  }
+});
+
+test("RELAY_HOST=[::1] refuses to start with exit 2 and refused-to-start, not a raw listen error", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-origin-")); roots.push(root);
+  const child = spawn(process.execPath, ["--import", "tsx", "src/portable/main.ts"], {
+    env: { ...process.env, RELAY_DATA_DIR: root, RELAY_PORT: "0", RELAY_HOST: "[::1]", RELAY_ORIGIN: "" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let out = "", err = "";
+  child.stdout.on("data", (chunk: Buffer) => { out += chunk.toString("utf8"); });
+  child.stderr.on("data", (chunk: Buffer) => { err += chunk.toString("utf8"); });
+  const code = await Promise.race([
+    new Promise<number | null>((resolve) => child.on("exit", (exit) => resolve(exit))),
+    new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 10_000)),
+  ]);
+  if (child.exitCode === null) child.kill("SIGKILL");
+  assert.equal(code, 2, `stdout: ${out}\nstderr: ${err}`);
+  const lines = out.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  const refused = lines.find((line) => line.event === "refused-to-start");
+  assert.ok(refused, out);
+  assert.match(refused.reason, /RELAY_HOST \[::1\]/);
 });

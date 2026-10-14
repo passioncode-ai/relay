@@ -1,13 +1,15 @@
 // The self-hosted relay's entry point. Configuration is environment only, and holds no secret:
 //   RELAY_DATA_DIR  where blobs are kept (required; the relay never picks a folder for you)
-//   RELAY_HOST      interface to listen on (default 127.0.0.1; put a TLS terminator in front for anything else)
+//   RELAY_HOST      interface to listen on (default 127.0.0.1; put a TLS terminator in front for anything else). A bare
+//                   address: a bracketed one ([::1]) refuses to start (exit 2).
 //   RELAY_PORT      port (default 8787)
 //   RELAY_ORIGIN    the public origin machines sign into relay-auth/1 (behind a TLS terminator: its https:// URL).
 //                   Normalised (src/portable/origin.ts); a path, query, fragment, credentials or another scheme refuse
 //                   to start (exit 2). http:// only on a loopback literal (127.0.0.0/8, [::1]; never "localhost"),
 //                   and only when RELAY_HOST is a loopback literal too.
 //                   Unset: allowed only when RELAY_HOST is a loopback literal; the origin is then
-//                   http://RELAY_HOST:<bound port>, which only a local machine can reach (logged origin-defaulted).
+//                   the canonical http://RELAY_HOST:<bound port> (0:0:0:0:0:0:0:1 gives http://[::1]:<port>), which
+//                   only a local machine can reach (logged origin-defaulted).
 // Queued messages are kept in RELAY_DATA_DIR/mailbox.sqlite and each machine's last-seen time in
 // RELAY_DATA_DIR/presence.sqlite (both owner-only). The estate the relay admits from is kept under RELAY_DATA_DIR/estate/ (pinned.json, revisions/<n>.json); without it
 // the relay admits nobody.
