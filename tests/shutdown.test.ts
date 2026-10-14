@@ -384,3 +384,69 @@ test("S2: an upgrade refused 404 before the stop, to a half-open client, does no
     await within(relay.stop({ graceMs: 50 }), 2000); // a failed assertion above must not leave the server listening
   }
 });
+
+/** A client text frame, masked with a zero key (RFC 6455 allows any key; zero leaves the payload as it is). */
+function clientFrame(text: string): Buffer {
+  const payload = Buffer.from(text, "utf8");
+  const head = payload.length < 126 ? Buffer.from([0x81, 0x80 | payload.length]) : Buffer.from([0x81, 0x80 | 126, payload.length >> 8, payload.length & 0xff]);
+  return Buffer.concat([head, Buffer.alloc(4), payload]);
+}
+
+/** An admitted session over a raw socket, so a test can put megabytes of frames on the wire in one write. */
+async function rawAdmitted(port: number, m: Estate["machine"], relay: string) {
+  const socket = tcp(port, "127.0.0.1");
+  socket.on("error", () => {});
+  await new Promise<void>((resolve) => socket.on("connect", () => resolve()));
+  socket.write(["GET /v1/connect HTTP/1.1", "Host: 127.0.0.1", "Upgrade: websocket", "Connection: Upgrade", "Sec-WebSocket-Version: 13",
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Protocol: fabric-relay.v1", "", ""].join("\r\n"));
+  let got = Buffer.alloc(0);
+  const welcomed = new Promise<void>((resolve, reject) => {
+    const limit = setTimeout(() => reject(new Error(`no welcome: ${got.toString("latin1").slice(0, 400)}`)), 5000);
+    let authed = false;
+    socket.on("data", (chunk: Buffer) => {
+      if (authed && got.length > 65536) return; // past the welcome: the pongs are not read
+      got = Buffer.concat([got, chunk]);
+      const text = got.toString("latin1");
+      const nonce = /"nonce":"([^"]+)"/.exec(text)?.[1];
+      if (nonce && !authed) {
+        authed = true;
+        socket.write(clientFrame(authFrame(m, relay, nonce)));
+      }
+      if (text.includes('"type":"welcome"')) { clearTimeout(limit); resolve(); }
+    });
+  });
+  await welcomed;
+  return socket;
+}
+
+test("F3: an admitted machine flooding 8 MiB of frames does not hold SIGTERM: stopping is logged within 1 s of the signal", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const relay = await launch(root, false);
+  try {
+    const socket = await rawAdmitted(relay.port, e.machine, "https://relay.test");
+    const frames: Buffer[] = [];
+    let size = 0;
+    for (let i = 0; size < 8 * 1024 * 1024; i += 1) {
+      // Pings and stored messages to itself: the relay's cheapest frame and one that writes SQLite and delivers.
+      const frame = clientFrame(JSON.stringify(i % 2 === 0 ? { v: 1, type: "ping", id: `f${i}` } : { v: 1, type: "send", id: `f${i}`, msgId: `m-${i}`, to: e.machine.kid, body: "AA", ttl: 60 }));
+      frames.push(frame);
+      size += frame.length;
+    }
+    socket.write(Buffer.concat(frames)); // 8 MiB of pings in one write
+    await new Promise((resolve) => setTimeout(resolve, 200)); // the relay is now working through the backlog
+    const signalled = Date.now();
+    relay.child.kill("SIGTERM");
+    const end = Date.now() + 15_000;
+    while (!relay.lines.some((l) => l.event === "stopping") && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 20));
+    const stopping = relay.lines.find((l) => l.event === "stopping");
+    assert.ok(stopping, JSON.stringify(relay.lines.map((l) => l.event)));
+    const lag = Date.parse(stopping.at) - signalled;
+    assert.ok(lag < 1000, `stopping was logged ${lag} ms after SIGTERM`);
+    assert.equal(await within(relay.exited, 15_000), 0, JSON.stringify(relay.lines.map((l) => l.event)));
+    assert.ok(relay.lines.some((l) => l.event === "stopped"));
+    socket.destroy();
+  } finally {
+    relay.kill();
+  }
+});

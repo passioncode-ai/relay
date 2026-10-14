@@ -2,7 +2,8 @@
 //   RELAY_DATA_DIR  where blobs are kept (required; the relay never picks a folder for you)
 //   RELAY_HOST      interface to listen on (default 127.0.0.1; put a TLS terminator in front for anything else). A bare
 //                   address: a bracketed one ([::1]) refuses to start (exit 2).
-//   RELAY_PORT      port (default 8787)
+//   RELAY_PORT      port (default 8787): digits only, 0 to 65535; anything else refuses to start (exit 2), and so does a
+//                   listen that fails (the port taken, a host that does not resolve)
 //   RELAY_ORIGIN    the public origin machines sign into relay-auth/1 (behind a TLS terminator: its https:// URL).
 //                   Normalised (src/portable/origin.ts); a path, query, fragment, credentials or another scheme refuse
 //                   to start (exit 2). http:// only on a loopback literal (127.0.0.0/8, [::1]; never "localhost"),
@@ -17,7 +18,7 @@
 
 import type { AddressInfo } from "node:net";
 import { OriginRefused } from "./origin.ts";
-import { serve, type Served } from "./server.ts";
+import { ListenRefused, serve, type Served } from "./server.ts";
 import { FsBlobIndex, FsBlobStore, FsEstateSource } from "./fs-store.ts";
 import { SqliteMailbox } from "./sqlite-mailbox.ts";
 import { SqliteLastSeen } from "./sqlite-last-seen.ts";
@@ -33,9 +34,11 @@ if (!dataDir) {
   process.exit(2);
 }
 const host = process.env.RELAY_HOST ?? "127.0.0.1";
-const port = Number(process.env.RELAY_PORT ?? 8787);
-if (!Number.isInteger(port) || port < 0 || port > 65535) {
-  log({ event: "refused-to-start", reason: "RELAY_PORT is not a port number" });
+// Digits only: Number() would take "" as 0, "1e3" as 1000 and "0x50" as 80.
+const rawPort = process.env.RELAY_PORT ?? "8787";
+const port = /^\d{1,5}$/.test(rawPort) ? Number(rawPort) : Number.NaN;
+if (!Number.isInteger(port) || port > 65535) {
+  log({ event: "refused-to-start", reason: `RELAY_PORT ${JSON.stringify(rawPort)} is not a port number (digits, 0 to 65535)` });
   process.exit(2);
 }
 
@@ -43,7 +46,7 @@ let served: Served;
 try {
   served = await serve({ runtime: "portable", blobs: new FsBlobStore(dataDir) }, { host, port, log, estate: new FsEstateSource(dataDir), mailbox: new SqliteMailbox(join(dataDir, "mailbox.sqlite")), lastSeen: new SqliteLastSeen(join(dataDir, "presence.sqlite")), blobIndex: new FsBlobIndex(dataDir), ...(process.env.RELAY_ORIGIN ? { origin: process.env.RELAY_ORIGIN } : {}) });
 } catch (error) {
-  if (!(error instanceof OriginRefused)) throw error;
+  if (!(error instanceof OriginRefused) && !(error instanceof ListenRefused)) throw error;
   log({ event: "refused-to-start", reason: error.message });
   process.exit(2);
 }

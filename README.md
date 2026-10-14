@@ -15,7 +15,7 @@ Its wire protocol belongs to [fabric-agent-contract](https://github.com/passionc
 **Configure.** The hosted build reads three bindings from [`wrangler.jsonc`](wrangler.jsonc): `ESTATE` (the estate hub), `MAILBOX` (one Durable Object per recipient) and `BLOBS` (an R2 bucket). One deployment serves one estate, one context per origin in this release, and its hub is one hibernating Durable Object ([ADR-0002](docs/adr/0002-estate-hub.md)). It needs no keys. Deployment values (account, routes) are not kept in this repository. The portable build reads four environment variables:
 - `RELAY_DATA_DIR` (required)
 - `RELAY_HOST` (default `127.0.0.1`; a bare address, `::1` not `[::1]`: a bracketed one refuses to start)
-- `RELAY_PORT` (default `8787`)
+- `RELAY_PORT` (default `8787`; digits only, 0 to 65535. Anything else, or a listen that fails, refuses to start with exit 2)
 - `RELAY_ORIGIN` (the public `https://` origin machines sign, normalised; a path, query, fragment or credentials refuse to start. `http://` only on a loopback literal, `127.0.0.0/8` or `[::1]`, never `localhost`, and only when `RELAY_HOST` is a loopback literal too. Unset, it is allowed only when `RELAY_HOST` is a loopback literal, and defaults to the canonical `http://RELAY_HOST:<bound port>` (`0:0:0:0:0:0:0:1` gives `http://[::1]:<port>`), local machines only)
 
 None of them is a secret. Logs: one JSON object per line on stdout, `{at, service, runtime, event, …}`. The estate the relay admits from (the pinned passkeys and the record's revisions) is kept

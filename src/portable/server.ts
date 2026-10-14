@@ -37,7 +37,30 @@ function refuseUpgrade(socket: Socket, response: string): void {
   socket.end(response, () => socket.destroy());
 }
 
-function toRequest(message: IncomingMessage, origin: string): Request {
+/**
+ * The fixed base a request target is resolved against. Only the path and query of a request matter to the core; the
+ * origin machines sign is `origin`, never this. A fixed name keeps a RELAY_HOST the URL parser cannot take (a zone id)
+ * out of every request.
+ */
+const TARGET_BASE = "http://relay.invalid";
+
+/** How many frames a socket may have waiting in its session before the relay stops reading it, and when it reads again. */
+const IN_FLIGHT_HIGH = 64;
+const IN_FLIGHT_LOW = 16;
+
+/**
+ * The request target as a URL, or undefined when the URL parser refuses it. Node's HTTP parser accepts targets the URL
+ * parser does not (`//[`, `http://[/v1/connect`, `http://x:99999/`); this is the only place a target is parsed.
+ */
+function parseTarget(message: IncomingMessage): URL | undefined {
+  try {
+    return new URL(message.url ?? "/", TARGET_BASE);
+  } catch {
+    return undefined;
+  }
+}
+
+function toRequest(message: IncomingMessage, url: URL): Request {
   const headers = new Headers();
   for (const [name, value] of Object.entries(message.headers)) {
     if (Array.isArray(value)) for (const one of value) headers.append(name, one);
@@ -45,7 +68,7 @@ function toRequest(message: IncomingMessage, origin: string): Request {
   }
   const method = message.method ?? "GET";
   const hasBody = method !== "GET" && method !== "HEAD";
-  return new Request(new URL(message.url ?? "/", origin), {
+  return new Request(url, {
     method,
     headers,
     body: hasBody ? (Readable.toWeb(message) as ReadableStream<Uint8Array>) : undefined,
@@ -94,13 +117,22 @@ export interface Served {
   stop(options?: { graceMs?: number }): Promise<{ sessions: number; forced: number }>;
 }
 
-/** Starts the portable relay. Rejects with `OriginRefused` before listening when the origin rules refuse it. */
+/**
+ * The listener could not be opened (the port is taken or not allowed, the host does not resolve or is not this
+ * machine's): `main.ts` turns it into `refused-to-start` and exit 2, like a refused origin.
+ */
+export class ListenRefused extends Error {
+  override name = "ListenRefused";
+}
+
+/**
+ * Starts the portable relay. Rejects with `OriginRefused` before listening when the origin rules refuse it, and with
+ * `ListenRefused` when the listen fails.
+ */
 export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Served> {
   const rule = relayOrigin(options.origin, options.host);
   if (!rule.ok) throw new OriginRefused(rule.reason);
   deps = { ...deps };
-  // The base for turning a Node request into a web Request; an IPv6 literal needs its brackets in a URL.
-  const base = `http://${options.host.includes(":") ? `[${options.host}]` : options.host}`;
   // Set once the server listens: the bound port is part of a defaulted origin.
   let origin = "";
   const log = options.log ?? (() => {});
@@ -116,12 +148,29 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
       reply.end(JSON.stringify({ error: { code: "too-large", message: `bodies are limited to ${MAX_BODY_BYTES} bytes` } }));
       return;
     }
+    // The target is parsed once, before anything else; a target or header the web Request cannot carry is the client's
+    // error (400), never a fault of the relay.
+    const url = parseTarget(message);
+    let request: Request | undefined;
     try {
-      const response = await handle(toRequest(message, base), deps);
+      if (url) request = toRequest(message, url);
+    } catch {
+      request = undefined;
+    }
+    if (!url || !request) {
+      reply.statusCode = 400;
+      reply.setHeader("connection", "close");
+      reply.setHeader("content-type", "application/json");
+      reply.end(JSON.stringify({ error: { code: "bad-request", message: url ? "the request cannot be read" : "the request target is not a URL" } }));
+      log({ event: "request-refused", status: 400, reason: url ? "request" : "target" });
+      return;
+    }
+    try {
+      const response = await handle(request, deps);
       await send(response, reply);
-      log({ event: "request", method: message.method, path: new URL(message.url ?? "/", "http://x").pathname, status: response.status, ms: Date.now() - started });
+      log({ event: "request", method: message.method, path: url.pathname, status: response.status, ms: Date.now() - started });
     } catch (error) {
-      log({ event: "request-failed", path: new URL(message.url ?? "/", "http://x").pathname, error: (error as Error).name });
+      log({ event: "request-failed", path: url.pathname, error: (error as Error).name });
       if (!reply.headersSent) {
         reply.statusCode = 500;
         reply.setHeader("content-type", "application/json");
@@ -159,15 +208,32 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
     connections.add(socket);
     socket.once("close", () => connections.delete(socket));
   });
-  const sockets = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD, handleProtocols: (offered) => (offered.has(SUBPROTOCOL) ? SUBPROTOCOL : false) });
+  // `allowSynchronousEvents: false`: `ws` emits one message per turn of the event loop, so a machine flooding frames
+  // cannot keep the loop from a signal or a timer (a SIGTERM is handled within one frame's work).
+  const sockets = new WebSocketServer({
+    noServer: true, maxPayload: MAX_PAYLOAD, allowSynchronousEvents: false,
+    handleProtocols: (offered) => (offered.has(SUBPROTOCOL) ? SUBPROTOCOL : false),
+  });
   server.on("upgrade", (message, socket, head) => {
     if (stopping) {
       refuseUpgrade(socket as Socket, "HTTP/1.1 503 Service Unavailable\r\nconnection: close\r\nretry-after: 5\r\ncontent-length: 0\r\n\r\n");
       log({ event: "upgrade-refused", status: 503 });
       return;
     }
-    const request = toRequest(message, base);
-    const refusal = new URL(request.url).pathname === CONNECT_PATH ? upgradeRefusal(request) : new Response(null, { status: 404 });
+    // Parsed once, before anything else: a listener that threw here would take the process down (uncaught).
+    const url = parseTarget(message);
+    let request: Request | undefined;
+    try {
+      if (url) request = toRequest(message, url);
+    } catch {
+      request = undefined;
+    }
+    if (!url || !request) {
+      refuseUpgrade(socket as Socket, "HTTP/1.1 400 Bad Request\r\nconnection: close\r\ncontent-length: 0\r\n\r\n");
+      log({ event: "upgrade-refused", status: 400, reason: url ? "request" : "target" });
+      return;
+    }
+    const refusal = url.pathname === CONNECT_PATH ? upgradeRefusal(request) : new Response(null, { status: 404 });
     if (refusal) {
       refuseUpgrade(socket as Socket, `HTTP/1.1 ${refusal.status} ${refusal.status === 404 ? "Not Found" : "Refused"}\r\nconnection: close\r\ncontent-length: 0\r\n\r\n`);
       log({ event: "upgrade-refused", status: refusal.status });
@@ -205,13 +271,26 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
         ws.close(1001, "relay stopping");
         return;
       }
-      ws.on("message", (data, isBinary) => void hub.receive(ws, isBinary ? new Uint8Array(data as Buffer) : (data as Buffer).toString("utf8")));
+      // Backpressure: past IN_FLIGHT_HIGH frames waiting in the session the socket is not read, until they drain to
+      // IN_FLIGHT_LOW, so a flood is held in the client's buffers and the kernel's, not in this process.
+      let inFlight = 0;
+      ws.on("message", (data, isBinary) => {
+        inFlight += 1;
+        if (inFlight >= IN_FLIGHT_HIGH && !ws.isPaused) ws.pause();
+        void hub.receive(ws, isBinary ? new Uint8Array(data as Buffer) : (data as Buffer).toString("utf8")).finally(() => {
+          inFlight -= 1;
+          if (inFlight <= IN_FLIGHT_LOW && ws.isPaused) ws.resume();
+        });
+      });
       ws.on("close", () => hub.closed(ws));
       hub.connect(ws, { send: (text) => ws.send(text), close: (code, reason) => ws.close(code, reason) }, origin);
     });
   });
   await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
+    server.once("error", (error: NodeJS.ErrnoException) => {
+      sockets.close();
+      reject(new ListenRefused(`cannot listen on ${options.host} port ${options.port}: ${error.code ?? error.name} ${String(error.message).slice(0, 200)}`));
+    });
     server.listen(options.port, options.host, () => resolve());
   });
   origin = rule.at((server.address() as AddressInfo).port);
