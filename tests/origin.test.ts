@@ -174,3 +174,36 @@ test("RELAY_HOST=[::1] refuses to start with exit 2 and refused-to-start, not a 
   assert.ok(refused, out);
   assert.match(refused.reason, /RELAY_HOST \[::1\]/);
 });
+
+// Round 4: every RELAY_HOST must parse as a URL host, and a RELAY_ORIGIN host must mean what it says.
+
+test("F2: a RELAY_HOST the URL parser cannot read (a zone id, a space) is refused whether RELAY_ORIGIN is set or not", () => {
+  for (const host of ["fe80::1%lo0", "::1%lo0", " 127.0.0.1", "127.08.0.1"]) {
+    for (const origin of [undefined, "https://relay.example"]) {
+      const rule = relayOrigin(origin, host);
+      assert.equal(rule.ok, false, `${host} with ${origin}`);
+      if (!rule.ok) assert.match(rule.reason, /RELAY_HOST/, `${host} with ${origin}`);
+    }
+  }
+  const octal = relayOrigin("https://relay.example", "127.010.0.1");
+  assert.equal(octal.ok, false, "a RELAY_HOST a URL reads as another address is refused with a set origin too");
+  for (const host of ["relay-box", "0.0.0.0", "::", "Relay.Example"]) assert.ok(relayOrigin("https://relay.example", host).ok, host);
+});
+
+test("F4: an IPv4 RELAY_ORIGIN host must be four decimal parts that read as the same address", () => {
+  for (const raw of ["http://127.010.0.1:8787", "http://0x7f.1:8787", "http://127.1:8787", "https://2130706433", "http://127.0.0.1.:8787"]) {
+    const rule = relayOrigin(raw, "127.0.0.1");
+    assert.equal(rule.ok, false, raw);
+    if (!rule.ok) assert.match(rule.reason, /RELAY_ORIGIN/, raw);
+  }
+  const zeros = relayOrigin("http://127.000.000.001:8787", "127.0.0.1");
+  assert.ok(zeros.ok && zeros.at(1) === "http://127.0.0.1:8787", "leading zeros that read the same are normalised");
+});
+
+test("F4: a RELAY_ORIGIN with port 0 or a trailing dot is refused", () => {
+  for (const [raw, problem] of [["https://relay.example:0", /port/], ["http://127.0.0.1:0", /port/], ["https://relay.example.", /trailing dot/], ["https://relay.example.:8443", /trailing dot/]] as const) {
+    const rule = relayOrigin(raw, "127.0.0.1");
+    assert.equal(rule.ok, false, raw);
+    if (!rule.ok) assert.match(rule.reason, problem, raw);
+  }
+});
