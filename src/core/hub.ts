@@ -53,7 +53,8 @@ export interface HubDeps {
 
 /**
  * How many admitted sessions one machine may hold at once in a hub. Each session gets its own copy of every delivery,
- * so this bounds what one machine can make the relay hold for it: at most this many times one session's send window.
+ * so this bounds what one machine can make the relay hold for it: at most this many times one session's send cap. In
+ * the portable build that cap is 3 MiB (`SEND_CAP`, src/portable/server.ts), so 8 x 3 MiB = 24 MiB per machine.
  */
 export const DEFAULT_MAX_SESSIONS_PER_MACHINE = 8;
 

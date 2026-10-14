@@ -401,7 +401,7 @@ test("a flush pages the mailbox: it never asks for more than one page at a time"
     pending: (to, now, after, limit) => { limits.push(limit); return inner.pending(to, now, after, limit); },
   };
   const r = rig({ mailbox });
-  const a = r.open();
+  const a = r.open({ backlogged: () => false }); // a transport that reports its backlog: the small page
   await a.auth(A);
   await r.settle();
   assert.equal(a.sent.filter((f) => f.type === "deliver").length, 40);
@@ -438,4 +438,49 @@ test("one machine holds at most maxSessionsPerMachine sessions: the next is refu
   const a4 = r.open();
   await a4.auth(A); // room again
   for (const f of a3.sent) assert.ok(frameValid(f), `${f.type}: ${JSON.stringify(frameValid.errors)}`);
+});
+
+// Round 7: an id the relay would echo is held to the schema's 128 characters, and the flush page fits the transport.
+
+test("an id over 128 characters is refused like any frame that is not fabric-relay/0.1, and is never echoed", async () => {
+  const r = rig();
+  const a = r.open();
+  await a.auth(A);
+  const long = "i".repeat(129);
+  for (const frame of [{ type: "ping", id: long }, { type: "send", id: long, to: B.kid, msgId: "m-1", body: "AA", ttl: 60 }, { type: "presence-query", id: long, kids: [B.kid] }, { type: "nope", id: long }, { type: "ping", id: "" }]) {
+    const before = a.sent.length;
+    await a.frame(frame);
+    const replies = a.sent.slice(before);
+    assert.deepEqual(replies.map((f) => [f.type, f.code, f.replyTo]), [["error", "unknown-type", undefined]], JSON.stringify(frame).slice(0, 80));
+    assert.ok(!JSON.stringify(replies).includes(long), "the long id is not echoed");
+  }
+  assert.deepEqual(a.closed, [], "the session stays open, as for any frame that is not fabric-relay/0.1");
+  await a.frame({ type: "ping", id: "i".repeat(128) });
+  assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.id.length], ["pong", 128], "128 characters is still an id");
+  // Before auth, an over-long id is a first frame that is not an auth frame: refused unauthenticated, 4401.
+  const b = r.open();
+  await b.frame({ type: "auth", id: long });
+  assert.deepEqual([b.sent.at(-1)!.code, b.closed], ["unauthenticated", [4401]]);
+  assert.ok(!JSON.stringify(b.sent).includes(long));
+  for (const f of [...a.sent, ...b.sent]) assert.ok(frameValid(f), `${f.type}: ${JSON.stringify(frameValid.errors)}`);
+});
+
+test("the flush page fits the transport: 4 where it reports a backlog, 64 where it cannot (the Worker)", async () => {
+  for (const [backlog, page] of [[true, 4], [false, 64]] as const) {
+    const inner = new MemoryMailbox();
+    for (let n = 1; n <= 70; n += 1) await inner.append(A.kid, B.kid, `m-${n}`, "AA", 60, new Date(T0));
+    const limits: Array<number | undefined> = [];
+    const mailbox: MailboxStore = {
+      append: (...args) => inner.append(...args),
+      ack: (...args) => inner.ack(...args),
+      pending: (to, now, after, limit) => { limits.push(limit); return inner.pending(to, now, after, limit); },
+    };
+    const r = rig({ mailbox });
+    const a = r.open(backlog ? { backlogged: () => false } : {});
+    await a.auth(A);
+    await r.settle();
+    assert.equal(a.sent.filter((f) => f.type === "deliver").length, 70);
+    assert.ok(limits.every((l) => l === page), `${backlog}: ${JSON.stringify(limits)}`);
+    assert.equal(limits.length, Math.ceil(70 / page) + (70 % page === 0 ? 1 : 0), `${backlog}: ${limits.length} mailbox calls`);
+  }
 });

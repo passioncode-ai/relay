@@ -67,7 +67,10 @@ this link moves with the pin.
    - `presence` and `presence-query` are [presence](#presence);
    - a known frame type not yet served (deltas and heartbeats: RLY-07) gets `error` `internal` "not served by this
      relay version yet";
-   - an unknown type gets `unknown-type`, and the session stays open.
+   - an unknown type gets `unknown-type`, and the session stays open;
+   - a frame whose `id` is empty or longer than 128 characters (the relay-frame schema's limit) is not a
+     fabric-relay/0.1 frame: it gets `unknown-type` with no `replyTo`, so the id is never echoed, and the session stays
+     open (before `auth` it is refused `unauthenticated`, 4401).
 6. **Transport closes:**
    - a binary frame closes with 1003;
    - a frame over 1 MiB gets `too-large`, then 1009;
@@ -211,16 +214,26 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
       backlog, in `seq` order, and its acks are read meanwhile.
     - **The socket is always read**, so acks and pings arrive whatever the relay has queued to send. A socket drain
       counts as activity for the 90 s idle close: a slow reader that is draining is not idle.
-    - **Replies to a machine that never reads are capped.** Past 16 MiB queued on its socket (`SEND_CAP`; deliveries
-      alone cannot reach it) the session is logged `send-overflow`, closed 1008 through its own close (its messages
-      stay queued) and the socket terminated 1 s later unless it closes first.
+    - **Replies to a machine that never reads are capped.** A reply is small: an id the relay echoes (a `pong`'s id)
+      is at most 128 characters, the relay-frame schema's limit, and a frame with a longer or empty id is refused like
+      any frame that is not fabric-relay/0.1 (`error unknown-type` with no `replyTo`; before `auth`, `unauthenticated`
+      and 4401), so it is never echoed. Past 3 MiB queued on the socket (`SEND_CAP` = `SEND_HIGH` plus two 1 MiB
+      frames, just above what deliveries can reach), or past 4096 frames not yet handed to the kernel
+      (`SEND_FRAMES_CAP`: each queued write costs a few hundred bytes beyond its payload), the session is logged
+      `send-overflow`, closed 1008 through its own close (its messages stay queued) and the socket terminated 1 s later
+      unless it closes first.
     - **At most 8 sessions per machine** (`RELAY_MAX_SESSIONS_PER_MACHINE`, 1 to 1000): the next `auth` is answered
-      `error` `rate-limited` and closed 1013 (logged `session-limit`); a session that ends makes room.
-    - **The bound** this gives: what the relay holds queued for one machine is at most the session limit times
-      (`SEND_HIGH` plus one delivery frame of about 1 MiB): 8 x 2 MiB = 16 MiB. On top of it come the mailbox page a
-      flush is sending from (four bodies) and copies the garbage collector has not reclaimed yet. Measured with
-      `footprint`: 30 non-reading sessions of one machine with 11 MiB queued grew the relay by 41 to 44 MiB, up to
-      75 MiB under load (727 MiB before this design).
+      `error` `rate-limited` and closed 1013 (logged `session-limit`); a session that ends makes room. A peer that
+      vanishes without a close does not hold its slot for the 90 s idle close: the relay pings every socket each 15 s
+      (a WebSocket ping, which every client library answers), and a socket that showed no sign of life since the last
+      ping (no pong, no frame, no drain) is terminated (`heartbeat-timeout`), so its slot frees within 30 s.
+    - **The bound** this gives: what the relay holds queued for one session is at most `SEND_CAP`, 3 MiB, so for one
+      machine at most 8 x 3 MiB = 24 MiB. On top of it come the mailbox page a flush is sending from (four bodies), the
+      inbound frames being parsed, and copies the garbage collector has not reclaimed yet. Measured with `footprint`:
+      - 30 non-reading sessions of one machine with 11 MiB queued: 41 to 44 MiB, up to 75 MiB under load (727 MiB
+        before paced delivery and the session limit);
+      - 2 machines x 8 non-reading sessions each sending 15 pings with a 1000 KiB id: a peak of about 85 MiB falling to
+        about 43 MiB (372 to 393 MiB, held, before the id limit and the 3 MiB cap).
     - Inbound: a socket with 64 frames waiting in its session is not read until they drain to 16; with the real stores
       a frame is handled in its own turn, so this seldom trips.
   - **CONNECT** is not served: it is answered 405 (`connect-refused`) and the socket is let go of.

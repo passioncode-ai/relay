@@ -261,17 +261,106 @@ test("round 6: a machine flooding pings it never reads while the relay stops: th
   const root = await dataDir(e);
   const r = await relay(root, new SqliteMailbox(join(root, "mailbox.sqlite")));
   const a = machine(r.url, e.machine, r.origin);
-  assert.deepEqual(await a.outcome, { welcome: true });
-  a.ws.pause();
-  const id = "x".repeat(16_000);
-  for (let n = 0; n < 2000; n += 1) a.ws.send(JSON.stringify({ v: 1, type: "ping", id: `${n}-${id}` }));
-  // The replies pile up past the cap; the stop begins the moment the overflow is logged, while its close is in flight.
-  const until = Date.now() + 10_000;
-  while (!r.events.some((ev) => ev.event === "send-overflow") && Date.now() < until) await new Promise((resolve) => setImmediate(resolve));
-  assert.ok(r.events.some((ev) => ev.event === "send-overflow"), JSON.stringify(r.events.map((ev) => ev.event)));
-  const started = Date.now();
-  const result = await within(r.stop({ graceMs: 500 }), 4000);
-  assert.ok(result, `stop() had not finished ${Date.now() - started} ms after it began: ${JSON.stringify(r.events.map((ev) => ev.event))}`);
-  assert.ok(r.events.some((ev) => ev.event === "stopped"));
-  a.ws.terminate();
+  try {
+    assert.deepEqual(await a.outcome, { welcome: true });
+    a.ws.pause();
+    // Pings with the longest id the relay echoes (128 characters): each pong is as large as a reply gets.
+    const id = "x".repeat(120);
+    for (let n = 0; n < 100_000; n += 1) a.ws.send(JSON.stringify({ v: 1, type: "ping", id: `${n}`.padStart(8, "0") + id }));
+    // The replies pile up past the cap; the stop begins the moment the overflow is logged, while its close is in flight.
+    const until = Date.now() + 20_000;
+    while (!r.events.some((ev) => ev.event === "send-overflow") && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.ok(r.events.some((ev) => ev.event === "send-overflow"), JSON.stringify(r.events.map((ev) => ev.event)));
+    const started = Date.now();
+    const result = await within(r.stop({ graceMs: 500 }), 4000);
+    assert.ok(result, `stop() had not finished ${Date.now() - started} ms after it began: ${JSON.stringify(r.events.map((ev) => ev.event))}`);
+    assert.ok(r.events.some((ev) => ev.event === "stopped"));
+  } finally {
+    a.ws.terminate();
+    await within(r.stop({ graceMs: 100 }), 3000);
+  }
+});
+
+// Round 7.
+
+test("round 7: 2 machines x 8 sessions that never read, each sending 15 pings with a 1000 KiB id, keep the relay's memory bounded", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const child = spawn(process.execPath, ["--import", "tsx", "src/portable/main.ts"], {
+    env: { ...process.env, RELAY_DATA_DIR: root, RELAY_PORT: "0", RELAY_HOST: "127.0.0.1", RELAY_ORIGIN: "https://relay.test" },
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  const lines: Array<Record<string, any>> = [];
+  let buffered = "";
+  child.stdout.on("data", (chunk: Buffer) => {
+    buffered += chunk.toString("utf8");
+    for (let i = buffered.indexOf("\n"); i >= 0; i = buffered.indexOf("\n")) {
+      lines.push(JSON.parse(buffered.slice(0, i)));
+      buffered = buffered.slice(i + 1);
+    }
+  });
+  const exited = new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
+  const sessions: Array<ReturnType<typeof machine>> = [];
+  try {
+    const end = Date.now() + 10_000;
+    while (!lines.some((l) => l.event === "listening") && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50));
+    const port = lines.find((l) => l.event === "listening")?.port;
+    assert.ok(port, JSON.stringify(lines));
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const before = memoryMiB(child.pid!);
+    const id = "x".repeat(1000 * 1024);
+    for (const m of [e.machine, e.second]) {
+      for (let n = 0; n < 8; n += 1) {
+        const s = machine(`ws://127.0.0.1:${port}/v1/connect`, m, "https://relay.test");
+        sessions.push(s);
+        assert.deepEqual(await s.outcome, { welcome: true });
+        s.ws.pause(); // never read another byte
+        for (let k = 0; k < 15; k += 1) s.ws.send(JSON.stringify({ v: 1, type: "ping", id }));
+      }
+    }
+    let peak = 0;
+    for (let t = 0; t < 12; t += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      peak = Math.max(peak, memoryMiB(child.pid!) - before);
+    }
+    const settled = memoryMiB(child.pid!) - before;
+    // The bound (docs/protocol/sessions.md, Flow control): at most SEND_CAP (3 MiB) queued per session, 8 sessions per
+    // machine, so 2 x 8 x 3 = 48 MiB queued at most; here the pings' 1000 KiB ids are refused, not echoed, so almost
+    // nothing is queued. What the footprint still shows is the 240 MiB of inbound frames being parsed and collected: a
+    // peak that falls back. Measured on 0680d20: 372-393 MiB, held. Here: a peak of about 85 MiB, about 43 MiB at 12 s.
+    assert.ok(peak < 128, `the relay's footprint peaked ${peak.toFixed(0)} MiB above its start`);
+    assert.ok(settled < 64, `the relay still holds ${settled.toFixed(0)} MiB after 12 s`);
+    assert.equal(child.exitCode, null);
+  } finally {
+    for (const s of sessions) s.ws.terminate();
+    child.kill("SIGTERM");
+    if ((await within(exited, 12_000)) === undefined) child.kill("SIGKILL");
+  }
+});
+
+test("round 7: the relay pings each socket; one that shows no sign of life for two heartbeats is terminated and frees its slot", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const r = await relay(root, new SqliteMailbox(join(root, "mailbox.sqlite")), { heartbeatMs: 200 });
+  try {
+    const live = machine(r.url, e.second, r.origin); // reads, so `ws` answers each ping with a pong
+    assert.deepEqual(await live.outcome, { welcome: true });
+    const stuck = [];
+    for (let n = 0; n < 8; n += 1) {
+      const s = machine(r.url, e.machine, r.origin);
+      assert.deepEqual(await s.outcome, { welcome: true });
+      s.ws.pause(); // a dead peer: it reads nothing, so it answers no ping
+      stuck.push(s);
+    }
+    const end = Date.now() + 3000;
+    while (r.events.filter((ev) => ev.event === "heartbeat-timeout").length < 8 && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(r.events.filter((ev) => ev.event === "heartbeat-timeout").length, 8, JSON.stringify(r.events.map((ev) => ev.event)));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const ninth = machine(r.url, e.machine, r.origin);
+    assert.deepEqual(await ninth.outcome, { welcome: true }, "the dead sessions' slots are free");
+    assert.equal(live.closed(), undefined, "a socket that answers pings stays open");
+    for (const s of [...stuck, ninth, live]) s.ws.terminate();
+  } finally {
+    await within(r.stop({ graceMs: 200 }), 3000);
+  }
 });

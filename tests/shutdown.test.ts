@@ -481,8 +481,9 @@ test("round 5: a machine that floods 64 MiB of pings and never reads a reply can
       const frames: Buffer[] = [];
       let size = 0;
       while (size < 1024 * 1024) {
-        // A long id: the pong echoes it, so each reply queued for this reader is as large as the ping that caused it.
-        const frame = clientFrame(JSON.stringify({ v: 1, type: "ping", id: `f${i++}-${"x".repeat(16_000)}` }));
+        // The longest id the relay echoes (128 characters): each pong is as large as a reply gets. (A longer id is
+        // refused with a short error since round 7; before that, a 16 000-character id made each pong that large.)
+        const frame = clientFrame(JSON.stringify({ v: 1, type: "ping", id: `f${String(i++).padStart(10, "0")}${"x".repeat(117)}` }));
         frames.push(frame);
         size += frame.length;
       }

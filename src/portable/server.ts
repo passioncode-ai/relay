@@ -14,6 +14,7 @@ import { CONNECT_PATH, handle, SUBPROTOCOL, upgradeRefusal, type RelayDeps } fro
 import type { MailboxStore } from "../core/mailbox.ts";
 import type { BlobIndex } from "../core/blobs.ts";
 import { EstateHub } from "../core/hub.ts";
+import { MAX_FRAME_BYTES } from "../contract/relay.ts";
 import { OriginRefused, relayOrigin } from "./origin.ts";
 import type { LastSeenStore } from "../core/presence.ts";
 /** A frame over 1 MiB closes the connection (1009) in the session; `ws` stops reading at a little more. */
@@ -50,11 +51,24 @@ const TARGET_BASE = "http://relay.invalid";
  *   when the socket drains (`hub.drained`). What is not sent yet stays in the mailbox. So deliveries alone hold at most
  *   SEND_HIGH plus one delivery frame (a body of at most 765 KiB, about 1 MiB as a frame) per session.
  * - The socket is always read: acks and pings arrive whatever the relay has queued to send.
- * - SEND_CAP bounds what deliveries cannot reach: replies (pong, accepted, error, presence) to a machine that keeps
- *   sending and never reads. Past it the session is closed 1008 (`send-overflow`) and its socket terminated 1 s later.
+ * - SEND_CAP is just above what deliveries can reach (SEND_HIGH plus one delivery frame), so it bounds the rest:
+ *   replies (pong, accepted, error, presence) to a machine that keeps sending and never reads. A reply is small (an id
+ *   the relay echoes is at most 128 characters). Past the cap the session is closed 1008 (`send-overflow`) and its
+ *   socket terminated 1 s later. So one session holds at most SEND_CAP = 3 MiB queued, one machine (8 sessions) 24 MiB.
+ * - SEND_FRAMES_CAP bounds the same thing counted in frames: each queued write costs the process a few hundred bytes
+ *   beyond its payload, so 3 MiB of 50-byte pongs would cost far more than 3 MiB. Past 4096 frames not yet handed to
+ *   the kernel, the session is closed the same way.
  */
 const SEND_HIGH = 1024 * 1024;
-const SEND_CAP = 16 * 1024 * 1024;
+const SEND_CAP = SEND_HIGH + 2 * MAX_FRAME_BYTES;
+const SEND_FRAMES_CAP = 4096;
+/**
+ * Socket heartbeat: every HEARTBEAT_MS the relay pings each session's socket (a WebSocket ping; every client library
+ * answers it). A socket that showed no sign of life since the previous heartbeat (no pong, no frame, no drain) is
+ * terminated (`heartbeat-timeout`), so a peer that vanished frees its session slot within two heartbeats instead of
+ * the 90 s idle close.
+ */
+const HEARTBEAT_MS = 15_000;
 /** Close code for a machine that does not read what the relay sends it: a policy violation (RFC 6455 §7.4.1). */
 const CLOSE_NOT_READING = 1008;
 /**
@@ -115,6 +129,8 @@ export interface ServeOptions {
   mailbox?: MailboxStore & { close?(): void };
   /** When each machine was last seen (RLY-06); without one, presence is answered "not served yet". */
   lastSeen?: LastSeenStore & { close?(): void };
+  /** How often each session's socket is pinged (default 15 s); one silent for two heartbeats is terminated. */
+  heartbeatMs?: number;
   /** At most this many sessions per machine at once (default 8, `DEFAULT_MAX_SESSIONS_PER_MACHINE`); the next is refused 1013. */
   maxSessionsPerMachine?: number;
   log?: (event: Record<string, unknown>) => void;
@@ -227,6 +243,25 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
     connections.add(socket);
     socket.once("close", () => connections.delete(socket));
   });
+  // The heartbeat (HEARTBEAT_MS): each connected session's socket and whether it showed life since the last beat.
+  const alive = new Map<WebSocket, boolean>();
+  const heartbeat = setInterval(() => {
+    for (const [ws, live] of alive) {
+      if (!live) {
+        log({ event: "heartbeat-timeout" });
+        alive.delete(ws);
+        ws.terminate();
+        continue;
+      }
+      alive.set(ws, false);
+      try {
+        ws.ping();
+      } catch {
+        // a socket already closing: its close event removes it
+      }
+    }
+  }, options.heartbeatMs ?? HEARTBEAT_MS);
+  heartbeat.unref();
   // `allowSynchronousEvents: false`: `ws` emits one message per turn of the event loop, so a machine flooding frames
   // cannot keep the loop from a signal or a timer (a SIGTERM is handled within one frame's work).
   const sockets = new WebSocketServer({
@@ -299,9 +334,17 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
       // resumed on drain, the socket always read, replies to a machine that never reads capped.
       let inFlight = 0;
       let overflowed = false;
+      let unsent = 0; // frames handed to ws and not yet to the kernel
       let terminate: ReturnType<typeof setTimeout> | undefined;
-      (socket as Socket).on("drain", () => void hub.drained(ws));
+      const lively = () => { if (alive.has(ws)) alive.set(ws, true); };
+      alive.set(ws, true);
+      ws.on("pong", lively);
+      (socket as Socket).on("drain", () => {
+        lively();
+        void hub.drained(ws);
+      });
       ws.on("message", (data, isBinary) => {
+        lively();
         inFlight += 1;
         if (inFlight >= IN_FLIGHT_HIGH && !ws.isPaused) ws.pause();
         void hub.receive(ws, isBinary ? new Uint8Array(data as Buffer) : (data as Buffer).toString("utf8")).finally(() => {
@@ -311,16 +354,18 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
       });
       ws.on("close", () => {
         clearTimeout(terminate);
+        alive.delete(ws);
         hub.closed(ws);
       });
       hub.connect(ws, {
         send: (text) => {
           if (overflowed) return;
-          ws.send(text);
+          unsent += 1;
+          ws.send(text, () => { unsent -= 1; });
           const queued = ws.bufferedAmount;
-          if (queued <= SEND_CAP) return;
+          if (queued <= SEND_CAP && unsent <= SEND_FRAMES_CAP) return;
           overflowed = true;
-          log({ event: "send-overflow", bufferedAmount: queued, cap: SEND_CAP });
+          log({ event: "send-overflow", bufferedAmount: queued, cap: SEND_CAP, frames: unsent, framesCap: SEND_FRAMES_CAP });
           // Its session ends through its own close (lastSeen is written); the close frame cannot pass a socket that is not
           // read, so the socket is terminated shortly after unless it closes first.
           hub.session(ws)?.close(CLOSE_NOT_READING, "not reading what the relay sends");
@@ -335,6 +380,7 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
   await new Promise<void>((resolve, reject) => {
     server.once("error", (error: NodeJS.ErrnoException) => {
       sockets.close();
+      clearInterval(heartbeat);
       reject(new ListenRefused(`cannot listen on ${options.host} port ${options.port}: ${error.code ?? error.name} ${String(error.message).slice(0, 200)}`));
     });
     server.listen(options.port, options.host, () => resolve());
@@ -366,6 +412,7 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
     const unclosed = [...new Set([...result.unclosed, ...pending, ...refusing])];
     for (const ws of unclosed) ws.terminate();
     clearTimeout(timer);
+    clearInterval(heartbeat);
     let lingering = 0;
     await new Promise<void>((resolve) => {
       sockets.close();

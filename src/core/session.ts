@@ -103,14 +103,42 @@ export type SessionState = "awaiting-auth" | "admitted" | "closed";
 export const EMPTY_DELTA_HEAD = { sequence: 0, sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" } as const;
 
 const SERVED = ["hello", "auth", "welcome", "ping", "pong", "error"];
-/** How many mailbox entries a flush reads at a time: at most a page is held in memory per session. */
+/**
+ * How many mailbox entries a flush reads at a time. Where the transport reports a backlog (the portable build) a page
+ * is small, so a session holds little more than it can send: 4. Where it cannot (the Worker's hibernatable socket), a
+ * flush sends every page at once and each page is a call to the mailbox object, so a page is large: a 1000-message
+ * backlog is 16 calls, well inside a Worker's subrequest limit (F-8 revisits it with the hosted limits).
+ */
 export const FLUSH_PAGE = 4;
+export const FLUSH_PAGE_UNPACED = 64;
+/** The longest frame `id` (the relay-frame schema's maxLength): a longer one is refused and never echoed. */
+export const MAX_ID_LENGTH = 128;
 /** Close code for a session refused because its machine holds as many as it may: "try again later" (RFC 6455 §7.4.1). */
 export const CLOSE_TRY_AGAIN_LATER = 1013;
 const MAIL = ["send", "ack"];
 /** The most kids one `presence-query` may name, and the longest kid (the relay-frame schema's limits). */
 const MAX_QUERY_KIDS = 256;
 const MAX_KID_LENGTH = 256;
+/**
+ * Whether `text` takes more than `limit` bytes as UTF-8, counted without encoding it: a frame near 1 MiB is not copied
+ * just to be measured.
+ */
+function utf8Exceeds(text: string, limit: number): boolean {
+  if (text.length > limit) return true; // every UTF-16 unit is at least one byte
+  if (text.length * 3 <= limit) return false; // and at most three
+  let bytes = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const unit = text.charCodeAt(i);
+    if (unit < 0x80) bytes += 1;
+    else if (unit < 0x800) bytes += 2;
+    else if (unit >= 0xd800 && unit <= 0xdbff && i + 1 < text.length && (text.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+      bytes += 4;
+      i += 1;
+    } else bytes += 3;
+    if (bytes > limit) return true;
+  }
+  return false;
+}
 /** The decoded length of a base64url string, without decoding it (the core uses web-standard APIs only). */
 const base64urlLength = (text: string) => Math.floor(text.replace(/=+$/, "").length * 3 / 4);
 const isFrame = (value: unknown): value is { v: unknown; type: unknown; id: unknown } & Record<string, unknown> =>
@@ -202,7 +230,7 @@ export class RelaySession {
     if (this.state === "closed") return;
     if (typeof data !== "string") return this.close(CLOSE_CODES.binary, "binary frames are not part of fabric-relay/0.1");
     this.lastFrameAt = this.env.now().getTime();
-    if (new TextEncoder().encode(data).byteLength > MAX_FRAME_BYTES) {
+    if (utf8Exceeds(data, MAX_FRAME_BYTES)) {
       this.error("too-large", `frames are at most ${MAX_FRAME_BYTES} bytes`);
       return this.close(CLOSE_CODES.tooLarge, "frame too large");
     }
@@ -212,7 +240,10 @@ export class RelaySession {
     } catch {
       frame = undefined;
     }
-    if (!isFrame(frame) || frame.v !== 1 || typeof frame.type !== "string" || typeof frame.id !== "string") {
+    // An id the relay would echo (a pong's id, an error's replyTo) is held to the schema's length, so a reply is never
+    // larger than a frame the relay itself would send.
+    if (!isFrame(frame) || frame.v !== 1 || typeof frame.type !== "string" || typeof frame.id !== "string"
+      || frame.id.length < 1 || frame.id.length > MAX_ID_LENGTH) {
       if (this.state === "awaiting-auth") return this.refuse("unauthenticated", "the first frame is a fabric-relay/0.1 auth frame");
       return this.error("unknown-type", "not a fabric-relay/0.1 frame");
     }
@@ -374,7 +405,8 @@ export class RelaySession {
     if (this.state !== "admitted" || !this.env.mailbox) return;
     for (;;) {
       if (this.io.backlogged?.()) return;
-      const entries = await this.env.mailbox.pending(this.kid as string, this.env.now(), this.delivered, FLUSH_PAGE);
+      const page = this.io.backlogged ? FLUSH_PAGE : FLUSH_PAGE_UNPACED;
+      const entries = await this.env.mailbox.pending(this.kid as string, this.env.now(), this.delivered, page);
       for (const entry of entries) {
         if (this.state !== "admitted") return;
         if (entry.seq <= this.delivered) continue;
@@ -382,7 +414,7 @@ export class RelaySession {
         this.delivered = entry.seq;
         this.send({ type: "deliver", from: entry.from, msgId: entry.msgId, seq: entry.seq, body: entry.body, sentAt: entry.sentAt });
       }
-      if (entries.length < FLUSH_PAGE) return;
+      if (entries.length < page) return;
     }
   }
 
