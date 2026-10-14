@@ -106,7 +106,9 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
   - On success the relay answers `accepted {msgId, seq}`. `seq` is monotonic per mailbox.
   - A repeat of the same `(from, msgId)` while it is still queued answers its first `seq` and is not delivered again.
 - **`deliver`.** Every connection the recipient holds gets each unacknowledged message once, in `seq` order. A
-  connection that opens later gets what waited for it.
+  connection that opens later gets what waited for it. Where the transport reports a backlog (the portable build),
+  delivery goes at the pace the machine reads (see Flow control); the Worker's hibernatable socket reports none, so
+  there a flush sends every page at once, as before.
 - **`ack {seq}`.** It deletes the message for every connection.
 - **Expiry.** An expired message is deleted when it is met.
 - **Where mail is kept.**
@@ -200,15 +202,27 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
     `http://[/v1/connect`, `http://x:99999/`) gets 400 `bad-request` (logged `request-refused`), or a bare 400 on an
     upgrade (`upgrade-refused`); the target is parsed once, before anything else, and the relay stays up. Targets
     resolve against a fixed base, `http://relay.invalid`, never `RELAY_HOST`.
-  - **Backpressure.** `ws` emits one message per turn of the event loop (`allowSynchronousEvents: false`), so a
-    flooding machine cannot delay a signal or a timer (SIGTERM is handled within one frame's work). What bounds the
-    relay's memory is what it has queued to send: past 1 MiB queued for a socket the relay stops reading it, and reads
-    again once the socket drains below 256 KiB. A machine that floods frames and never reads the replies therefore keeps
-    its backlog in its own buffers and the kernel's, and the relay holds about 1 MiB for it. A session whose send queue
-    still passes 16 MiB (one burst of mailbox deliveries can) is logged `send-overflow`, closed 1008 through its own
-    close (its messages stay queued, unacknowledged) and its socket terminated 1 s later. A socket with 64 frames
-    waiting in its session is also not read until they drain to 16; with the real stores a frame is handled in its own
-    turn, so this defence in depth seldom trips.
+  - **Flow control** (`src/portable/server.ts`, the flush in `src/core/session.ts`). `ws` emits one message per turn
+    of the event loop (`allowSynchronousEvents: false`), so a flooding machine cannot delay a signal or a timer
+    (SIGTERM is handled within one frame's work). Then:
+    - **Deliveries are paced by the machine's reading.** A flush reads the mailbox four messages at a time
+      (`FLUSH_PAGE`) and sends only while less than 1 MiB is queued on the socket (`SEND_HIGH`); when the socket
+      drains it goes on. What is not sent yet stays in the mailbox, durable. A reader at any speed gets its whole
+      backlog, in `seq` order, and its acks are read meanwhile.
+    - **The socket is always read**, so acks and pings arrive whatever the relay has queued to send. A socket drain
+      counts as activity for the 90 s idle close: a slow reader that is draining is not idle.
+    - **Replies to a machine that never reads are capped.** Past 16 MiB queued on its socket (`SEND_CAP`; deliveries
+      alone cannot reach it) the session is logged `send-overflow`, closed 1008 through its own close (its messages
+      stay queued) and the socket terminated 1 s later unless it closes first.
+    - **At most 8 sessions per machine** (`RELAY_MAX_SESSIONS_PER_MACHINE`, 1 to 1000): the next `auth` is answered
+      `error` `rate-limited` and closed 1013 (logged `session-limit`); a session that ends makes room.
+    - **The bound** this gives: what the relay holds queued for one machine is at most the session limit times
+      (`SEND_HIGH` plus one delivery frame of about 1 MiB): 8 x 2 MiB = 16 MiB. On top of it come the mailbox page a
+      flush is sending from (four bodies) and copies the garbage collector has not reclaimed yet. Measured with
+      `footprint`: 30 non-reading sessions of one machine with 11 MiB queued grew the relay by 41 to 44 MiB, up to
+      75 MiB under load (727 MiB before this design).
+    - Inbound: a socket with 64 frames waiting in its session is not read until they drain to 16; with the real stores
+      a frame is handled in its own turn, so this seldom trips.
   - **CONNECT** is not served: it is answered 405 (`connect-refused`) and the socket is let go of.
   - **Stopping (RLY-010).** SIGTERM, SIGINT or SIGHUP (the terminal that started the relay closed) stops gracefully. New upgrades get 503, and HTTP answers carry
     `connection: close`. Every session is closed 1001 through the estate hub, so each machine's `lastSeen` is written.

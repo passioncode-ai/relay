@@ -132,8 +132,9 @@ export function relayOrigin(raw: string | undefined, host: string): OriginRule {
     return { ok: false, reason: `RELAY_ORIGIN must be https:// (it is ${url.protocol})` };
   }
   if (url.pathname !== "/") return { ok: false, reason: `RELAY_ORIGIN has a path (${url.pathname}); it must be a bare origin` };
-  if (url.search) return { ok: false, reason: "RELAY_ORIGIN has a query; it must be a bare origin" };
-  if (url.hash) return { ok: false, reason: "RELAY_ORIGIN has a fragment; it must be a bare origin" };
+  // An empty query or fragment ("https://relay.test?") leaves url.search and url.hash empty; the raw value still has it.
+  if (url.search || raw.includes("?")) return { ok: false, reason: "RELAY_ORIGIN has a query; it must be a bare origin" };
+  if (url.hash || raw.includes("#")) return { ok: false, reason: "RELAY_ORIGIN has a fragment; it must be a bare origin" };
   const origin = url.origin;
   return { ok: true, localOnly: isLocalOnly(origin), defaulted: false, at: () => origin };
 }

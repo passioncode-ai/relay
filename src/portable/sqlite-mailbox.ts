@@ -55,10 +55,11 @@ export class SqliteMailbox implements MailboxStore {
     }
   }
 
-  async pending(to: string, now: Date, afterSeq = 0): Promise<MailEntry[]> {
+  async pending(to: string, now: Date, afterSeq = 0, limit?: number): Promise<MailEntry[]> {
     this.#purge(to, now);
-    const rows = this.#db.prepare("SELECT seq, sender, msg_id, body, sent_at, expires_at FROM mail WHERE recipient = ? AND seq > ? ORDER BY seq")
-      .all(to, afterSeq) as Array<{ seq: number; sender: string; msg_id: string; body: string; sent_at: string; expires_at: number }>;
+    // LIMIT -1 is SQLite's "no limit".
+    const rows = this.#db.prepare("SELECT seq, sender, msg_id, body, sent_at, expires_at FROM mail WHERE recipient = ? AND seq > ? ORDER BY seq LIMIT ?")
+      .all(to, afterSeq, limit ?? -1) as Array<{ seq: number; sender: string; msg_id: string; body: string; sent_at: string; expires_at: number }>;
     return rows.map((r) => ({ to, from: r.sender, msgId: r.msg_id, seq: r.seq, body: r.body, sentAt: r.sent_at, expiresAt: r.expires_at }));
   }
 

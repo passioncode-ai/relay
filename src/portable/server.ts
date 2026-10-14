@@ -45,19 +45,21 @@ function refuseUpgrade(socket: Socket, response: string): void {
 const TARGET_BASE = "http://relay.invalid";
 
 /**
- * Flow control per connection (round 5). What bounds the relay's memory is what it has queued to SEND: a machine that
- * floods frames and never reads the replies would otherwise grow the send buffer without limit. Past SEND_HIGH queued
- * bytes the relay stops reading that socket, and reads again once the socket drains below SEND_LOW. A session whose
- * queue still passes SEND_CAP (one burst of deliveries can) is closed 1008 and logged `send-overflow`.
+ * Outbound flow control per connection (round 6; docs/protocol/sessions.md, "Flow control").
+ * - Deliveries are paced: a session's flush sends mail only while `ws.bufferedAmount` is below SEND_HIGH, and goes on
+ *   when the socket drains (`hub.drained`). What is not sent yet stays in the mailbox. So deliveries alone hold at most
+ *   SEND_HIGH plus one delivery frame (a body of at most 765 KiB, about 1 MiB as a frame) per session.
+ * - The socket is always read: acks and pings arrive whatever the relay has queued to send.
+ * - SEND_CAP bounds what deliveries cannot reach: replies (pong, accepted, error, presence) to a machine that keeps
+ *   sending and never reads. Past it the session is closed 1008 (`send-overflow`) and its socket terminated 1 s later.
  */
 const SEND_HIGH = 1024 * 1024;
-const SEND_LOW = 256 * 1024;
 const SEND_CAP = 16 * 1024 * 1024;
 /** Close code for a machine that does not read what the relay sends it: a policy violation (RFC 6455 §7.4.1). */
 const CLOSE_NOT_READING = 1008;
 /**
- * Defence in depth: how many frames may wait in a session before the socket is not read, and when it is read again.
- * With the real stores a frame is handled within its own turn, so this seldom trips; SEND_HIGH is the bound that acts.
+ * Inbound protection: how many frames may wait in a session before the socket is not read, and when it is read again.
+ * With the real stores a frame is handled within its own turn, so this seldom trips.
  */
 const IN_FLIGHT_HIGH = 64;
 const IN_FLIGHT_LOW = 16;
@@ -113,6 +115,8 @@ export interface ServeOptions {
   mailbox?: MailboxStore & { close?(): void };
   /** When each machine was last seen (RLY-06); without one, presence is answered "not served yet". */
   lastSeen?: LastSeenStore & { close?(): void };
+  /** At most this many sessions per machine at once (default 8, `DEFAULT_MAX_SESSIONS_PER_MACHINE`); the next is refused 1013. */
+  maxSessionsPerMachine?: number;
   log?: (event: Record<string, unknown>) => void;
 }
 
@@ -208,6 +212,7 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
     admission: () => holder.current(),
     ...(options.mailbox ? { mailbox: options.mailbox } : {}),
     ...(options.lastSeen ? { lastSeen: options.lastSeen } : {}),
+    ...(options.maxSessionsPerMachine ? { maxSessionsPerMachine: options.maxSessionsPerMachine } : {}),
     arm: (at) => {
       clearTimeout(timer);
       timer = at === undefined ? undefined : setTimeout(() => void hub.onWake(), Math.max(0, at - Date.now()));
@@ -290,44 +295,39 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
         ws.close(1001, "relay stopping");
         return;
       }
-      // Backpressure (SEND_HIGH, SEND_LOW, SEND_CAP, IN_FLIGHT_*): the socket is not read while the relay holds more
-      // than SEND_HIGH bytes for it, or IN_FLIGHT_HIGH frames waiting in its session. A flood from a machine that does
-      // not read is then held in its own buffers and the kernel's; what this process keeps for it stays near SEND_HIGH.
+      // Flow control (SEND_HIGH, SEND_CAP, IN_FLIGHT_*; see the constants): deliveries paced by the send buffer and
+      // resumed on drain, the socket always read, replies to a machine that never reads capped.
       let inFlight = 0;
       let overflowed = false;
-      const maybeResume = () => {
-        if (ws.isPaused && !overflowed && inFlight <= IN_FLIGHT_LOW && ws.bufferedAmount <= SEND_LOW) ws.resume();
-      };
-      (socket as Socket).on("drain", maybeResume);
-      const sent = () => {
-        const queued = ws.bufferedAmount;
-        if (queued > SEND_CAP && !overflowed) {
-          overflowed = true;
-          log({ event: "send-overflow", bufferedAmount: queued, cap: SEND_CAP });
-          if (!ws.isPaused) ws.pause();
-          // Its session ends through its own close (lastSeen is written); the close frame cannot pass a socket that is not
-          // read, so the socket is terminated shortly after.
-          hub.session(ws)?.close(CLOSE_NOT_READING, "not reading what the relay sends");
-          setTimeout(() => ws.terminate(), 1000).unref();
-        } else if (queued > SEND_HIGH && !ws.isPaused) {
-          ws.pause();
-        }
-      };
+      let terminate: ReturnType<typeof setTimeout> | undefined;
+      (socket as Socket).on("drain", () => void hub.drained(ws));
       ws.on("message", (data, isBinary) => {
         inFlight += 1;
         if (inFlight >= IN_FLIGHT_HIGH && !ws.isPaused) ws.pause();
         void hub.receive(ws, isBinary ? new Uint8Array(data as Buffer) : (data as Buffer).toString("utf8")).finally(() => {
           inFlight -= 1;
-          maybeResume();
+          if (inFlight <= IN_FLIGHT_LOW && ws.isPaused) ws.resume();
         });
       });
-      ws.on("close", () => hub.closed(ws));
+      ws.on("close", () => {
+        clearTimeout(terminate);
+        hub.closed(ws);
+      });
       hub.connect(ws, {
         send: (text) => {
           if (overflowed) return;
           ws.send(text);
-          sent();
+          const queued = ws.bufferedAmount;
+          if (queued <= SEND_CAP) return;
+          overflowed = true;
+          log({ event: "send-overflow", bufferedAmount: queued, cap: SEND_CAP });
+          // Its session ends through its own close (lastSeen is written); the close frame cannot pass a socket that is not
+          // read, so the socket is terminated shortly after unless it closes first.
+          hub.session(ws)?.close(CLOSE_NOT_READING, "not reading what the relay sends");
+          terminate = setTimeout(() => ws.terminate(), 1000);
+          terminate.unref();
         },
+        backlogged: () => ws.bufferedAmount >= SEND_HIGH,
         close: (code, reason) => ws.close(code, reason),
       }, origin);
     });

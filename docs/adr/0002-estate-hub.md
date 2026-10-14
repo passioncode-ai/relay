@@ -35,6 +35,9 @@ connections was a separate store reached by message:
      sessions; a refresh that fails (`refresh-fault`) or succeeds while still due (`refresh-stalled`) is retried no
      sooner than `REFRESH_RETRY_MS` later, so it never spins the timer;
    - mailbox wake-ups: `wake(kid)` flushes that machine's sessions, each flush single-flight with a "run again" flag;
+     a flush reads the mailbox a page at a time and stops while the transport says it is backlogged
+     (`SessionIo.backlogged`); `drained(conn)` resumes it and counts as activity for the idle close;
+   - at most `maxSessionsPerMachine` (default 8) admitted sessions per machine: the next is refused `rate-limited`, 1013;
    - `stop()`: closes every session through its own close (1001), writes `lastSeen`, announces nothing, and waits for
      the transports. A second call shares the first one's wait.
 2. **A session is a serializable `SessionRecord`** (`snapshot()`, `RelaySession.restore()`, `nextDeadline()`), handed

@@ -215,3 +215,11 @@ test("round 5: a RELAY_ORIGIN host with an empty label (.relay.test, relay..test
     if (!rule.ok) assert.match(rule.reason, /empty label/, raw);
   }
 });
+
+test("round 6: a RELAY_ORIGIN with an empty query or fragment (https://relay.test? or #) is refused like any query or fragment", () => {
+  for (const [raw, problem] of [["https://relay.test?", /query/], ["https://relay.test#", /fragment/], ["https://relay.test/?", /query/], ["https://relay.test/#", /fragment/]] as const) {
+    const rule = relayOrigin(raw, "127.0.0.1");
+    assert.equal(rule.ok, false, raw);
+    if (!rule.ok) assert.match(rule.reason, problem, raw);
+  }
+});

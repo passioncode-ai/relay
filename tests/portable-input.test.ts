@@ -143,3 +143,13 @@ test("round 5: a CONNECT request is answered 405 and the relay stays up", async 
     relay.kill();
   }
 });
+
+test("round 6: RELAY_MAX_SESSIONS_PER_MACHINE must be a number from 1 to 1000", async () => {
+  for (const value of ["", "0", "1001", "8.5", "x"]) await refuses({ RELAY_MAX_SESSIONS_PER_MACHINE: value }, /RELAY_MAX_SESSIONS_PER_MACHINE/);
+  const relay = await start({ RELAY_MAX_SESSIONS_PER_MACHINE: "3" });
+  try {
+    await listening(relay);
+  } finally {
+    relay.kill();
+  }
+});

@@ -46,10 +46,11 @@ export class RelayMailbox extends DurableObject<Env> {
     return { seq: next, duplicate: false };
   }
 
-  async pending(to: string, nowMs: number, afterSeq: number): Promise<MailEntry[]> {
+  async pending(to: string, nowMs: number, afterSeq: number, limit = -1): Promise<MailEntry[]> {
     this.#purge(nowMs);
+    // LIMIT -1 is SQLite's "no limit".
     return this.ctx.storage.sql.exec<{ seq: number; sender: string; msg_id: string; body: string; sent_at: string; expires_at: number }>(
-      "SELECT seq, sender, msg_id, body, sent_at, expires_at FROM mail WHERE seq > ? ORDER BY seq", afterSeq).toArray()
+      "SELECT seq, sender, msg_id, body, sent_at, expires_at FROM mail WHERE seq > ? ORDER BY seq LIMIT ?", afterSeq, limit).toArray()
       .map((r) => ({ to, from: r.sender, msgId: r.msg_id, seq: r.seq, body: r.body, sentAt: r.sent_at, expiresAt: r.expires_at }));
   }
 
@@ -67,8 +68,8 @@ export class DurableMailbox implements MailboxStore {
   append(to: string, from: string, msgId: string, body: string, ttlSeconds: number, now: Date): Promise<AppendResult> {
     return this.#box(to).append(this.context, to, from, msgId, body, ttlSeconds, now.getTime());
   }
-  pending(to: string, now: Date, afterSeq = 0): Promise<MailEntry[]> {
-    return this.#box(to).pending(to, now.getTime(), afterSeq);
+  pending(to: string, now: Date, afterSeq = 0, limit?: number): Promise<MailEntry[]> {
+    return this.#box(to).pending(to, now.getTime(), afterSeq, limit ?? -1);
   }
   ack(to: string, seq: number): Promise<boolean> {
     return this.#box(to).ack(seq);

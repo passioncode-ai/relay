@@ -29,6 +29,13 @@ import {
 /** What the transport gives a session: send a text frame, close with a code, and keep the session's record. */
 export interface SessionIo {
   send(text: string): void;
+  /**
+   * Whether the transport already holds as much as it should for this connection (the portable build: `ws`'s
+   * `bufferedAmount` at or past its high-water mark). While it does, a flush sends no more deliveries; the transport
+   * calls the hub's `drained(conn)` when it can take more, and the flush goes on from the mailbox. A transport without
+   * a backlog signal (the Worker's hibernatable socket has none) omits it, and a flush sends every page at once.
+   */
+  backlogged?(): boolean;
   close(code: number, reason: string): void;
   /** Called with the session's record after every change (the Worker: `serializeAttachment`); optional. */
   persist?(record: SessionRecord): void;
@@ -45,6 +52,8 @@ export interface SessionHub {
   left(session: RelaySession): void;
   /** A message was queued for `kid`. */
   queued(kid: string): void;
+  /** Whether `kid` may hold one more admitted session (the hub's `maxSessionsPerMachine`); absent means always. */
+  hasRoom?(kid: string): boolean;
   /** Presence (RLY-06), when the hub keeps `lastSeen`; without it presence frames are answered "not served yet". */
   presence?: {
     touch(kid: string, at: Date): void | Promise<void>;
@@ -94,6 +103,10 @@ export type SessionState = "awaiting-auth" | "admitted" | "closed";
 export const EMPTY_DELTA_HEAD = { sequence: 0, sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" } as const;
 
 const SERVED = ["hello", "auth", "welcome", "ping", "pong", "error"];
+/** How many mailbox entries a flush reads at a time: at most a page is held in memory per session. */
+export const FLUSH_PAGE = 4;
+/** Close code for a session refused because its machine holds as many as it may: "try again later" (RFC 6455 §7.4.1). */
+export const CLOSE_TRY_AGAIN_LATER = 1013;
 const MAIL = ["send", "ack"];
 /** The most kids one `presence-query` may name, and the longest kid (the relay-frame schema's limits). */
 const MAX_QUERY_KIDS = 256;
@@ -166,7 +179,8 @@ export class RelaySession {
 
   /**
    * The first instant (epoch ms) at which `tick()` has something to do: past the 10 s auth deadline while awaiting
-   * `auth`, past 90 s of silence once admitted; undefined once closed.
+   * `auth`, past 90 s of silence once admitted (silence: no frame from the machine and no outbound progress, see
+   * `progressed`); undefined once closed.
    */
   nextDeadline(): number | undefined {
     if (this.state === "closed") return undefined;
@@ -238,6 +252,14 @@ export class RelaySession {
       return this.refuse(result.code, admission.ok || result.code !== "not-admitted" ? result.code : `no verified estate record (${admission.refusal})`);
     }
     if (!admission.ok) return this.refuse("not-admitted", `no verified estate record (${admission.refusal})`); // unreachable: admit found no key
+    if (this.env.hub?.hasRoom && !this.env.hub.hasRoom(result.kid)) {
+      try {
+        this.error("rate-limited", "this machine already holds as many relay sessions as it may; close one and try again");
+      } finally {
+        this.close(CLOSE_TRY_AGAIN_LATER, "too many sessions for this machine");
+      }
+      return;
+    }
     this.state = "admitted";
     this.kid = result.kid;
     this.revision = admission.revision;
@@ -343,15 +365,35 @@ export class RelaySession {
     return this.flushing;
   }
 
-  /** Every unacknowledged message this connection has not been sent yet, in seq order. */
+  /**
+   * Every unacknowledged message this connection has not been sent yet, in seq order, read from the mailbox one page
+   * (FLUSH_PAGE) at a time and sent only while the transport is not backlogged. What is not sent yet stays in the
+   * mailbox, durable, not in a socket buffer; the transport's `drained` wakes the session to go on.
+   */
   private async flush(): Promise<void> {
     if (this.state !== "admitted" || !this.env.mailbox) return;
-    const entries = await this.env.mailbox.pending(this.kid as string, this.env.now(), this.delivered);
-    for (const entry of entries) {
-      if (this.state !== "admitted" || entry.seq <= this.delivered) continue;
-      this.delivered = entry.seq;
-      this.send({ type: "deliver", from: entry.from, msgId: entry.msgId, seq: entry.seq, body: entry.body, sentAt: entry.sentAt });
+    for (;;) {
+      if (this.io.backlogged?.()) return;
+      const entries = await this.env.mailbox.pending(this.kid as string, this.env.now(), this.delivered, FLUSH_PAGE);
+      for (const entry of entries) {
+        if (this.state !== "admitted") return;
+        if (entry.seq <= this.delivered) continue;
+        if (this.io.backlogged?.()) return;
+        this.delivered = entry.seq;
+        this.send({ type: "deliver", from: entry.from, msgId: entry.msgId, seq: entry.seq, body: entry.body, sentAt: entry.sentAt });
+      }
+      if (entries.length < FLUSH_PAGE) return;
     }
+  }
+
+  /**
+   * The transport took what the relay had queued for this connection (its socket drained): the machine is reading, so
+   * this counts as activity for the 90 s idle close, the same as a frame from it.
+   */
+  progressed(): void {
+    if (this.state !== "admitted") return;
+    this.lastFrameAt = this.env.now().getTime();
+    this.changed();
   }
 
   /** An error frame and, for an authentication failure, the close DEC-0047 item 3 names. */

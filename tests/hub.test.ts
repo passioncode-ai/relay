@@ -29,7 +29,7 @@ function machine(kid: string) {
 const A = machine("urn:fabric:machine:a#sig"), B = machine("urn:fabric:machine:b#sig");
 const admission = (): AdmissionResult => ({ ok: true, held: {}, revision: 1, set: new Map([[A.kid, A.jwk], [B.kid, B.jwk]]) as unknown as Map<string, Uint8Array> });
 
-function rig(options: { mailbox?: MailboxStore; refresh?: HubDeps["refresh"] } = {}) {
+function rig(options: { mailbox?: MailboxStore; refresh?: HubDeps["refresh"]; maxSessionsPerMachine?: number } = {}) {
   let now = T0;
   const armed: Array<number | undefined> = [];
   const log: Array<Record<string, unknown>> = [];
@@ -39,8 +39,9 @@ function rig(options: { mailbox?: MailboxStore; refresh?: HubDeps["refresh"] } =
     now: () => new Date(now), nonce: () => NONCE, sessionId: () => `s${++ids}`, admission, lastSeen,
     mailbox: options.mailbox ?? new MemoryMailbox(), arm: (at) => armed.push(at), log: (e) => log.push(e),
     ...(options.refresh ? { refresh: options.refresh } : {}),
+    ...(options.maxSessionsPerMachine ? { maxSessionsPerMachine: options.maxSessionsPerMachine } : {}),
   });
-  const open = () => {
+  const open = (transport: { backlogged?: () => boolean } = {}) => {
     const conn = {};
     const sent: Array<Record<string, any>> = [];
     const closed: number[] = [];
@@ -51,6 +52,7 @@ function rig(options: { mailbox?: MailboxStore; refresh?: HubDeps["refresh"] } =
         sent.push(JSON.parse(t));
       },
       close: (code) => closed.push(code),
+      ...(transport.backlogged ? { backlogged: transport.backlogged } : {}),
     };
     hub.connect(conn, io, ORIGIN);
     const frame = (f: Record<string, unknown>) => hub.receive(conn, JSON.stringify({ v: 1, ...f }));
@@ -367,4 +369,73 @@ test("an admission refresh that succeeds without moving its deadline backs off i
   moving.at(20_000);
   await moving.hub.onWake();
   assert.equal(moving.hub.nextWake(), T0 + 80_000);
+});
+
+// Round 6: delivery is paced by the transport, outbound progress is liveness, and one machine holds a bounded number of
+// sessions.
+
+test("a flush stops while the transport is backlogged and goes on when it drains: every message once, in order", async () => {
+  const mailbox = new MemoryMailbox();
+  for (let n = 1; n <= 5; n += 1) await mailbox.append(A.kid, B.kid, `m-${n}`, "AA", 60, new Date(T0));
+  const r = rig({ mailbox });
+  let released = false;
+  const delivered = () => a.sent.filter((f) => f.type === "deliver").map((f) => f.msgId);
+  // The transport is full once two deliveries are queued in it, until it drains.
+  const a = r.open({ backlogged: () => !released && delivered().length >= 2 });
+  await a.auth(A);
+  await r.settle();
+  assert.deepEqual(delivered(), ["m-1", "m-2"], "nothing more while the transport is backlogged");
+  released = true;
+  await r.hub.drained(a.conn);
+  await r.settle();
+  assert.deepEqual(delivered(), ["m-1", "m-2", "m-3", "m-4", "m-5"]);
+});
+
+test("a flush pages the mailbox: it never asks for more than one page at a time", async () => {
+  const inner = new MemoryMailbox();
+  for (let n = 1; n <= 40; n += 1) await inner.append(A.kid, B.kid, `m-${n}`, "AA", 60, new Date(T0));
+  const limits: Array<number | undefined> = [];
+  const mailbox: MailboxStore = {
+    append: (...args) => inner.append(...args),
+    ack: (...args) => inner.ack(...args),
+    pending: (to, now, after, limit) => { limits.push(limit); return inner.pending(to, now, after, limit); },
+  };
+  const r = rig({ mailbox });
+  const a = r.open();
+  await a.auth(A);
+  await r.settle();
+  assert.equal(a.sent.filter((f) => f.type === "deliver").length, 40);
+  assert.ok(limits.length >= 2 && limits.every((l) => l !== undefined && l <= 4), JSON.stringify(limits));
+});
+
+test("outbound progress is liveness: a session whose transport drains is not idle-closed, one that never drains is", async () => {
+  const r = rig();
+  const a = r.open({ backlogged: () => true });
+  const silent = r.open({ backlogged: () => true });
+  await a.auth(A);
+  await silent.auth(B);
+  r.at(80_000);
+  await r.hub.drained(a.conn); // the machine read what the relay sent: its socket drained
+  r.at(90_001);
+  await r.hub.onWake();
+  assert.deepEqual([a.closed, silent.closed], [[], [1001]]);
+  assert.equal(r.hub.session(a.conn)!.nextDeadline(), T0 + 80_000 + 90_001);
+});
+
+test("one machine holds at most maxSessionsPerMachine sessions: the next is refused rate-limited and closed 1013", async () => {
+  const r = rig({ maxSessionsPerMachine: 2 });
+  const a1 = r.open(), a2 = r.open(), a3 = r.open(), b = r.open();
+  await a1.auth(A);
+  await a2.auth(A);
+  const iat = new Date(T0).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const fields = { relay: ORIGIN, nonce: NONCE, estate: "e", kid: A.kid, iat };
+  const sig = sign("sha256", Buffer.from(relayAuthSigningInput(fields)), { key: A.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
+  await r.hub.receive(a3.conn, JSON.stringify({ v: 1, type: "auth", id: "a", protocol: "fabric-relay/0.1", alg: "ES256", ...fields, sig }));
+  assert.deepEqual([a3.sent.at(-1)!.type, a3.sent.at(-1)!.code, a3.closed], ["error", "rate-limited", [1013]]);
+  assert.ok(r.log.some((e) => e.event === "session-limit" && e.kid === A.kid && e.limit === 2));
+  await b.auth(B); // another machine is not counted against A
+  a1.gone();
+  const a4 = r.open();
+  await a4.auth(A); // room again
+  for (const f of a3.sent) assert.ok(frameValid(f), `${f.type}: ${JSON.stringify(frameValid.errors)}`);
 });

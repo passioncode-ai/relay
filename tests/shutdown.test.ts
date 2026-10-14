@@ -508,12 +508,14 @@ test("round 5: a machine that floods 64 MiB of pings and never reads a reply can
   }
 });
 
-test("round 5: a burst of deliveries past the 16 MiB send cap to a machine that does not read closes its session: send-overflow", async () => {
+test("round 6: 40 MiB of deliveries for a machine that does not read stay in the mailbox: no overflow, nothing lost", async () => {
   const e = estate(new Date(), "ES256");
   const root = await dataDir(e);
   const events: Array<Record<string, any>> = [];
   const mailbox = new SqliteMailbox(join(root, "mailbox.sqlite"));
-  // 40 messages of about 1 MiB each wait for the machine: its flush on welcome queues about 40 MiB in one burst.
+  // 40 messages of about 1 MiB each wait for the machine. Deliveries are paced by its send buffer, so the relay sends
+  // only what fits under SEND_HIGH and keeps the rest in the mailbox; the old design sent all of them at once and then
+  // closed the session for overflowing (round 6, MEDIUM 1).
   const body = Buffer.alloc(760_000, 7).toString("base64url");
   for (let n = 0; n < 40; n += 1) await mailbox.append(e.machine.kid, e.second.kid, `m-${n}`, body, 3600, new Date());
   const relay = await serve({ runtime: "portable", blobs: new FsBlobStore(root) }, { host: "127.0.0.1", port: 0, estate: new FsEstateSource(root), mailbox, log: (event) => events.push(event) });
@@ -521,17 +523,11 @@ test("round 5: a burst of deliveries past the 16 MiB send cap to a machine that 
   const socket = await rawAdmitted(port, e.machine, relay.origin);
   socket.pause();
   try {
-    const end = Date.now() + 5000;
-    while (!events.some((event) => event.event === "send-overflow") && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50));
-    const overflow = events.find((event) => event.event === "send-overflow");
-    assert.ok(overflow, JSON.stringify(events.map((event) => event.event)));
-    assert.ok(overflow.bufferedAmount > 16 * 1024 * 1024 && overflow.cap === 16 * 1024 * 1024);
-    // The session is closed and its socket let go of, well before the idle close.
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    assert.ok(!events.some((event) => event.event === "send-overflow"), JSON.stringify(events.map((event) => event.event)));
     const count = () => new Promise<number>((resolve) => relay.server.getConnections((_, n) => resolve(n)));
-    while ((await count()) > 0 && Date.now() < end + 2000) await new Promise((resolve) => setTimeout(resolve, 50));
-    assert.equal(await count(), 0, "the overflowing socket is still open");
-    // Nothing was acknowledged: every message still waits for the machine's next connection.
-    assert.equal((await mailbox.pending(e.machine.kid, new Date(), 0)).length, 40);
+    assert.equal(await count(), 1, "the session is still open");
+    assert.equal((await mailbox.pending(e.machine.kid, new Date(), 0)).length, 40, "nothing acknowledged, nothing lost");
   } finally {
     socket.destroy();
     await within(relay.stop({ graceMs: 100 }), 3000);

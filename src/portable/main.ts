@@ -11,6 +11,8 @@
 //                   Unset: allowed only when RELAY_HOST is a loopback literal; the origin is then
 //                   the canonical http://RELAY_HOST:<bound port> (0:0:0:0:0:0:0:1 gives http://[::1]:<port>), which
 //                   only a local machine can reach (logged origin-defaulted).
+//   RELAY_MAX_SESSIONS_PER_MACHINE  how many sessions one machine may hold at once (default 8, 1 to 1000); the next
+//                   is refused `rate-limited` and closed 1013.
 // Queued messages are kept in RELAY_DATA_DIR/mailbox.sqlite and each machine's last-seen time in
 // RELAY_DATA_DIR/presence.sqlite (both owner-only). The estate the relay admits from is kept under RELAY_DATA_DIR/estate/ (pinned.json, revisions/<n>.json); without it
 // the relay admits nobody.
@@ -41,10 +43,17 @@ if (!Number.isInteger(port) || port > 65535) {
   log({ event: "refused-to-start", reason: `RELAY_PORT ${JSON.stringify(rawPort)} is not a port number (digits, 0 to 65535)` });
   process.exit(2);
 }
+// At most this many sessions per machine at once (default 8): digits only, 1 to 1000.
+const rawLimit = process.env.RELAY_MAX_SESSIONS_PER_MACHINE;
+const maxSessionsPerMachine = rawLimit === undefined ? undefined : /^\d{1,4}$/.test(rawLimit) ? Number(rawLimit) : Number.NaN;
+if (maxSessionsPerMachine !== undefined && !(maxSessionsPerMachine >= 1 && maxSessionsPerMachine <= 1000)) {
+  log({ event: "refused-to-start", reason: `RELAY_MAX_SESSIONS_PER_MACHINE ${JSON.stringify(rawLimit)} is not a number from 1 to 1000` });
+  process.exit(2);
+}
 
 let served: Served;
 try {
-  served = await serve({ runtime: "portable", blobs: new FsBlobStore(dataDir) }, { host, port, log, estate: new FsEstateSource(dataDir), mailbox: new SqliteMailbox(join(dataDir, "mailbox.sqlite")), lastSeen: new SqliteLastSeen(join(dataDir, "presence.sqlite")), blobIndex: new FsBlobIndex(dataDir), ...(process.env.RELAY_ORIGIN ? { origin: process.env.RELAY_ORIGIN } : {}) });
+  served = await serve({ runtime: "portable", blobs: new FsBlobStore(dataDir) }, { host, port, log, estate: new FsEstateSource(dataDir), mailbox: new SqliteMailbox(join(dataDir, "mailbox.sqlite")), lastSeen: new SqliteLastSeen(join(dataDir, "presence.sqlite")), blobIndex: new FsBlobIndex(dataDir), ...(maxSessionsPerMachine ? { maxSessionsPerMachine } : {}), ...(process.env.RELAY_ORIGIN ? { origin: process.env.RELAY_ORIGIN } : {}) });
 } catch (error) {
   if (!(error instanceof OriginRefused) && !(error instanceof ListenRefused)) throw error;
   log({ event: "refused-to-start", reason: error.message });

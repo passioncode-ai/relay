@@ -46,8 +46,16 @@ export interface HubDeps {
    * refresh never spins the timer.
    */
   refresh?: { deadline(): number | undefined; run(now: Date): void | Promise<void> };
+  /** At most this many admitted sessions per machine (default DEFAULT_MAX_SESSIONS_PER_MACHINE); the next is refused 1013. */
+  maxSessionsPerMachine?: number;
   log?: Log;
 }
+
+/**
+ * How many admitted sessions one machine may hold at once in a hub. Each session gets its own copy of every delivery,
+ * so this bounds what one machine can make the relay hold for it: at most this many times one session's send window.
+ */
+export const DEFAULT_MAX_SESSIONS_PER_MACHINE = 8;
 
 /** How long the hub waits before running a refresh again after one failed, or one that left its deadline due. */
 export const REFRESH_RETRY_MS = 5000;
@@ -210,6 +218,18 @@ export class EstateHub<C = unknown> implements SessionHub {
     }
   }
 
+  /**
+   * The transport of `conn` can take more (its socket drained): the machine is reading, which counts as activity for
+   * the idle close, and its session goes on delivering from the mailbox. Never rejects.
+   */
+  async drained(conn: C): Promise<void> {
+    const session = this.#entries.get(conn);
+    if (!session) return;
+    session.progressed();
+    await session.wake();
+    this.#arm();
+  }
+
   /** A message was queued for `kid`: every session that machine holds delivers what waits for it. */
   async wake(kid: string): Promise<void> {
     const sessions = [...this.#entries.values()].filter((session) => session.state === "admitted" && session.kid === kid);
@@ -270,6 +290,15 @@ export class EstateHub<C = unknown> implements SessionHub {
     const kid = session.kid as string;
     const lastSeen = this.#seen(kid, this.deps.now());
     if (!this.#online(kid)) this.#publish({ kid, state: "offline", lastSeen });
+  }
+
+  hasRoom(kid: string): boolean {
+    const limit = this.deps.maxSessionsPerMachine ?? DEFAULT_MAX_SESSIONS_PER_MACHINE;
+    let held = 0;
+    for (const session of this.#entries.values()) if (session.state === "admitted" && session.kid === kid) held += 1;
+    if (held < limit) return true;
+    this.deps.log?.({ event: "session-limit", kid, limit });
+    return false;
   }
 
   queued(kid: string): void {
