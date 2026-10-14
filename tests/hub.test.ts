@@ -44,7 +44,14 @@ function rig(options: { mailbox?: MailboxStore; refresh?: HubDeps["refresh"] } =
     const conn = {};
     const sent: Array<Record<string, any>> = [];
     const closed: number[] = [];
-    const io: SessionIo = { send: (t) => sent.push(JSON.parse(t)), close: (code) => closed.push(code) };
+    let dead = false; // a socket gone bad underneath: every send throws, as `ws` does on a destroyed socket
+    const io: SessionIo = {
+      send: (t) => {
+        if (dead) throw new Error("socket is gone");
+        sent.push(JSON.parse(t));
+      },
+      close: (code) => closed.push(code),
+    };
     hub.connect(conn, io, ORIGIN);
     const frame = (f: Record<string, unknown>) => hub.receive(conn, JSON.stringify({ v: 1, ...f }));
     const auth = async (m: ReturnType<typeof machine>) => {
@@ -55,7 +62,7 @@ function rig(options: { mailbox?: MailboxStore; refresh?: HubDeps["refresh"] } =
       assert.ok(sent.some((f) => f.type === "welcome"), JSON.stringify(sent.at(-1)));
     };
     const presenceOf = () => sent.filter((f) => f.type === "presence").map((f) => [f.kid, f.state]);
-    return { conn, sent, closed, frame, auth, presenceOf, gone: () => hub.closed(conn) };
+    return { conn, sent, closed, frame, auth, presenceOf, gone: () => hub.closed(conn), kill: () => { dead = true; } };
   };
   return { hub, open, armed, log, lastSeen, at: (ms: number) => { now = T0 + ms; }, settle: () => new Promise((resolve) => setImmediate(resolve)) };
 }
@@ -268,4 +275,96 @@ test("an admission refresh runs once at a time: a timer that fires while one run
   finish!();
   await first;
   assert.equal(runs, 1);
+});
+
+// Fault isolation (round 3): a transport whose `send` throws costs only its own session.
+
+test("a socket whose send throws is faulted alone when another machine authenticates: the newcomer is welcomed", async () => {
+  const r = rig();
+  const a = r.open();
+  await a.auth(A);
+  a.kill();
+  const b = r.open();
+  await b.auth(B); // asserts B got its welcome; before the fix A's throw rejected B's auth and faulted B
+  assert.deepEqual(b.closed, [], "B keeps its session");
+  assert.deepEqual(a.closed, [1011], "A's session is faulted and closed even though its error frame could not be sent");
+  assert.ok(r.log.some((e) => e.event === "session-fault" && e.kid === A.kid && e.message === "socket is gone"));
+  assert.ok(!r.log.some((e) => e.event === "session-fault" && e.kid === B.kid));
+  assert.deepEqual(b.presenceOf(), [[A.kid, "offline"]], "A's fault takes it offline for B");
+  await b.frame({ type: "ping", id: "p" });
+  assert.equal(b.sent.at(-1)!.type, "pong");
+});
+
+test("a mailbox wake that reaches a socket whose send throws closes that session and never rejects", async () => {
+  const r = rig();
+  const a = r.open(), b = r.open();
+  await a.auth(A);
+  await b.auth(B);
+  a.kill();
+  await b.frame({ type: "send", id: "s1", to: A.kid, msgId: "m-1", body: "AA", ttl: 60 });
+  assert.ok(b.sent.some((f) => f.type === "accepted"), "B's message is stored");
+  await r.settle();
+  await r.hub.wake(A.kid); // resolves: the dead socket's fault is contained in its session
+  assert.deepEqual(a.closed, [1011]);
+  assert.deepEqual(b.closed, []);
+  assert.ok(r.log.some((e) => e.event === "session-fault" && e.kid === A.kid));
+});
+
+test("the timer firing over a socket whose send throws closes that session, never rejects, and re-arms for the others", async () => {
+  const r = rig();
+  const b = r.open();
+  await b.auth(B);
+  const silent = r.open();
+  silent.kill();
+  r.at(10_001);
+  await r.hub.onWake(); // the auth deadline refuses `silent`: its error frame throws
+  assert.deepEqual(silent.closed, [4401], "the refusal still closes with its own code");
+  assert.deepEqual(b.closed, []);
+  assert.equal(r.armed.at(-1), T0 + 90_001, "the timer is armed again for B's idle deadline");
+  // An admitted socket gone bad whose idle close announces it offline to another bad socket: still contained.
+  const r2 = rig();
+  const x = r2.open(), y = r2.open();
+  await x.auth(A);
+  await y.auth(B);
+  r2.at(80_000);
+  await y.frame({ type: "ping", id: "keep-y" }); // y stays fresh, x falls silent
+  y.kill();
+  r2.at(90_001);
+  await r2.hub.onWake(); // x idles out; its offline frame to y throws
+  assert.deepEqual([x.closed, y.closed], [[1001], [1011]]);
+  assert.equal(r2.hub.nextWake(), undefined);
+});
+
+test("two concurrent stop() calls share one wait: both resolve when the transports report their close", async () => {
+  const r = rig();
+  const a = r.open(), b = r.open();
+  await a.auth(A);
+  await b.auth(B);
+  const started = Date.now();
+  const first = r.hub.stop({ graceMs: 10_000 });
+  const second = r.hub.stop({ graceMs: 10_000 });
+  a.gone();
+  b.gone();
+  const [one, two] = await Promise.all([first, second]);
+  assert.ok(Date.now() - started < 1000, `both resolved in ${Date.now() - started} ms, not at the grace period`);
+  assert.deepEqual([one.sessions, one.unclosed, two.sessions, two.unclosed], [2, [], 2, []]);
+});
+
+test("an admission refresh that succeeds without moving its deadline backs off instead of spinning the timer", async () => {
+  let runs = 0;
+  const r = rig({ refresh: { deadline: () => T0 + 1000, run: async () => { runs += 1; } } });
+  r.at(1000);
+  await r.hub.onWake();
+  assert.equal(runs, 1);
+  assert.equal(r.hub.nextWake(), T0 + 1000 + REFRESH_RETRY_MS, "a deadline still due after a run is not armed again at once");
+  assert.equal(r.armed.at(-1), T0 + 1000 + REFRESH_RETRY_MS);
+  assert.ok(r.log.some((e) => e.event === "refresh-stalled"));
+  await r.hub.onWake();
+  assert.equal(runs, 1, "no second run before the back-off");
+  // A refresh that does move its deadline forward is armed at that deadline, with no back-off.
+  let deadline = T0 + 20_000;
+  const moving = rig({ refresh: { deadline: () => deadline, run: async () => { deadline += 60_000; } } });
+  moving.at(20_000);
+  await moving.hub.onWake();
+  assert.equal(moving.hub.nextWake(), T0 + 80_000);
 });

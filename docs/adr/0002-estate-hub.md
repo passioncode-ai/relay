@@ -32,17 +32,20 @@ connections was a separate store reached by message:
      RLY-001 later);
    - **one scheduler**: `nextWake()` is the earliest deadline over every session (and the admission refresh, through
      the `refresh` hook), handed to the adapter's single timer through `arm` after every event; `onWake()` ticks the due
-     sessions;
+     sessions; a refresh that fails (`refresh-fault`) or succeeds while still due (`refresh-stalled`) is retried no
+     sooner than `REFRESH_RETRY_MS` later, so it never spins the timer;
    - mailbox wake-ups: `wake(kid)` flushes that machine's sessions, each flush single-flight with a "run again" flag;
    - `stop()`: closes every session through its own close (1001), writes `lastSeen`, announces nothing, and waits for
-     the transports.
+     the transports. A second call shares the first one's wait.
 2. **A session is a serializable `SessionRecord`** (`snapshot()`, `RelaySession.restore()`, `nextDeadline()`), handed
    to `SessionIo.persist` after every change. It is under 1 KiB, well inside a WebSocket attachment's 16 KiB. **Any
    per-session state a later change adds goes into the record**, never into a hub-side map keyed by connection (A's
    admitted revision, D's token bucket, C's delivered seq).
 3. **A relay fault is closed through the session**: `RelaySession.fault()` logs `session-fault`, sends `error internal`,
-   then closes 1011. The hub calls it when handling a frame rejects. An adapter closes 1011 itself only where there is
-   no session to fault, and then the same way: the hosted hub, waking with a socket that carries no session record,
+   then closes 1011. The hub calls it when handling a frame rejects. It never throws: a transport whose `send` throws
+   is still closed. The hub faults such a session alone wherever it writes to it (a presence push, a deadline, a
+   mailbox wake), so one bad socket never costs another session its event, rejects `receive` or stops the timer from
+   re-arming. An adapter closes 1011 itself only where there is no session to fault, and then the same way: the hosted hub, waking with a socket that carries no session record,
    sends that socket `error internal` and then closes it 1011 (`RelayEstate`'s rebuild).
 4. **Each build hosts exactly one hub per estate.**
    - Hosted: one hibernating Durable Object, `RelayEstate` (`src/cloudflare/estate.ts`), with the WebSocket

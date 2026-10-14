@@ -41,14 +41,15 @@ export interface HubDeps {
   wakeOnQueued?: boolean;
   /**
    * A hook for the admission refresh (RLY-001): its deadline joins `nextWake()`, and `onWake()` runs it when due and
-   * awaits it. A run that throws or rejects is logged `refresh-fault`, and the hub retries it no sooner than
-   * `REFRESH_RETRY_MS` later, so a failing refresh never spins the timer.
+   * awaits it. A run that throws or rejects is logged `refresh-fault`, and one that succeeds while its deadline stays
+   * due is logged `refresh-stalled`; either way the hub retries it no sooner than `REFRESH_RETRY_MS` later, so a
+   * refresh never spins the timer.
    */
   refresh?: { deadline(): number | undefined; run(now: Date): void | Promise<void> };
   log?: Log;
 }
 
-/** How long the hub waits before running a refresh again after one failed. */
+/** How long the hub waits before running a refresh again after one failed, or one that left its deadline due. */
 export const REFRESH_RETRY_MS = 5000;
 
 export interface StopOptions {
@@ -63,6 +64,7 @@ export class EstateHub<C = unknown> implements SessionHub {
   #stopping = false;
   #armed: number | undefined;
   #drained: (() => void) | undefined;
+  #stopped: Promise<{ sessions: number; unclosed: C[] }> | undefined;
   #refreshRetryAt: number | undefined;
   #refreshing: Promise<void> | undefined;
   readonly presence: SessionHub["presence"];
@@ -163,33 +165,49 @@ export class EstateHub<C = unknown> implements SessionHub {
   /**
    * The adapter's timer fired: every due session acts on its deadline, the refresh runs (awaited) if due, and the timer
    * is armed again for whatever is due next. One refresh runs at a time: a wake while one runs does not start another.
-   * It never rejects.
+   * A session whose deadline throws (its transport's `send` throws) is faulted alone; the timer is re-armed whatever
+   * happens, and `onWake` never rejects.
    */
   async onWake(): Promise<void> {
     const now = this.deps.now();
-    for (const session of [...this.#entries.values()]) {
-      const due = session.nextDeadline();
-      if (due !== undefined && due <= now.getTime()) session.tick();
-    }
-    const refresh = this.deps.refresh;
-    const due = refresh?.deadline();
-    const retryOk = this.#refreshRetryAt === undefined || this.#refreshRetryAt <= now.getTime();
-    if (refresh && !this.#refreshing && due !== undefined && due <= now.getTime() && retryOk) {
-      this.#refreshing = (async () => {
+    try {
+      for (const session of [...this.#entries.values()]) {
+        const due = session.nextDeadline();
+        if (due === undefined || due > now.getTime()) continue;
         try {
-          await refresh.run(now);
-          this.#refreshRetryAt = undefined;
+          session.tick();
         } catch (error) {
-          this.deps.log?.({ event: "refresh-fault", ...errorFields(error) });
-          this.#refreshRetryAt = now.getTime() + REFRESH_RETRY_MS;
-        } finally {
-          this.#refreshing = undefined;
+          session.fault(error);
         }
-      })();
-      await this.#refreshing;
+      }
+      const refresh = this.deps.refresh;
+      const due = refresh?.deadline();
+      const retryOk = this.#refreshRetryAt === undefined || this.#refreshRetryAt <= now.getTime();
+      if (refresh && !this.#refreshing && due !== undefined && due <= now.getTime() && retryOk) {
+        this.#refreshing = (async () => {
+          try {
+            await refresh.run(now);
+            const next = refresh.deadline();
+            if (next !== undefined && next <= now.getTime()) {
+              // It succeeded but is still due: arming that deadline would fire the timer again at once, for ever.
+              this.deps.log?.({ event: "refresh-stalled", deadline: new Date(next).toISOString() });
+              this.#refreshRetryAt = now.getTime() + REFRESH_RETRY_MS;
+            } else {
+              this.#refreshRetryAt = undefined;
+            }
+          } catch (error) {
+            this.deps.log?.({ event: "refresh-fault", ...errorFields(error) });
+            this.#refreshRetryAt = now.getTime() + REFRESH_RETRY_MS;
+          } finally {
+            this.#refreshing = undefined;
+          }
+        })();
+        await this.#refreshing;
+      }
+    } finally {
+      this.#armed = Number.NaN; // the timer that fired is spent: arm again whatever is due next
+      this.#arm();
     }
-    this.#armed = Number.NaN; // the timer that fired is spent: arm again whatever is due next
-    this.#arm();
   }
 
   /** A message was queued for `kid`: every session that machine holds delivers what waits for it. */
@@ -202,12 +220,26 @@ export class EstateHub<C = unknown> implements SessionHub {
   /**
    * Stop: every session is closed with `code` (1001, "going away") through its own close, so each admitted machine's
    * `lastSeen` is written; nothing is announced meanwhile. Resolves when every transport has reported its close, or at
-   * `graceMs`, naming the connections that did not (the adapter terminates them).
+   * `graceMs`, naming the connections that did not (the adapter terminates them). A second call returns the first
+   * call's promise; its options are not applied.
    */
-  async stop({ code = 1001, reason = "relay stopping", graceMs = 5000 }: StopOptions = {}): Promise<{ sessions: number; unclosed: C[] }> {
+  stop(options: StopOptions = {}): Promise<{ sessions: number; unclosed: C[] }> {
+    // A second call (a second signal, an adapter and a test both stopping) shares the first one's wait rather than
+    // replacing its drain callback, which would leave the first waiting out the whole grace period.
+    this.#stopped ??= this.#stop(options);
+    return this.#stopped;
+  }
+
+  async #stop({ code = 1001, reason = "relay stopping", graceMs = 5000 }: StopOptions): Promise<{ sessions: number; unclosed: C[] }> {
     this.#stopping = true;
     const sessions = this.#entries.size;
-    for (const session of [...this.#entries.values()]) session.close(code, reason);
+    for (const session of [...this.#entries.values()]) {
+      try {
+        session.close(code, reason);
+      } catch (error) {
+        session.fault(error);
+      }
+    }
     this.#arm();
     if (this.#entries.size > 0) {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -250,9 +282,21 @@ export class EstateHub<C = unknown> implements SessionHub {
     return false;
   }
 
+  /**
+   * Pushes one presence change to every session. A session whose transport throws is faulted after the loop, so it
+   * neither costs the session whose event caused the change (its auth, its close) nor stops the others hearing it.
+   */
   #publish(record: PresenceRecord): void {
     if (this.#stopping || !this.presence) return;
-    for (const session of this.#entries.values()) session.presence(record);
+    const failed: Array<[RelaySession, unknown]> = [];
+    for (const session of [...this.#entries.values()]) {
+      try {
+        session.presence(record);
+      } catch (error) {
+        failed.push([session, error]);
+      }
+    }
+    for (const [session, error] of failed) session.fault(error);
   }
 
   #read(kid: string): string | undefined {
