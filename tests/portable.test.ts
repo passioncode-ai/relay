@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
-import type { AddressInfo } from "node:net";
+import { connect as tcp, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -106,21 +106,27 @@ test("the portable server refuses a declared body over its limit before reading 
   }
 });
 
-/** Opens a WebSocket to the relay and collects what it sends until it closes. */
+/**
+ * Opens a WebSocket to the relay and collects what it sends until it closes. `failed()` is whether the client reported
+ * the connection failed (`error`). A refused handshake fires `error` on every Node; Node 22's WebSocket client
+ * (undici 6) then never fires `close`, while Node 24 and later fire `close` 1006 after it, so a test of a refusal
+ * waits for `failed()`, not for `closed()`.
+ */
 function connect(url: string, protocols: string | string[] = "fabric-relay.v1") {
   const ws = new WebSocket(url, protocols);
   const frames: Array<Record<string, any>> = [];
   const waiters: Array<() => void> = [];
   let closed: { code: number } | undefined;
+  let failed = false;
   ws.addEventListener("message", (event) => { frames.push(JSON.parse(String(event.data))); waiters.splice(0).forEach((w) => w()); });
   ws.addEventListener("close", (event) => { closed = { code: event.code }; waiters.splice(0).forEach((w) => w()); });
-  ws.addEventListener("error", () => waiters.splice(0).forEach((w) => w()));
+  ws.addEventListener("error", () => { failed = true; waiters.splice(0).forEach((w) => w()); });
   const until = async (done: () => boolean, ms = 5000) => {
     const end = Date.now() + ms;
     while (!done() && Date.now() < end) await new Promise<void>((resolve) => { waiters.push(resolve); setTimeout(resolve, 50); });
     assert.ok(done(), `timed out: ${JSON.stringify({ frames, closed })}`);
   };
-  return { ws, frames, until, closed: () => closed };
+  return { ws, frames, until, closed: () => closed, failed: () => failed };
 }
 
 async function relayWithEstate(withEstate = true) {
@@ -184,9 +190,22 @@ test("an upgrade that does not offer fabric-relay.v1 is refused before any sessi
   const relay = await relayWithEstate();
   try {
     const c = connect(relay.url, "chat");
-    await c.until(() => c.closed() !== undefined);
+    await c.until(() => c.failed());
     assert.equal(c.frames.length, 0);
     assert.ok(relay.events.some((event) => event.event === "upgrade-refused" && event.status === 400));
+    // What the relay put on the wire, read without a WebSocket client: a 400 answer, then the connection ends.
+    const port = Number(new URL(relay.url).port);
+    const answer = await new Promise<string>((resolve) => {
+      const socket = tcp(port, "127.0.0.1", () => socket.write(["GET /v1/connect HTTP/1.1", "Host: 127.0.0.1", "Upgrade: websocket", "Connection: Upgrade",
+        "Sec-WebSocket-Version: 13", "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Protocol: chat", "", ""].join("\r\n")));
+      let got = "";
+      const limit = setTimeout(() => { socket.destroy(); resolve(`no end: ${got}`); }, 3000);
+      socket.on("data", (chunk) => { got += chunk.toString("latin1"); });
+      socket.on("end", () => { clearTimeout(limit); socket.destroy(); resolve(got); });
+      socket.on("error", () => { clearTimeout(limit); resolve(`error: ${got}`); });
+    });
+    assert.match(answer, /^HTTP\/1\.1 400 /);
+    assert.equal(c.frames.length, 0);
   } finally {
     await relay.stop({ graceMs: 100 });
   }
