@@ -44,7 +44,21 @@ function refuseUpgrade(socket: Socket, response: string): void {
  */
 const TARGET_BASE = "http://relay.invalid";
 
-/** How many frames a socket may have waiting in its session before the relay stops reading it, and when it reads again. */
+/**
+ * Flow control per connection (round 5). What bounds the relay's memory is what it has queued to SEND: a machine that
+ * floods frames and never reads the replies would otherwise grow the send buffer without limit. Past SEND_HIGH queued
+ * bytes the relay stops reading that socket, and reads again once the socket drains below SEND_LOW. A session whose
+ * queue still passes SEND_CAP (one burst of deliveries can) is closed 1008 and logged `send-overflow`.
+ */
+const SEND_HIGH = 1024 * 1024;
+const SEND_LOW = 256 * 1024;
+const SEND_CAP = 16 * 1024 * 1024;
+/** Close code for a machine that does not read what the relay sends it: a policy violation (RFC 6455 §7.4.1). */
+const CLOSE_NOT_READING = 1008;
+/**
+ * Defence in depth: how many frames may wait in a session before the socket is not read, and when it is read again.
+ * With the real stores a frame is handled within its own turn, so this seldom trips; SEND_HIGH is the bound that acts.
+ */
 const IN_FLIGHT_HIGH = 64;
 const IN_FLIGHT_LOW = 16;
 
@@ -214,6 +228,11 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
     noServer: true, maxPayload: MAX_PAYLOAD, allowSynchronousEvents: false,
     handleProtocols: (offered) => (offered.has(SUBPROTOCOL) ? SUBPROTOCOL : false),
   });
+  // CONNECT (a proxy tunnel) is not a method the relay serves: answered 405 and let go of, like a refused upgrade.
+  server.on("connect", (_message, socket) => {
+    refuseUpgrade(socket as Socket, "HTTP/1.1 405 Method Not Allowed\r\nconnection: close\r\nallow: GET, HEAD, PUT\r\ncontent-length: 0\r\n\r\n");
+    log({ event: "connect-refused", status: 405 });
+  });
   server.on("upgrade", (message, socket, head) => {
     if (stopping) {
       refuseUpgrade(socket as Socket, "HTTP/1.1 503 Service Unavailable\r\nconnection: close\r\nretry-after: 5\r\ncontent-length: 0\r\n\r\n");
@@ -271,19 +290,46 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
         ws.close(1001, "relay stopping");
         return;
       }
-      // Backpressure: past IN_FLIGHT_HIGH frames waiting in the session the socket is not read, until they drain to
-      // IN_FLIGHT_LOW, so a flood is held in the client's buffers and the kernel's, not in this process.
+      // Backpressure (SEND_HIGH, SEND_LOW, SEND_CAP, IN_FLIGHT_*): the socket is not read while the relay holds more
+      // than SEND_HIGH bytes for it, or IN_FLIGHT_HIGH frames waiting in its session. A flood from a machine that does
+      // not read is then held in its own buffers and the kernel's; what this process keeps for it stays near SEND_HIGH.
       let inFlight = 0;
+      let overflowed = false;
+      const maybeResume = () => {
+        if (ws.isPaused && !overflowed && inFlight <= IN_FLIGHT_LOW && ws.bufferedAmount <= SEND_LOW) ws.resume();
+      };
+      (socket as Socket).on("drain", maybeResume);
+      const sent = () => {
+        const queued = ws.bufferedAmount;
+        if (queued > SEND_CAP && !overflowed) {
+          overflowed = true;
+          log({ event: "send-overflow", bufferedAmount: queued, cap: SEND_CAP });
+          if (!ws.isPaused) ws.pause();
+          // Its session ends through its own close (lastSeen is written); the close frame cannot pass a socket that is not
+          // read, so the socket is terminated shortly after.
+          hub.session(ws)?.close(CLOSE_NOT_READING, "not reading what the relay sends");
+          setTimeout(() => ws.terminate(), 1000).unref();
+        } else if (queued > SEND_HIGH && !ws.isPaused) {
+          ws.pause();
+        }
+      };
       ws.on("message", (data, isBinary) => {
         inFlight += 1;
         if (inFlight >= IN_FLIGHT_HIGH && !ws.isPaused) ws.pause();
         void hub.receive(ws, isBinary ? new Uint8Array(data as Buffer) : (data as Buffer).toString("utf8")).finally(() => {
           inFlight -= 1;
-          if (inFlight <= IN_FLIGHT_LOW && ws.isPaused) ws.resume();
+          maybeResume();
         });
       });
       ws.on("close", () => hub.closed(ws));
-      hub.connect(ws, { send: (text) => ws.send(text), close: (code, reason) => ws.close(code, reason) }, origin);
+      hub.connect(ws, {
+        send: (text) => {
+          if (overflowed) return;
+          ws.send(text);
+          sent();
+        },
+        close: (code, reason) => ws.close(code, reason),
+      }, origin);
     });
   });
   await new Promise<void>((resolve, reject) => {

@@ -2,7 +2,7 @@
 // estate hub, records lastSeen, closes the SQLite stores and exits 0; a socket that ignores the close is terminated
 // at the grace period; an upgrade that arrives while the relay stops is refused 503.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { sign } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -448,5 +448,80 @@ test("F3: an admitted machine flooding 8 MiB of frames does not hold SIGTERM: st
     socket.destroy();
   } finally {
     relay.kill();
+  }
+});
+
+/** The resident set size of a process, in MiB (`ps` reports KiB). */
+const rssMiB = (pid: number) => Number(execFileSync("ps", ["-o", "rss=", "-p", String(pid)]).toString().trim()) / 1024;
+
+test("round 5: a machine that floods 64 MiB of pings and never reads a reply cannot grow the relay without bound", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const relay = await launch(root, false);
+  try {
+    const socket = await rawAdmitted(relay.port, e.machine, "https://relay.test");
+    socket.pause(); // never read: every pong stays queued on the relay's side
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const before = rssMiB(relay.child.pid!);
+    // 64 MiB of pings in 1 MiB slices, each slice written only once the previous one has left this process.
+    let i = 0;
+    const slice = () => {
+      const frames: Buffer[] = [];
+      let size = 0;
+      while (size < 1024 * 1024) {
+        // A long id: the pong echoes it, so each reply queued for this reader is as large as the ping that caused it.
+        const frame = clientFrame(JSON.stringify({ v: 1, type: "ping", id: `f${i++}-${"x".repeat(16_000)}` }));
+        frames.push(frame);
+        size += frame.length;
+      }
+      return Buffer.concat(frames);
+    };
+    let peak = before;
+    const sampling = setInterval(() => { try { peak = Math.max(peak, rssMiB(relay.child.pid!)); } catch { /* exited */ } }, 100);
+    const deadline = Date.now() + 8000;
+    for (let n = 0; n < 64 && Date.now() < deadline && !socket.destroyed; n += 1) {
+      if (!socket.write(slice())) await Promise.race([new Promise((resolve) => socket.once("drain", resolve)), new Promise((resolve) => setTimeout(resolve, deadline - Date.now()))]);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1500)); // whatever the relay accepted, it has now handled
+    clearInterval(sampling);
+    peak = Math.max(peak, rssMiB(relay.child.pid!));
+    const overflowed = relay.lines.some((l) => l.event === "send-overflow");
+    assert.ok(peak - before < 64 || overflowed, `relay RSS grew ${Math.round(peak - before)} MiB (from ${Math.round(before)} to ${Math.round(peak)})`);
+    assert.equal(relay.child.exitCode, null, "the relay is still up");
+    socket.destroy();
+    relay.child.kill("SIGTERM");
+    assert.equal(await within(relay.exited, 12_000), 0, JSON.stringify(relay.lines.map((l) => l.event)));
+  } finally {
+    relay.kill();
+  }
+});
+
+test("round 5: a burst of deliveries past the 16 MiB send cap to a machine that does not read closes its session: send-overflow", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const events: Array<Record<string, any>> = [];
+  const mailbox = new SqliteMailbox(join(root, "mailbox.sqlite"));
+  // 40 messages of about 1 MiB each wait for the machine: its flush on welcome queues about 40 MiB in one burst.
+  const body = Buffer.alloc(760_000, 7).toString("base64url");
+  for (let n = 0; n < 40; n += 1) await mailbox.append(e.machine.kid, e.second.kid, `m-${n}`, body, 3600, new Date());
+  const relay = await serve({ runtime: "portable", blobs: new FsBlobStore(root) }, { host: "127.0.0.1", port: 0, estate: new FsEstateSource(root), mailbox, log: (event) => events.push(event) });
+  const port = (relay.server.address() as AddressInfo).port;
+  const socket = await rawAdmitted(port, e.machine, relay.origin);
+  socket.pause();
+  try {
+    const end = Date.now() + 5000;
+    while (!events.some((event) => event.event === "send-overflow") && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50));
+    const overflow = events.find((event) => event.event === "send-overflow");
+    assert.ok(overflow, JSON.stringify(events.map((event) => event.event)));
+    assert.ok(overflow.bufferedAmount > 16 * 1024 * 1024 && overflow.cap === 16 * 1024 * 1024);
+    // The session is closed and its socket let go of, well before the idle close.
+    const count = () => new Promise<number>((resolve) => relay.server.getConnections((_, n) => resolve(n)));
+    while ((await count()) > 0 && Date.now() < end + 2000) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(await count(), 0, "the overflowing socket is still open");
+    // Nothing was acknowledged: every message still waits for the machine's next connection.
+    assert.equal((await mailbox.pending(e.machine.kid, new Date(), 0)).length, 40);
+  } finally {
+    socket.destroy();
+    await within(relay.stop({ graceMs: 100 }), 3000);
   }
 });

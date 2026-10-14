@@ -207,3 +207,11 @@ test("F4: a RELAY_ORIGIN with port 0 or a trailing dot is refused", () => {
     if (!rule.ok) assert.match(rule.reason, problem, raw);
   }
 });
+
+test("round 5: a RELAY_ORIGIN host with an empty label (.relay.test, relay..test) is refused", () => {
+  for (const raw of ["https://.relay.test", "https://relay..test", "https://..relay.test:8443"]) {
+    const rule = relayOrigin(raw, "127.0.0.1");
+    assert.equal(rule.ok, false, raw);
+    if (!rule.ok) assert.match(rule.reason, /empty label/, raw);
+  }
+});

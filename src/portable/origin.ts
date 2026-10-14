@@ -5,7 +5,7 @@
 // - RELAY_ORIGIN set: parsed with the URL parser; it must be a bare origin (no path beyond "/", no query, fragment or
 //   credentials) and https:, or http: on a loopback literal served from a loopback-literal RELAY_HOST. The answer is `url.origin`: the host lowercased, the
 //   default port dropped. Its host must mean what it says: an IPv4 address as four decimal parts (127.010.0.1 is
-//   127.8.0.1 to a URL), no trailing dot, and no port 0. Anything else refuses to start, naming the problem (the value
+//   127.8.0.1 to a URL), no trailing dot, no empty label (.relay.test), and no port 0. Anything else refuses to start, naming the problem (the value
 //   is not a secret).
 // - RELAY_ORIGIN unset: allowed only when RELAY_HOST is a loopback literal; the origin is the URL parser's origin of
 //   http://<host>:<bound port>, computed after listen, and the relay is local-only. It is canonical, never RELAY_HOST
@@ -117,6 +117,9 @@ export function relayOrigin(raw: string | undefined, host: string): OriginRule {
     return { ok: false, reason: `RELAY_ORIGIN host ${written} reads as ${url.hostname} in a URL; write the address as four decimal parts` };
   }
   if (url.hostname.endsWith(".")) return { ok: false, reason: `RELAY_ORIGIN host ${url.hostname} has a trailing dot; write the name without it` };
+  if (!url.hostname.startsWith("[") && url.hostname.split(".").includes("")) {
+    return { ok: false, reason: `RELAY_ORIGIN host ${url.hostname} has an empty label; every part between dots must be a name` };
+  }
   if (url.port === "0") return { ok: false, reason: "RELAY_ORIGIN names port 0, which no machine can reach; name the port it is served on" };
   if (url.protocol === "http:") {
     if (!isLoopbackLiteral(url.hostname)) {
