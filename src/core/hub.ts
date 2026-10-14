@@ -231,6 +231,15 @@ export class EstateHub<C = unknown> implements SessionHub {
     this.#arm();
   }
 
+  /**
+   * The transport of `conn` made write progress (the kernel took more of what was queued): the machine is reading, which
+   * counts as activity for the idle close. Unlike `drained`, it does not resume a flush: the queue has not emptied.
+   */
+  progressed(conn: C): void {
+    this.#entries.get(conn)?.progressed();
+    this.#arm();
+  }
+
   /** A message was queued for `kid`: every session that machine holds delivers what waits for it. */
   async wake(kid: string): Promise<void> {
     const sessions = [...this.#entries.values()].filter((session) => session.state === "admitted" && session.kid === kid);

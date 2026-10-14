@@ -38,6 +38,9 @@ connections was a separate store reached by message:
      a flush reads the mailbox a page at a time and stops while the transport says it is backlogged
      (`SessionIo.backlogged`); `drained(conn)` resumes it and counts as activity for the idle close;
    - at most `maxSessionsPerMachine` (default 8) admitted sessions per machine: the next is refused `rate-limited`, 1013;
+     sessions restored after a hibernation wake count. The portable build frees the slot of a peer that vanished
+     through its socket heartbeat (30 to 40 s); the hosted build has none (a timer per hibernatable socket would keep
+     the object awake), so there a vanished peer holds its slot until the 90 s idle close;
    - `stop()`: closes every session through its own close (1001), writes `lastSeen`, announces nothing, and waits for
      the transports. A second call shares the first one's wait.
 2. **A session is a serializable `SessionRecord`** (`snapshot()`, `RelaySession.restore()`, `nextDeadline()`), handed

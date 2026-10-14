@@ -6,7 +6,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { sign } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import type { AddressInfo } from "node:net";
+import { connect as tcp, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -50,7 +50,7 @@ function authFrame(m: Estate["machine"], relay: string, nonce: string): string {
  * A machine's session through the `ws` client: it authenticates on `hello`, collects every frame and counts the bytes
  * received. `outcome` resolves with "welcome", or with the refusal (error code and close code).
  */
-function machine(url: string, m: Estate["machine"], relay: string) {
+function machine(url: string, m: Estate["machine"], relay: string, onWelcome?: (ws: WebSocket) => void) {
   const ws = new WebSocket(url, "fabric-relay.v1", { maxPayload: 4 * 1024 * 1024 });
   const frames: Array<Record<string, any>> = [];
   let bytes = 0;
@@ -62,7 +62,10 @@ function machine(url: string, m: Estate["machine"], relay: string) {
       const frame = JSON.parse(String(data));
       frames.push(frame);
       if (frame.type === "hello") ws.send(authFrame(m, relay, frame.nonce));
-      if (frame.type === "welcome") resolve({ welcome: true });
+      if (frame.type === "welcome") {
+        onWelcome?.(ws);
+        resolve({ welcome: true });
+      }
     });
     ws.on("close", (code) => {
       closed = code;
@@ -283,62 +286,44 @@ test("round 6: a machine flooding pings it never reads while the relay stops: th
 
 // Round 7.
 
-test("round 7: 2 machines x 8 sessions that never read, each sending 15 pings with a 1000 KiB id, keep the relay's memory bounded", async () => {
+test("round 7: 2 machines x 8 sessions that never read, flooding pings with 1000 KiB ids and sends with 1000 KiB msgIds, queue nothing past the cap", async () => {
   const e = estate(new Date(), "ES256");
   const root = await dataDir(e);
-  const child = spawn(process.execPath, ["--import", "tsx", "src/portable/main.ts"], {
-    env: { ...process.env, RELAY_DATA_DIR: root, RELAY_PORT: "0", RELAY_HOST: "127.0.0.1", RELAY_ORIGIN: "https://relay.test" },
-    stdio: ["ignore", "pipe", "inherit"],
-  });
-  const lines: Array<Record<string, any>> = [];
-  let buffered = "";
-  child.stdout.on("data", (chunk: Buffer) => {
-    buffered += chunk.toString("utf8");
-    for (let i = buffered.indexOf("\n"); i >= 0; i = buffered.indexOf("\n")) {
-      lines.push(JSON.parse(buffered.slice(0, i)));
-      buffered = buffered.slice(i + 1);
-    }
-  });
-  const exited = new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
+  const r = await relay(root, new SqliteMailbox(join(root, "mailbox.sqlite")));
   const sessions: Array<ReturnType<typeof machine>> = [];
   try {
-    const end = Date.now() + 10_000;
-    while (!lines.some((l) => l.event === "listening") && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50));
-    const port = lines.find((l) => l.event === "listening")?.port;
-    assert.ok(port, JSON.stringify(lines));
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    const before = memoryMiB(child.pid!);
-    const id = "x".repeat(1000 * 1024);
     for (const m of [e.machine, e.second]) {
       for (let n = 0; n < 8; n += 1) {
-        const s = machine(`ws://127.0.0.1:${port}/v1/connect`, m, "https://relay.test");
+        const s = machine(r.url, m, r.origin);
         sessions.push(s);
         assert.deepEqual(await s.outcome, { welcome: true });
         s.ws.pause(); // never read another byte
-        for (let k = 0; k < 15; k += 1) s.ws.send(JSON.stringify({ v: 1, type: "ping", id }));
       }
     }
-    let peak = 0;
-    for (let t = 0; t < 12; t += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      peak = Math.max(peak, memoryMiB(child.pid!) - before);
+    const long = "x".repeat(1000 * 1024);
+    for (const s of sessions) {
+      const to = s === sessions[0] ? e.second.kid : e.machine.kid;
+      for (let k = 0; k < 10; k += 1) {
+        s.ws.send(JSON.stringify({ v: 1, type: "ping", id: long }));
+        s.ws.send(JSON.stringify({ v: 1, type: "send", id: `s${k}`, to, msgId: long, body: "AA", ttl: 60 }));
+      }
     }
-    const settled = memoryMiB(child.pid!) - before;
-    // The bound (docs/protocol/sessions.md, Flow control): at most SEND_CAP (3 MiB) queued per session, 8 sessions per
-    // machine, so 2 x 8 x 3 = 48 MiB queued at most; here the pings' 1000 KiB ids are refused, not echoed, so almost
-    // nothing is queued. What the footprint still shows is the 240 MiB of inbound frames being parsed and collected: a
-    // peak that falls back. Measured on 0680d20: 372-393 MiB, held. Here: a peak of about 85 MiB, about 43 MiB at 12 s.
-    assert.ok(peak < 128, `the relay's footprint peaked ${peak.toFixed(0)} MiB above its start`);
-    assert.ok(settled < 64, `the relay still holds ${settled.toFixed(0)} MiB after 12 s`);
-    assert.equal(child.exitCode, null);
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+    // What a session queues is read from the relay itself, not from the process's footprint (allocator retention): each
+    // refused ping and send is answered by a short error, never by an echo of its 1000 KiB id or msgId, so no session
+    // comes near the cap. With the id check planted out, every session overflows; on dbd0764 the msgId echo did, with
+    // 4 MiB queued.
+    const overflows = r.events.filter((ev) => ev.event === "send-overflow");
+    assert.deepEqual(overflows, [], "no session overflowed");
+    assert.ok(r.flow().peakBuffered <= 3 * 1024 * 1024, `peak queued ${r.flow().peakBuffered}`);
+    assert.ok(r.flow().peakBuffered < 64 * 1024, `peak queued ${r.flow().peakBuffered}: only short errors were sent`);
   } finally {
     for (const s of sessions) s.ws.terminate();
-    child.kill("SIGTERM");
-    if ((await within(exited, 12_000)) === undefined) child.kill("SIGKILL");
+    await within(r.stop({ graceMs: 200 }), 3000);
   }
 });
 
-test("round 7: the relay pings each socket; one that shows no sign of life for two heartbeats is terminated and frees its slot", async () => {
+test("round 7: the relay pings each socket; one that shows no sign of life for three heartbeats is terminated and frees its slot", async () => {
   const e = estate(new Date(), "ES256");
   const root = await dataDir(e);
   const r = await relay(root, new SqliteMailbox(join(root, "mailbox.sqlite")), { heartbeatMs: 200 });
@@ -363,4 +348,151 @@ test("round 7: the relay pings each socket; one that shows no sign of life for t
   } finally {
     await within(r.stop({ graceMs: 200 }), 3000);
   }
+});
+
+// Round 8.
+
+/** A client WebSocket frame (masked, as RFC 6455 requires of a client), with a zero key. */
+function clientFrame(opcode: number, payload: Buffer): Buffer {
+  const head = payload.length < 126 ? Buffer.from([0x80 | opcode, 0x80 | payload.length])
+    : Buffer.from([0x80 | opcode, 0x80 | 126, payload.length >> 8, payload.length & 0xff]);
+  return Buffer.concat([head, Buffer.alloc(4), payload]);
+}
+
+/**
+ * A machine over a raw socket that reads at `bytesPerSecond`, a slice every 50 ms, from its socket in paused mode: Node
+ * stops reading the kernel once its own buffer holds 64 KiB, so the relay sees a reader at exactly that pace. It answers
+ * the relay's pings, acks every delivery, and reports what it got.
+ */
+async function slowReader(port: number, m: Estate["machine"], relay: string, bytesPerSecond: number) {
+  const socket = tcp(port, "127.0.0.1");
+  socket.on("error", () => {});
+  await new Promise<void>((resolve) => socket.on("connect", () => resolve()));
+  socket.pause();
+  socket.write(["GET /v1/connect HTTP/1.1", "Host: 127.0.0.1", "Upgrade: websocket", "Connection: Upgrade", "Sec-WebSocket-Version: 13",
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Protocol: fabric-relay.v1", "", ""].join("\r\n"));
+  const frames: Array<Record<string, any>> = [];
+  let pending = Buffer.alloc(0);
+  let upgraded = false;
+  let closed: number | undefined;
+  socket.on("close", () => { closed ??= 1006; });
+  const take = (chunk: Buffer) => {
+    pending = Buffer.concat([pending, chunk]);
+    if (!upgraded) {
+      const end = pending.indexOf("\r\n\r\n");
+      if (end < 0) return;
+      pending = pending.subarray(end + 4);
+      upgraded = true;
+    }
+    for (;;) {
+      if (pending.length < 2) return;
+      const opcode = pending[0]! & 0x0f;
+      let length = pending[1]! & 0x7f, offset = 2;
+      if (length === 126) { if (pending.length < 4) return; length = pending.readUInt16BE(2); offset = 4; }
+      else if (length === 127) { if (pending.length < 10) return; length = Number(pending.readBigUInt64BE(2)); offset = 10; }
+      if (pending.length < offset + length) return;
+      const payload = pending.subarray(offset, offset + length);
+      pending = pending.subarray(offset + length);
+      if (opcode === 9) socket.write(clientFrame(10, Buffer.from(payload)));
+      else if (opcode === 8) closed = payload.length >= 2 ? payload.readUInt16BE(0) : 1005;
+      else if (opcode === 1) {
+        const frame = JSON.parse(payload.toString("utf8"));
+        frames.push(frame);
+        if (frame.type === "hello") socket.write(clientFrame(1, Buffer.from(authFrame(m, relay, frame.nonce))));
+        if (frame.type === "deliver") socket.write(clientFrame(1, Buffer.from(JSON.stringify({ v: 1, type: "ack", id: `k${frame.seq}`, seq: frame.seq }))));
+      }
+    }
+  };
+  const slice = Math.max(1, Math.round(bytesPerSecond / 20));
+  const reader = setInterval(() => {
+    if (socket.readableLength === 0) socket.read(0); // ask Node to fill its buffer from the kernel
+    const chunk = socket.read(Math.min(slice, socket.readableLength)) as Buffer | null;
+    if (chunk) take(chunk);
+  }, 50);
+  return { frames, closed: () => closed, stop: () => { clearInterval(reader); socket.destroy(); } };
+}
+
+test("round 8: a slow reader (256 KiB/s) that acks every delivery gets its whole backlog: write progress is life to the heartbeat", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const mailbox = await prefill(root, e, 8, 760);
+  // A 1 s heartbeat: the relay's ping waits behind up to 2 MiB of deliveries, so at 256 KiB/s its pong comes back about
+  // eight heartbeats later; what shows the reader alive meanwhile is the relay's write progress (and its acks).
+  const r = await relay(root, mailbox, { heartbeatMs: 1000 });
+  const port = Number(new URL(r.url).port);
+  const a = await slowReader(port, e.machine, r.origin, 256 * 1024);
+  try {
+    const end = Date.now() + 60_000;
+    while (Date.now() < end && a.frames.filter((f) => f.type === "deliver").length < 8 && a.closed() === undefined) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.equal(a.frames.filter((f) => f.type === "deliver").length, 8, `closed ${a.closed()}; ${JSON.stringify(r.events.map((ev) => ev.event))}`);
+    assert.equal(a.closed(), undefined);
+    assert.ok(!r.events.some((ev) => ev.event === "heartbeat-timeout"));
+    const until = Date.now() + 3000;
+    while ((await mailbox.pending(e.machine.kid, new Date(), 0)).length > 0 && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal((await mailbox.pending(e.machine.kid, new Date(), 0)).length, 0, "every delivery acked");
+  } finally {
+    a.stop();
+    await within(r.stop({ graceMs: 200 }), 3000);
+  }
+});
+
+test("round 8: a peer that vanishes with a backlog queued is still freed: write progress stops, and it never confirmed a read", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const mailbox = await prefill(root, e, 8, 760);
+  const r = await relay(root, mailbox, { heartbeatMs: 200 });
+  const a = machine(r.url, e.machine, r.origin, (ws) => ws.pause()); // reads nothing after its welcome, answers no ping
+  try {
+    assert.deepEqual(await a.outcome, { welcome: true });
+    const end = Date.now() + 5000;
+    while (!r.events.some((ev) => ev.event === "heartbeat-timeout") && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50));
+    const timeout = r.events.find((ev) => ev.event === "heartbeat-timeout");
+    assert.ok(timeout, JSON.stringify(r.events.map((ev) => ev.event)));
+    assert.equal(timeout.graceMs, 0, "no pace was ever confirmed, so no extra time");
+    assert.equal((await mailbox.pending(e.machine.kid, new Date(), 0)).length, 8, "nothing acked, nothing lost");
+  } finally {
+    a.ws.terminate();
+    await within(r.stop({ graceMs: 200 }), 3000);
+  }
+});
+
+/** A paused (never reading) session flooding pings with `idLength`-character ids until the relay logs send-overflow. */
+async function overflow(extra: Record<string, unknown>, idLength: number, char = "x") {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const r = await relay(root, new SqliteMailbox(join(root, "mailbox.sqlite")), extra);
+  const a = machine(r.url, e.machine, r.origin);
+  try {
+    assert.deepEqual(await a.outcome, { welcome: true });
+    a.ws.pause();
+    const pad = char.repeat(Math.max(0, idLength - 8));
+    let n = 0;
+    const until = Date.now() + 30_000;
+    while (!r.events.some((ev) => ev.event === "send-overflow") && Date.now() < until) {
+      for (let k = 0; k < 2000; k += 1) a.ws.send(JSON.stringify({ v: 1, type: "ping", id: `${n++}`.padStart(8, "0") + pad }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return r.events.find((ev) => ev.event === "send-overflow");
+  } finally {
+    a.ws.terminate();
+    await within(r.stop({ graceMs: 200 }), 3000);
+  }
+}
+
+test("round 8: the byte cap alone stops a non-reader at 3 MiB queued (the frame cap set aside)", async () => {
+  // Ids of four-byte characters (still 128 code points): each pong is about 550 bytes, so 3 MiB is reached quickly.
+  const event = await overflow({ sendFramesCap: Infinity }, 128, "\u{1F600}");
+  assert.ok(event, "no send-overflow");
+  // Checked before the write: what is queued stays within 3 MiB, and the frame that would have passed it is not written.
+  assert.ok(event.bufferedAmount <= 3 * 1024 * 1024 && event.bufferedAmount + event.frame > 3 * 1024 * 1024, JSON.stringify(event));
+  assert.ok(event.frames > 4096, `the byte cap tripped, not the frame cap: ${JSON.stringify(event)}`);
+});
+
+test("round 8: the frame cap alone stops a non-reader at 4096 queued frames (the byte cap set aside)", async () => {
+  const event = await overflow({ sendCap: Infinity }, 128);
+  assert.ok(event, "no send-overflow");
+  assert.equal(event.frames, 4096, JSON.stringify(event));
+  assert.ok(event.bufferedAmount < 3 * 1024 * 1024, JSON.stringify(event));
 });

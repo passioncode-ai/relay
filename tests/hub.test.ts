@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { test } from "node:test";
-import { relayAuthSigningInput, type AdmissionResult } from "../src/contract/relay.ts";
+import { MAX_BODY_BYTES, MAX_FRAME_BYTES, relayAuthSigningInput, type AdmissionResult } from "../src/contract/relay.ts";
 import { EstateHub, REFRESH_RETRY_MS, type HubDeps } from "../src/core/hub.ts";
 import { MemoryMailbox, type MailboxStore } from "../src/core/mailbox.ts";
 import { MemoryLastSeen } from "../src/core/presence.ts";
@@ -483,4 +483,53 @@ test("the flush page fits the transport: 4 where it reports a backlog, 64 where 
     assert.ok(limits.every((l) => l === page), `${backlog}: ${JSON.stringify(limits)}`);
     assert.equal(limits.length, Math.ceil(70 / page) + (70 % page === 0 ? 1 : 0), `${backlog}: ${limits.length} mailbox calls`);
   }
+});
+
+// Round 8: msgId and body held to the schema, ids counted in code points, and no relay frame larger than a frame.
+
+test("a send whose msgId is empty or over 128 code points, or whose body is not base64url, is refused unknown-type and never echoed", async () => {
+  const r = rig();
+  const a = r.open();
+  await a.auth(A);
+  const long = "m".repeat(129);
+  for (const frame of [
+    { type: "send", id: "s1", to: B.kid, msgId: long, body: "AA", ttl: 60 },
+    { type: "send", id: "s2", to: B.kid, msgId: "", body: "AA", ttl: 60 },
+    { type: "send", id: "s3", to: B.kid, msgId: "m-3", body: "not base64url!", ttl: 60 },
+  ]) {
+    const before = a.sent.length;
+    await a.frame(frame);
+    const replies = a.sent.slice(before);
+    assert.deepEqual(replies.map((f) => [f.type, f.code, f.replyTo]), [["error", "unknown-type", frame.id]], JSON.stringify(frame).slice(0, 80));
+    assert.ok(!JSON.stringify(replies).includes(long), "the long msgId is not echoed");
+  }
+  // 128 code points of a four-byte character is a valid msgId (and id): JSON Schema counts code points, not UTF-16 units.
+  const emoji = "\u{1F600}".repeat(128);
+  await a.frame({ type: "send", id: "\u{1F600}".repeat(100), to: B.kid, msgId: emoji, body: "AA", ttl: 60 });
+  assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.msgId], ["accepted", emoji]);
+  for (const f of a.sent) assert.ok(frameValid(f), `${f.type}: ${JSON.stringify(frameValid.errors)}`);
+});
+
+test("no frame the relay sends exceeds MAX_FRAME_BYTES: the largest send it accepts is delivered in one frame of at most 1 MiB", async () => {
+  const r = rig();
+  const a = r.open(), b = r.open();
+  await a.auth(A);
+  await b.auth(B);
+  const bytes = (f: Record<string, unknown>) => Buffer.byteLength(JSON.stringify(f));
+  // A send frame filled to the frame limit with its msgId: refused (msgId over 128), so its deliver, which carries more
+  // than the send did, can never pass the limit.
+  const body = "A".repeat(1000);
+  const shell = { v: 1, type: "send", id: "big", to: B.kid, msgId: "", body, ttl: 60 };
+  const msgId = "m".repeat(MAX_FRAME_BYTES - Buffer.byteLength(JSON.stringify(shell)) - 8);
+  await a.frame({ type: "send", id: "big", to: B.kid, msgId, body, ttl: 60 });
+  assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.code], ["error", "unknown-type"]);
+  // The largest send the relay accepts: the largest body and a 128-code-point msgId of four-byte characters.
+  const maxBody = "A".repeat(Math.floor((MAX_BODY_BYTES * 4) / 3));
+  await a.frame({ type: "send", id: "max", to: B.kid, msgId: "\u{1F600}".repeat(128), body: maxBody, ttl: 60 });
+  assert.equal(a.sent.at(-1)!.type, "accepted", JSON.stringify(a.sent.at(-1)).slice(0, 200));
+  await r.settle();
+  const deliver = b.sent.find((f) => f.type === "deliver" && f.body === maxBody)!;
+  assert.ok(deliver, "delivered");
+  assert.ok(bytes(deliver) <= MAX_FRAME_BYTES, `deliver is ${bytes(deliver)} bytes`);
+  for (const f of [...a.sent, ...b.sent]) assert.ok(bytes(f) <= MAX_FRAME_BYTES, `${f.type} is ${bytes(f)} bytes`);
 });

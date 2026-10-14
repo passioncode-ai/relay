@@ -114,3 +114,24 @@ test("an estate read that fails after a wake loses no event; presence is withhel
   for (const c of [b, reader]) c.ws.close(1000, "done");
   await remove();
 });
+
+test("round 8: sessions restored after a wake count against the 8-session limit: the ninth after a hibernation is refused 1013", async () => {
+  const e = estate(new Date(), "ES256");
+  const remove = await placeEstate(mf, e);
+  const open = async () => {
+    const s = await session(mf);
+    await s.until(() => s.frames.length >= 1);
+    s.ws.send(auth(e.machine, s.frames[0]!.nonce));
+    await s.until(() => s.frames.some((f) => f.type === "welcome" || f.type === "error"));
+    return s;
+  };
+  const sessions = [];
+  for (let n = 0; n < 8; n += 1) sessions.push(await open());
+  assert.ok(sessions.every((s) => s.frames.some((f) => f.type === "welcome")));
+  await hibernate();
+  const ninth = await open();
+  await ninth.until(() => ninth.closed() !== undefined);
+  assert.deepEqual([ninth.frames.at(-1)!.type, ninth.frames.at(-1)!.code, ninth.closed()], ["error", "rate-limited", 1013]);
+  for (const s of sessions) s.ws.close(1000, "done");
+  await remove();
+});

@@ -111,7 +111,7 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
 - **`deliver`.** Every connection the recipient holds gets each unacknowledged message once, in `seq` order. A
   connection that opens later gets what waited for it. Where the transport reports a backlog (the portable build),
   delivery goes at the pace the machine reads (see Flow control); the Worker's hibernatable socket reports none, so
-  there a flush sends every page at once, as before.
+  there a flush sends every page at once, 64 messages a page.
 - **`ack {seq}`.** It deletes the message for every connection.
 - **Expiry.** An expired message is deleted when it is met.
 - **Where mail is kept.**
@@ -214,26 +214,40 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
       backlog, in `seq` order, and its acks are read meanwhile.
     - **The socket is always read**, so acks and pings arrive whatever the relay has queued to send. A socket drain
       counts as activity for the 90 s idle close: a slow reader that is draining is not idle.
-    - **Replies to a machine that never reads are capped.** A reply is small: an id the relay echoes (a `pong`'s id)
-      is at most 128 characters, the relay-frame schema's limit, and a frame with a longer or empty id is refused like
-      any frame that is not fabric-relay/0.1 (`error unknown-type` with no `replyTo`; before `auth`, `unauthenticated`
-      and 4401), so it is never echoed. Past 3 MiB queued on the socket (`SEND_CAP` = `SEND_HIGH` plus two 1 MiB
-      frames, just above what deliveries can reach), or past 4096 frames not yet handed to the kernel
-      (`SEND_FRAMES_CAP`: each queued write costs a few hundred bytes beyond its payload), the session is logged
-      `send-overflow`, closed 1008 through its own close (its messages stay queued) and the socket terminated 1 s later
-      unless it closes first.
+    - **Replies to a machine that never reads are capped.** A reply is small because what the relay echoes is held to
+      the relay-frame schema: a frame's `id` (echoed as a `pong`'s id or an error's `replyTo`) and a `send`'s `msgId`
+      (echoed in `accepted` and `deliver`) are 1 to 128 code points, a recipient 1 to 256, and a body base64url
+      characters only. A frame with a longer or empty `id` is refused like any frame that is not fabric-relay/0.1
+      (`error unknown-type` with no `replyTo`; before `auth`, `unauthenticated` and 4401); a `send` with a bad `msgId`,
+      recipient or body gets `error unknown-type`; neither echoes what it refused. So the largest frame the relay sends
+      is a `deliver` of the largest body, under `MAX_FRAME_BYTES`. The caps are checked before each write: a write
+      that would take the socket's queue past 3 MiB (`SEND_CAP` = `SEND_HIGH` plus two 1 MiB frames, just above what
+      deliveries can reach) or past 4096 frames not yet handed to the kernel (`SEND_FRAMES_CAP`: each queued write
+      costs a few hundred bytes beyond its payload) is not made; the session is logged `send-overflow`, closed 1008
+      through its own close (its messages stay queued) and the socket terminated 1 s later unless it closes first.
     - **At most 8 sessions per machine** (`RELAY_MAX_SESSIONS_PER_MACHINE`, 1 to 1000): the next `auth` is answered
-      `error` `rate-limited` and closed 1013 (logged `session-limit`); a session that ends makes room. A peer that
-      vanishes without a close does not hold its slot for the 90 s idle close: the relay pings every socket each 15 s
-      (a WebSocket ping, which every client library answers), and a socket that showed no sign of life since the last
-      ping (no pong, no frame, no drain) is terminated (`heartbeat-timeout`), so its slot frees within 30 s.
+      `error` `rate-limited` and closed 1013 (logged `session-limit`); a session that ends makes room. Sessions a
+      hosted hub restored after a hibernation wake count too.
+    - **Heartbeat** (portable). The relay pings every socket each 10 s (a WebSocket ping, which every client library
+      answers). Life is a pong, a frame, a socket drain, or write progress (the kernel took more of what the relay
+      queued), so a reader at any speed that keeps reading is alive even while its pong waits behind its backlog. Once
+      the relay has handed everything to the kernel its writes stop moving while the reader still reads what the
+      kernel holds: a pong proves the reader read everything written before its ping, the reader's pace is measured
+      between pongs, and a quiet reader gets the time its own pace needs for the unconfirmed rest, up to 120 s more.
+      A socket with no life for 30 s beyond that is terminated (`heartbeat-timeout`): a peer that vanished, having
+      never confirmed a read worth measuring, frees its slot within 30 to 40 s instead of the 90 s idle close. Write
+      progress also counts as activity for the idle close.
+    - **The Worker has no socket heartbeat.** Its hibernatable sockets are not pinged by the relay (a timer per
+      socket would keep the object awake), so a peer that vanishes without a close holds its slot until the 90 s idle
+      close. The Worker also reports no backlog, so its flush reads the mailbox 64 messages a page (a 1000-message
+      backlog is 16 mailbox calls; F-8 revisits it against the hosted limits).
     - **The bound** this gives: what the relay holds queued for one session is at most `SEND_CAP`, 3 MiB, so for one
-      machine at most 8 x 3 MiB = 24 MiB. On top of it come the mailbox page a flush is sending from (four bodies), the
-      inbound frames being parsed, and copies the garbage collector has not reclaimed yet. Measured with `footprint`:
-      - 30 non-reading sessions of one machine with 11 MiB queued: 41 to 44 MiB, up to 75 MiB under load (727 MiB
-        before paced delivery and the session limit);
-      - 2 machines x 8 non-reading sessions each sending 15 pings with a 1000 KiB id: a peak of about 85 MiB falling to
-        about 43 MiB (372 to 393 MiB, held, before the id limit and the 3 MiB cap).
+      machine at most 8 x 3 MiB = 24 MiB (`Served.flow().peakBuffered` reports the most any socket held). On top of it
+      come the mailbox page a flush is sending from (four bodies), the inbound frames being parsed, and memory the
+      allocator has not returned yet. Measured: 2 machines x 8 non-reading sessions flooding pings with 1000 KiB ids
+      and sends with 1000 KiB msgIds queue under 64 KiB with no overflow (before the id and msgId limits every session
+      overflowed, with up to 4 MiB queued); 30 non-reading sessions of one machine with 11 MiB of mail grew the
+      footprint by 41 to 75 MiB (727 MiB before paced delivery and the session limit).
     - Inbound: a socket with 64 frames waiting in its session is not read until they drain to 16; with the real stores
       a frame is handled in its own turn, so this seldom trips.
   - **CONNECT** is not served: it is answered 405 (`connect-refused`) and the socket is let go of.

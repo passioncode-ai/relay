@@ -111,8 +111,15 @@ const SERVED = ["hello", "auth", "welcome", "ping", "pong", "error"];
  */
 export const FLUSH_PAGE = 4;
 export const FLUSH_PAGE_UNPACED = 64;
-/** The longest frame `id` (the relay-frame schema's maxLength): a longer one is refused and never echoed. */
+/**
+ * The longest frame `id` and `msgId` (the relay-frame schema's maxLength, counted in code points as JSON Schema counts
+ * them): a longer one is refused and never echoed, so nothing the relay sends back is larger than a frame it would send
+ * itself, and no `deliver` can exceed MAX_FRAME_BYTES.
+ */
 export const MAX_ID_LENGTH = 128;
+/** A string's length in code points, as JSON Schema's maxLength counts it (an emoji is one, not two UTF-16 units). */
+const codePoints = (text: string) => { let n = 0; for (const _ of text) n += 1; return n; };
+const BASE64URL = /^[A-Za-z0-9_-]+$/;
 /** Close code for a session refused because its machine holds as many as it may: "try again later" (RFC 6455 §7.4.1). */
 export const CLOSE_TRY_AGAIN_LATER = 1013;
 const MAIL = ["send", "ack"];
@@ -243,7 +250,7 @@ export class RelaySession {
     // An id the relay would echo (a pong's id, an error's replyTo) is held to the schema's length, so a reply is never
     // larger than a frame the relay itself would send.
     if (!isFrame(frame) || frame.v !== 1 || typeof frame.type !== "string" || typeof frame.id !== "string"
-      || frame.id.length < 1 || frame.id.length > MAX_ID_LENGTH) {
+      || frame.id.length < 1 || codePoints(frame.id) > MAX_ID_LENGTH) {
       if (this.state === "awaiting-auth") return this.refuse("unauthenticated", "the first frame is a fabric-relay/0.1 auth frame");
       return this.error("unknown-type", "not a fabric-relay/0.1 frame");
     }
@@ -357,6 +364,13 @@ export class RelaySession {
     if (findings.length > 0 || typeof frame.msgId !== "string" || typeof frame.to !== "string" || typeof frame.body !== "string") {
       return this.error("unknown-type", `not a valid send frame (FAC-SEM-071 at ${findings.map((f) => f.instancePath).join(", ") || "msgId/to/body"})`, id);
     }
+    // The schema's own limits on what the relay echoes or stores (relayRules checks FAC-SEM-071's, not these): a msgId
+    // of 1 to 128 characters, a recipient of 1 to 256, a body of base64url characters. Neither is ever echoed.
+    if (frame.msgId.length < 1 || codePoints(frame.msgId) > MAX_ID_LENGTH) {
+      return this.error("unknown-type", `not a valid send frame (msgId: 1 to ${MAX_ID_LENGTH} characters)`, id);
+    }
+    if (frame.to.length < 1 || codePoints(frame.to) > 256) return this.error("unknown-type", "not a valid send frame (to: 1 to 256 characters)", id);
+    if (!BASE64URL.test(frame.body)) return this.error("unknown-type", "not a valid send frame (body: base64url characters only)", id);
     const admission = this.env.admission();
     if (!admission.ok || !admission.set.has(frame.to)) return this.error("unknown-recipient", "the recipient is not a machine this relay admits", id);
     const result = await this.env.mailbox!.append(frame.to, this.kid as string, frame.msgId, frame.body, frame.ttl as number, this.env.now());

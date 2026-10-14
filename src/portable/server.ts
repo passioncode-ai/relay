@@ -53,8 +53,9 @@ const TARGET_BASE = "http://relay.invalid";
  * - The socket is always read: acks and pings arrive whatever the relay has queued to send.
  * - SEND_CAP is just above what deliveries can reach (SEND_HIGH plus one delivery frame), so it bounds the rest:
  *   replies (pong, accepted, error, presence) to a machine that keeps sending and never reads. A reply is small (an id
- *   the relay echoes is at most 128 characters). Past the cap the session is closed 1008 (`send-overflow`) and its
- *   socket terminated 1 s later. So one session holds at most SEND_CAP = 3 MiB queued, one machine (8 sessions) 24 MiB.
+ *   or msgId the relay echoes is at most 128 code points). Both caps are checked before each write: a write that would
+ *   pass one is not made, the session is closed 1008 (`send-overflow`) and its socket terminated 1 s later. So one
+ *   session holds at most SEND_CAP = 3 MiB queued, one machine (8 sessions) 24 MiB.
  * - SEND_FRAMES_CAP bounds the same thing counted in frames: each queued write costs the process a few hundred bytes
  *   beyond its payload, so 3 MiB of 50-byte pongs would cost far more than 3 MiB. Past 4096 frames not yet handed to
  *   the kernel, the session is closed the same way.
@@ -63,12 +64,19 @@ const SEND_HIGH = 1024 * 1024;
 const SEND_CAP = SEND_HIGH + 2 * MAX_FRAME_BYTES;
 const SEND_FRAMES_CAP = 4096;
 /**
- * Socket heartbeat: every HEARTBEAT_MS the relay pings each session's socket (a WebSocket ping; every client library
- * answers it). A socket that showed no sign of life since the previous heartbeat (no pong, no frame, no drain) is
- * terminated (`heartbeat-timeout`), so a peer that vanished frees its session slot within two heartbeats instead of
- * the 90 s idle close.
+ * Socket heartbeat: every HEARTBEAT_MS (10 s) the relay pings each session's socket (a WebSocket ping; every client
+ * library answers it). Life is a pong, a frame, a drain, or write progress: the kernel took more of what the relay
+ * queued than the ping it sent (a slow reader's pong waits behind up to 2 MiB of deliveries, but its reading moves
+ * bytes). A socket with none of these for HEARTBEAT_DEAD_BEATS beats (30 s) is terminated at the next beat
+ * (`heartbeat-timeout`), so a peer that vanished frees its session slot within 30 to 40 s instead of the 90 s idle
+ * close, while a reader at any speed that keeps reading stays. Write progress also counts as activity for the
+ * session's idle close.
  */
-const HEARTBEAT_MS = 15_000;
+const HEARTBEAT_MS = 10_000;
+const HEARTBEAT_DEAD_BEATS = 3;
+const HEARTBEAT_MAX_GRACE_BEATS = 12;
+/** What a ping with no payload puts on the wire (two header bytes): taking only that is no progress. */
+const PING_FRAME_BYTES = 2;
 /** Close code for a machine that does not read what the relay sends it: a policy violation (RFC 6455 §7.4.1). */
 const CLOSE_NOT_READING = 1008;
 /**
@@ -131,6 +139,9 @@ export interface ServeOptions {
   lastSeen?: LastSeenStore & { close?(): void };
   /** How often each session's socket is pinged (default 15 s); one silent for two heartbeats is terminated. */
   heartbeatMs?: number;
+  /** Tuning: the reply caps per session (defaults SEND_CAP, 3 MiB, and SEND_FRAMES_CAP, 4096 frames). */
+  sendCap?: number;
+  sendFramesCap?: number;
   /** At most this many sessions per machine at once (default 8, `DEFAULT_MAX_SESSIONS_PER_MACHINE`); the next is refused 1013. */
   maxSessionsPerMachine?: number;
   log?: (event: Record<string, unknown>) => void;
@@ -149,6 +160,12 @@ export interface Served {
    * 400, 503) is answered and its socket destroyed, so a client that keeps its side open never holds the stop.
    */
   stop(options?: { graceMs?: number }): Promise<{ sessions: number; forced: number }>;
+  /**
+   * Flow-control diagnostics: the most the relay has held queued on any one socket at once (`ws.bufferedAmount` after a
+   * write). It never exceeds the send cap (3 MiB); tests read it to show what is queued, which a process's footprint
+   * (allocator retention) cannot.
+   */
+  flow(): { peakBuffered: number };
 }
 
 /**
@@ -243,24 +260,64 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
     connections.add(socket);
     socket.once("close", () => connections.delete(socket));
   });
-  // The heartbeat (HEARTBEAT_MS): each connected session's socket and whether it showed life since the last beat.
-  const alive = new Map<WebSocket, boolean>();
+  const sendCap = options.sendCap ?? SEND_CAP;
+  const flow = { peakBuffered: 0 };
+  const sendFramesCap = options.sendFramesCap ?? SEND_FRAMES_CAP;
+  // The heartbeat (HEARTBEAT_MS): each connected session's socket, whether it showed life since the last beat, and its
+  // write position then. Writes go out one chunk at a time and a delivery chunk is up to 1 MiB, so a slow reader can
+  // spend several beats inside one chunk: `completed` (bytes of finished writes) does not move, but the bytes libuv
+  // still holds of the chunk in flight (`handle.writeQueueSize`) fall as the kernel takes them.
+  // A socket is dead once nothing showed life for HEARTBEAT_DEAD_BEATS beats: kernel buffers make even a steady reader's
+  // progress arrive in steps, so one quiet beat is not death.
+  const beatMs = options.heartbeatMs ?? HEARTBEAT_MS;
+  const deadAfterMs = beatMs * HEARTBEAT_DEAD_BEATS;
+  // Patience for what the kernel holds: once the relay has handed everything to the kernel its writes stop moving, while
+  // a slow reader still has up to the kernel's buffers to read before its pong comes back. A pong proves the reader read
+  // everything written before its ping, so `confirmed` is how far it is known to have read; the reader's pace is
+  // measured between pongs; and a silent reader gets the time its own pace needs to read the unconfirmed rest, up to
+  // HEARTBEAT_MAX_GRACE_BEATS beats more. A peer that never confirmed a measurable read gets no extra time.
+  const maxGraceMs = beatMs * HEARTBEAT_MAX_GRACE_BEATS;
+  type Beat = {
+    lastLife: number; completed: number; inFlight: number; socket: Socket;
+    pings: number[]; confirmed: number; confirmedAt: number; pace: number;
+  };
+  const alive = new Map<WebSocket, Beat>();
+  const position = (socket: Socket) => ({
+    completed: socket.bytesWritten - socket.writableLength,
+    inFlight: Number((socket as unknown as { _handle?: { writeQueueSize?: number } })._handle?.writeQueueSize ?? 0),
+  });
   const heartbeat = setInterval(() => {
-    for (const [ws, live] of alive) {
-      if (!live) {
-        log({ event: "heartbeat-timeout" });
+    for (const [ws, state] of alive) {
+      const now = position(state.socket);
+      // Progress: more finished than the ping the relay itself sent, or the same chunk further along. (A ping finishing
+      // alone means nothing else was queued: writes go in order, so it never finishes ahead of a delivery.)
+      const progressed = now.completed - state.completed > PING_FRAME_BYTES
+        || (now.completed === state.completed && now.inFlight < state.inFlight);
+      state.completed = now.completed;
+      state.inFlight = now.inFlight;
+      if (progressed) {
+        state.lastLife = Date.now();
+        hub.progressed(ws);
+      }
+      const unconfirmed = Math.max(0, now.completed - state.confirmed);
+      const graceMs = state.pace > 0 ? Math.min(unconfirmed / state.pace, maxGraceMs) : 0;
+      if (Date.now() - state.lastLife > deadAfterMs + graceMs) {
+        log({ event: "heartbeat-timeout", silentMs: Date.now() - state.lastLife, graceMs: Math.round(graceMs) });
         alive.delete(ws);
         ws.terminate();
         continue;
       }
-      alive.set(ws, false);
       try {
         ws.ping();
+        // The ping's position: everything written before it, the ping included (ws.bufferedAmount counts what ws still
+        // holds, the socket's own buffer and the sender's queue).
+        state.pings.push(state.socket.bytesWritten - state.socket.writableLength + ws.bufferedAmount);
+        if (state.pings.length > 64) state.pings.shift();
       } catch {
         // a socket already closing: its close event removes it
       }
     }
-  }, options.heartbeatMs ?? HEARTBEAT_MS);
+  }, beatMs);
   heartbeat.unref();
   // `allowSynchronousEvents: false`: `ws` emits one message per turn of the event loop, so a machine flooding frames
   // cannot keep the loop from a signal or a timer (a SIGTERM is handled within one frame's work).
@@ -336,9 +393,22 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
       let overflowed = false;
       let unsent = 0; // frames handed to ws and not yet to the kernel
       let terminate: ReturnType<typeof setTimeout> | undefined;
-      const lively = () => { if (alive.has(ws)) alive.set(ws, true); };
-      alive.set(ws, true);
-      ws.on("pong", lively);
+      const lively = () => { const state = alive.get(ws); if (state) state.lastLife = Date.now(); };
+      alive.set(ws, { lastLife: Date.now(), ...position(socket as Socket), socket: socket as Socket, pings: [], confirmed: 0, confirmedAt: Date.now(), pace: 0 });
+      ws.on("pong", () => {
+        lively();
+        const state = alive.get(ws);
+        const position = state?.pings.shift();
+        if (!state || position === undefined || position <= state.confirmed) return;
+        const now = Date.now();
+        // Pace from a read worth measuring (64 KiB or more), so a peer that only answered while idle has none.
+        if (position - state.confirmed >= 64 * 1024 && now > state.confirmedAt) {
+          const sample = (position - state.confirmed) / (now - state.confirmedAt);
+          state.pace = state.pace > 0 ? (state.pace + sample) / 2 : sample;
+        }
+        state.confirmed = position;
+        state.confirmedAt = now;
+      });
       (socket as Socket).on("drain", () => {
         lively();
         void hub.drained(ws);
@@ -360,12 +430,17 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
       hub.connect(ws, {
         send: (text) => {
           if (overflowed) return;
-          unsent += 1;
-          ws.send(text, () => { unsent -= 1; });
+          // Checked before the write, so the queue never passes either cap: a session holds at most sendCap bytes.
           const queued = ws.bufferedAmount;
-          if (queued <= SEND_CAP && unsent <= SEND_FRAMES_CAP) return;
+          const size = Buffer.byteLength(text);
+          if (queued + size <= sendCap && unsent + 1 <= sendFramesCap) {
+            unsent += 1;
+            ws.send(text, () => { unsent -= 1; });
+            if (ws.bufferedAmount > flow.peakBuffered) flow.peakBuffered = ws.bufferedAmount;
+            return;
+          }
           overflowed = true;
-          log({ event: "send-overflow", bufferedAmount: queued, cap: SEND_CAP, frames: unsent, framesCap: SEND_FRAMES_CAP });
+          log({ event: "send-overflow", bufferedAmount: queued, frame: size, cap: sendCap, frames: unsent, framesCap: sendFramesCap });
           // Its session ends through its own close (lastSeen is written); the close frame cannot pass a socket that is not
           // read, so the socket is terminated shortly after unless it closes first.
           hub.session(ws)?.close(CLOSE_NOT_READING, "not reading what the relay sends");
@@ -438,6 +513,6 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
     log({ event: "stopped", ...outcome, ms: Date.now() - started });
     return outcome;
   };
-  return { server, origin, stop: (stopOptions) => (stopping ??= stop(stopOptions)) };
+  return { server, origin, stop: (stopOptions) => (stopping ??= stop(stopOptions)), flow: () => ({ ...flow }) };
 }
 // #endregion portable-server

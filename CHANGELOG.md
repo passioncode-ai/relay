@@ -30,6 +30,20 @@ release iteration 1's inventory findings (Project Observatory `docs/runs/2026-10
     upgrade whose estate read is in flight when the stop begins is refused and terminated at the grace period.
   - An unparsable revision file is refused like any bad revision instead of taking the relay down; a socket that
     closes during its estate read never joins the hub.
+- **Flow control and limits** (release iteration 1, rounds 5 to 8 of review). Visible to a client:
+  - **At most 8 sessions per machine**, in both builds (sessions restored after a hosted wake count): the next `auth`
+    gets `error rate-limited` and close 1013. Portable: `RELAY_MAX_SESSIONS_PER_MACHINE` (1 to 1000).
+  - **Ids and msgIds over 128 characters are refused**, with `error unknown-type` and never echoed; so are an empty
+    one, a recipient over 256 characters and a body that is not base64url. No frame the relay sends exceeds 1 MiB.
+  - **Portable: mail is delivered at the pace the machine reads**, the socket is always read, and a machine that never
+    reads what the relay sends is closed **1008** past 3 MiB or 4096 frames queued (logged `send-overflow`).
+  - **Portable: a socket heartbeat.** The relay pings each socket every 10 s; one with no pong, frame or write
+    progress for 30 s (plus the time its own measured pace needs for what the kernel holds) is terminated, logged
+    `heartbeat-timeout`. The hosted build has none: a vanished peer holds its slot until the 90 s idle close.
+  - **A blob path that is not valid percent-encoding** (`GET /v1/blobs/%`) gets **400 `malformed`**, not a 500.
+  - Portable: `CONNECT` gets 405; a request target a URL cannot parse gets 400; `RELAY_PORT`, `RELAY_HOST` and
+    `RELAY_ORIGIN` spellings a URL reads differently (an empty query or fragment, an empty label, a trailing dot, port
+    0, octal parts, a zone id, brackets) refuse to start with exit 2, and so does a listen that fails.
 - **Changed: open sessions follow the latest estate read**, for sends and presence (each connection used to keep
   the read it opened with). A read never rolls back to an older revision.
 - **One log line shape** in both builds: `{at, service, runtime, event, …}`.
