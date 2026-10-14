@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { sign } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { connect as tcp } from "node:net";
 import type { AddressInfo } from "node:net";
@@ -285,5 +286,101 @@ test("SIGHUP (the terminal that started the relay closed) stops it gracefully: 1
     assert.ok(relay.lines.some((l) => l.event === "stopped"), JSON.stringify(relay.lines.map((l) => l.event)));
   } finally {
     relay.kill();
+  }
+});
+
+// Round 3: an upgrade the relay refuses (404, 400, 503) to a client that keeps its side open must not hold the stop.
+// Upgraded sockets leave the HTTP server's books, so `closeAllConnections()` never sees them and `server.close()` would
+// wait for that client for ever.
+
+/** A raw upgrade request from a client that never closes its side (`allowHalfOpen`): `status` is the answer's first line. */
+async function halfOpenUpgrade(port: number, lines: string[]) {
+  const socket = tcp({ port, host: "127.0.0.1", allowHalfOpen: true });
+  socket.on("error", () => {});
+  await new Promise<void>((resolve) => socket.on("connect", () => resolve()));
+  let got = "";
+  socket.on("data", (chunk: Buffer) => { got += chunk.toString("latin1"); });
+  const status = new Promise<string>((resolve) => {
+    socket.on("end", () => resolve(got.split("\r\n")[0] ?? ""));
+    socket.on("close", () => resolve(got.split("\r\n")[0] ?? ""));
+  });
+  socket.write([...lines, "", ""].join("\r\n"));
+  return { socket, status };
+}
+
+const GRACE_MS = 5000; // main.ts's grace period
+const MARGIN_MS = 1500;
+
+test("E1: SIGTERM after an upgrade refused 400 to a half-open client: stopped, stores closed, exit 0 within the grace period", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const relay = await launch(root, false);
+  let client: Awaited<ReturnType<typeof halfOpenUpgrade>> | undefined;
+  try {
+    // An upgrade with no key and no subprotocol: the relay refuses it 400 and must not keep the socket.
+    client = await halfOpenUpgrade(relay.port, ["GET /v1/connect HTTP/1.1", "Host: 127.0.0.1", "Upgrade: websocket", "Connection: Upgrade"]);
+    assert.match((await within(client.status, 3000)) ?? "", /^HTTP\/1\.1 400/);
+    const sent = Date.now();
+    relay.child.kill("SIGTERM");
+    const code = await within(relay.exited, GRACE_MS + MARGIN_MS);
+    const events = relay.lines.map((l) => l.event);
+    assert.equal(code, 0, `exit ${code} after ${Date.now() - sent} ms: ${JSON.stringify(events)}`);
+    assert.ok(Date.now() - sent < GRACE_MS + MARGIN_MS, `exit after ${Date.now() - sent} ms`);
+    assert.ok(events.includes("stopped") && !events.includes("stop-timeout"), JSON.stringify(events));
+    // Closing SQLite checkpoints its WAL and removes it: the stores were closed.
+    for (const name of ["mailbox.sqlite-wal", "presence.sqlite-wal"]) assert.ok(!existsSync(join(root, name)), `${name} is left behind`);
+  } finally {
+    client?.socket.destroy();
+    relay.kill();
+  }
+});
+
+test("S1: an upgrade refused 503 during the grace period to a half-open client does not hold the stop", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const events: Array<Record<string, any>> = [];
+  const relay = await serve({ runtime: "portable", blobs: new FsBlobStore(root) }, { host: "127.0.0.1", port: 0, estate: new FsEstateSource(root), log: (event) => events.push(event) });
+  const port = (relay.server.address() as AddressInfo).port;
+  const stuck = await stuckUpgrade(port); // keeps the stop in its grace period
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  let late: Awaited<ReturnType<typeof halfOpenUpgrade>> | undefined;
+  try {
+    const graceMs = 800;
+    const started = Date.now();
+    const stopping = relay.stop({ graceMs });
+    late = await halfOpenUpgrade(port, ["GET /v1/connect HTTP/1.1", "Host: 127.0.0.1", "Upgrade: websocket", "Connection: Upgrade",
+      "Sec-WebSocket-Version: 13", "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Protocol: fabric-relay.v1"]);
+    assert.match((await within(late.status, 2000)) ?? "", /^HTTP\/1\.1 503/);
+    const result = await within(stopping, graceMs + MARGIN_MS);
+    assert.ok(result, `stop() had not resolved ${Date.now() - started} ms after it began`);
+    assert.ok(events.some((event) => event.event === "stopped"));
+  } finally {
+    late?.socket.destroy();
+    stuck.destroy();
+  }
+});
+
+test("S2: an upgrade refused 404 before the stop, to a half-open client, does not hold the stop", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const relay = await serve({ runtime: "portable", blobs: new FsBlobStore(root) }, { host: "127.0.0.1", port: 0, estate: new FsEstateSource(root) });
+  const port = (relay.server.address() as AddressInfo).port;
+  const client = await halfOpenUpgrade(port, ["GET /no-such-route HTTP/1.1", "Host: 127.0.0.1", "Upgrade: websocket", "Connection: Upgrade",
+    "Sec-WebSocket-Version: 13", "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Protocol: fabric-relay.v1"]);
+  try {
+    assert.match((await within(client.status, 2000)) ?? "", /^HTTP\/1\.1 404/);
+    // The refusal itself lets go of the socket, before any stop: the server holds no connection for it.
+    const count = () => new Promise<number>((resolve) => relay.server.getConnections((_, n) => resolve(n)));
+    const until = Date.now() + 1500;
+    while ((await count()) > 0 && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(await count(), 0, "the refused upgrade's socket is still open on the server");
+    const graceMs = 300;
+    const started = Date.now();
+    const result = await within(relay.stop({ graceMs }), graceMs + MARGIN_MS);
+    assert.ok(result, `stop() had not resolved ${Date.now() - started} ms after it began`);
+    assert.equal(result.sessions, 0);
+  } finally {
+    client.socket.destroy();
+    await within(relay.stop({ graceMs: 50 }), 2000); // a failed assertion above must not leave the server listening
   }
 });
