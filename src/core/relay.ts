@@ -26,7 +26,7 @@ export interface RelayDeps {
   blobAccess?: BlobAccess;
 }
 
-export type ErrorCode = "not-found" | "method-not-allowed" | "upgrade-required" | "protocol-unsupported";
+export type ErrorCode = "not-found" | "method-not-allowed" | "upgrade-required" | "protocol-unsupported" | "malformed";
 
 export function errorResponse(status: number, code: ErrorCode, message: string): Response {
   return Response.json({ error: { code, message } }, { status, headers: { "cache-control": "no-store" } });
@@ -73,7 +73,14 @@ export async function handle(request: Request, deps: RelayDeps): Promise<Respons
     return upgradeRefusal(request) ?? errorResponse(426, "upgrade-required", `${CONNECT_PATH} is a WebSocket endpoint`);
   }
   if (pathname.startsWith(BLOBS_PATH) && deps.blobAccess) {
-    return handleBlob(request, decodeURIComponent(pathname.slice(BLOBS_PATH.length)), deps.blobs, deps.blobAccess);
+    // A path that is not valid percent-encoding (`/v1/blobs/%`) is the client's error, never a fault of the relay.
+    let name: string;
+    try {
+      name = decodeURIComponent(pathname.slice(BLOBS_PATH.length));
+    } catch {
+      return errorResponse(400, "malformed", "the blob path is not valid percent-encoding");
+    }
+    return handleBlob(request, name, deps.blobs, deps.blobAccess);
   }
   return errorResponse(404, "not-found", "no such route");
 }

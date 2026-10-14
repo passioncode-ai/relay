@@ -130,3 +130,16 @@ test("F5: a listen that fails (the port is taken) refuses to start with exit 2, 
 test("F5: a RELAY_HOST that does not resolve refuses to start with exit 2, not a crash", async () => {
   await refuses({ RELAY_HOST: "no-such-host.invalid" }, /ENOTFOUND/);
 });
+
+test("round 5: a CONNECT request is answered 405 and the relay stays up", async () => {
+  const relay = await start({});
+  try {
+    const port = await listening(relay);
+    assert.match(await raw(port, ["CONNECT relay.test:443 HTTP/1.1", "Host: relay.test:443"]), /^HTTP\/1\.1 405/);
+    assert.equal(relay.child.exitCode, null);
+    assert.match(await raw(port, ["GET /healthz HTTP/1.1", "Host: x", "Connection: close"]), /^HTTP\/1\.1 200/);
+    assert.ok(relay.lines.some((l) => l.event === "connect-refused" && l.status === 405), JSON.stringify(relay.lines.map((l) => l.event)));
+  } finally {
+    relay.kill();
+  }
+});

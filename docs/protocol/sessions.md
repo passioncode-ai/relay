@@ -160,6 +160,7 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
   - The relay recomputes the digest on `PUT`: a mismatch gets 422 `digest-mismatch`.
   - It keeps the blob's recipient list.
   - It refuses a body over 32 MiB with 413.
+  - A blob path that is not valid percent-encoding (`/v1/blobs/%`) is 400 `malformed`.
 - **Serving a blob.** It re-checks the digest on `GET` before serving.
 - **Deletion.** A blob is deleted once every stored recipient fetched it (counted per kid), or after 7 days, when it
   is next requested.
@@ -183,7 +184,8 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
     to start (`refused-to-start`, exit 2). `http://` is accepted only on a loopback literal (`127.0.0.0/8`, `[::1]`),
     and only when `RELAY_HOST` is a loopback literal too; the name `localhost` is refused, since a name resolves where
     a literal cannot. Its host must mean what it says: an IPv4 address written as four decimal parts (a URL reads
-    `127.010.0.1` as `127.8.0.1`, `0x7f.1` and `127.1` as `127.0.0.1`), no trailing dot, and no port 0.
+    `127.010.0.1` as `127.8.0.1`, `0x7f.1` and `127.1` as `127.0.0.1`), no trailing dot, no empty label
+    (`.relay.test`), and no port 0.
   - `RELAY_ORIGIN` unset: allowed only when `RELAY_HOST` is a loopback literal. The origin is then the URL parser's
     origin of `http://RELAY_HOST:<bound port>`, computed after listen, and logged as `origin-defaulted`; only a local
     machine can authenticate. It is canonical, not `RELAY_HOST` verbatim: `0:0:0:0:0:0:0:1` gives `http://[::1]:<port>`
@@ -198,9 +200,16 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
     `http://[/v1/connect`, `http://x:99999/`) gets 400 `bad-request` (logged `request-refused`), or a bare 400 on an
     upgrade (`upgrade-refused`); the target is parsed once, before anything else, and the relay stays up. Targets
     resolve against a fixed base, `http://relay.invalid`, never `RELAY_HOST`.
-  - **Backpressure.** `ws` emits one message per turn of the event loop (`allowSynchronousEvents: false`), and a socket
-    with 64 frames waiting in its session is not read until they drain to 16, so a flooding machine holds its backlog
-    in its own buffers and cannot delay a signal or a timer (SIGTERM is handled within one frame's work).
+  - **Backpressure.** `ws` emits one message per turn of the event loop (`allowSynchronousEvents: false`), so a
+    flooding machine cannot delay a signal or a timer (SIGTERM is handled within one frame's work). What bounds the
+    relay's memory is what it has queued to send: past 1 MiB queued for a socket the relay stops reading it, and reads
+    again once the socket drains below 256 KiB. A machine that floods frames and never reads the replies therefore keeps
+    its backlog in its own buffers and the kernel's, and the relay holds about 1 MiB for it. A session whose send queue
+    still passes 16 MiB (one burst of mailbox deliveries can) is logged `send-overflow`, closed 1008 through its own
+    close (its messages stay queued, unacknowledged) and its socket terminated 1 s later. A socket with 64 frames
+    waiting in its session is also not read until they drain to 16; with the real stores a frame is handled in its own
+    turn, so this defence in depth seldom trips.
+  - **CONNECT** is not served: it is answered 405 (`connect-refused`) and the socket is let go of.
   - **Stopping (RLY-010).** SIGTERM, SIGINT or SIGHUP (the terminal that started the relay closed) stops gracefully. New upgrades get 503, and HTTP answers carry
     `connection: close`. Every session is closed 1001 through the estate hub, so each machine's `lastSeen` is written.
     A socket still open after 5 s is terminated. Then the listener, the connections and both SQLite stores close (a
