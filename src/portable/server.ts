@@ -7,15 +7,13 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { Readable } from "node:stream";
 import { WebSocketServer } from "ws";
 import validateEstateRecord from "../contract/estate-record.validate.js";
-import { loadAdmission, type EstateSource } from "../core/admission.ts";
+import type { WebSocket } from "ws";
+import { AdmissionHolder, loadAdmission, type EstateSource } from "../core/admission.ts";
 import { CONNECT_PATH, handle, SUBPROTOCOL, upgradeRefusal, type RelayDeps } from "../core/relay.ts";
-import { MemoryHub, type MailboxStore } from "../core/mailbox.ts";
+import type { MailboxStore } from "../core/mailbox.ts";
 import type { BlobIndex } from "../core/blobs.ts";
-import type { PresenceStore } from "../core/presence.ts";
-import { RelaySession } from "../core/session.ts";
-
-/** How often a session checks its 10 s auth deadline and its 90 s idle close. */
-const TICK_MS = 1000;
+import { EstateHub } from "../core/hub.ts";
+import type { LastSeenStore } from "../core/presence.ts";
 /** A frame over 1 MiB closes the connection (1009) in the session; `ws` stops reading at a little more. */
 const MAX_PAYLOAD = 1_048_576 + 1;
 
@@ -55,8 +53,8 @@ export interface ServeOptions {
   blobIndex?: BlobIndex;
   /** Where queued messages are kept (RLY-03); without one, messages are answered "not served yet". */
   mailbox?: MailboxStore;
-  /** Who is online and when each machine was last seen (RLY-06); without one, presence is answered "not served yet". */
-  presence?: PresenceStore;
+  /** When each machine was last seen (RLY-06); without one, presence is answered "not served yet". */
+  lastSeen?: LastSeenStore;
   log?: (event: Record<string, unknown>) => void;
 }
 
@@ -94,8 +92,25 @@ export function serve(deps: RelayDeps, options: ServeOptions): Promise<Server> {
       reply.end(JSON.stringify({ error: { code: "internal", message: "the relay could not answer" } }));
     }
   });
-  // One hub per server: every connection of a machine is woken when a message for it is queued.
-  const hub = new MemoryHub();
+  // One estate hub per server (docs/adr/0002-estate-hub.md): the connection set, presence derived from it, the admission
+  // every session admits from, and one timer for every session's deadline.
+  const empty: EstateSource = { pinned: async () => [], revisions: async () => [] };
+  let holder = new AdmissionHolder({ pinned: [], schemaValid: () => false, now: () => new Date() });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const hub: EstateHub<WebSocket> = new EstateHub<WebSocket>({
+    now: () => new Date(),
+    nonce: () => randomBytes(32).toString("base64url"),
+    sessionId: () => randomUUID(),
+    admission: () => holder.current(),
+    ...(options.mailbox ? { mailbox: options.mailbox } : {}),
+    ...(options.lastSeen ? { lastSeen: options.lastSeen } : {}),
+    arm: (at) => {
+      clearTimeout(timer);
+      timer = at === undefined ? undefined : setTimeout(() => void hub.onWake(), Math.max(0, at - Date.now()));
+      timer?.unref();
+    },
+    log,
+  });
   const sockets = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD, handleProtocols: (offered) => (offered.has(SUBPROTOCOL) ? SUBPROTOCOL : false) });
   server.on("upgrade", (message, socket, head) => {
     const request = toRequest(message, `http://${options.host}`);
@@ -106,42 +121,15 @@ export function serve(deps: RelayDeps, options: ServeOptions): Promise<Server> {
       return;
     }
     sockets.handleUpgrade(message, socket, head, async (ws) => {
-      const empty = { pinned: async () => [], revisions: async () => [] };
-      const { holder, refused } = await loadAdmission(options.estate ?? empty, (record) => validateEstateRecord(record), () => new Date());
-      if (refused.length > 0) log({ event: "estate-revision-refused", refused });
-      let timer: ReturnType<typeof setInterval> | undefined;
-      const session = new RelaySession(
-        {
-          send: (text) => ws.send(text),
-          close: (code, reason) => {
-            if (timer) clearInterval(timer);
-            ws.close(code, reason);
-          },
-        },
-        {
-          relay: options.origin ?? `http://${options.host}:${(server.address() as { port: number }).port}`,
-          now: () => new Date(),
-          nonce: () => randomBytes(32).toString("base64url"),
-          sessionId: () => randomUUID(),
-          admission: () => holder.current(),
-          ...(options.mailbox ? { mailbox: options.mailbox, hub } : {}),
-          ...(options.presence ? { presence: options.presence } : {}),
-          log,
-        },
-      );
-      ws.on("message", (data, isBinary) => {
-        session.receive(isBinary ? new Uint8Array(data as Buffer) : (data as Buffer).toString("utf8")).catch((error: unknown) => {
-          log({ event: "session-fault", error: (error as Error).name, message: String((error as Error).message).slice(0, 200) });
-          ws.close(1011, "internal error");
-        });
-      });
-      ws.on("close", () => {
-        if (timer) clearInterval(timer);
-        session.disconnected();
-      });
+      // The estate is read again when a connection opens, and what verifies is what every session of the hub admits from.
+      const loaded = await loadAdmission(options.estate ?? empty, (record) => validateEstateRecord(record), () => new Date());
+      if (loaded.refused.length > 0) log({ event: "estate-revision-refused", refused: loaded.refused });
+      holder = loaded.holder;
+      ws.on("message", (data, isBinary) => void hub.receive(ws, isBinary ? new Uint8Array(data as Buffer) : (data as Buffer).toString("utf8")));
+      ws.on("close", () => hub.closed(ws));
       ws.on("error", (error) => log({ event: "socket-error", error: error.name }));
-      session.open();
-      timer = setInterval(() => session.tick(), TICK_MS);
+      hub.connect(ws, { send: (text) => ws.send(text), close: (code, reason) => ws.close(code, reason) },
+        options.origin ?? `http://${options.host}:${(server.address() as { port: number }).port}`);
     });
   });
   return new Promise((resolve, reject) => {

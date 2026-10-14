@@ -70,22 +70,4 @@ export class MemoryMailbox implements MailboxStore {
   }
 }
 
-/** Live connections by machine kid, so a new message reaches every connection its recipient holds. */
-export interface DeliveryHub {
-  subscribe(kid: string, listener: () => void): () => void;
-  notify(kid: string): void;
-}
-
-export class MemoryHub implements DeliveryHub {
-  readonly #listeners = new Map<string, Set<() => void>>();
-  subscribe(kid: string, listener: () => void): () => void {
-    let set = this.#listeners.get(kid);
-    if (!set) this.#listeners.set(kid, (set = new Set()));
-    set.add(listener);
-    return () => set!.delete(listener);
-  }
-  notify(kid: string): void {
-    for (const listener of this.#listeners.get(kid) ?? []) listener();
-  }
-}
 // #endregion relay-mailbox

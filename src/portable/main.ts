@@ -13,11 +13,12 @@ import type { AddressInfo } from "node:net";
 import { serve } from "./server.ts";
 import { FsBlobIndex, FsBlobStore, FsEstateSource } from "./fs-store.ts";
 import { SqliteMailbox } from "./sqlite-mailbox.ts";
-import { SqlitePresence } from "./sqlite-presence.ts";
+import { SqliteLastSeen } from "./sqlite-last-seen.ts";
 import { join } from "node:path";
 import { PROTOCOL, VERSION } from "../core/relay.ts";
+import { jsonLog } from "../core/log.ts";
 
-const log = (event: Record<string, unknown>) => console.log(JSON.stringify({ at: new Date().toISOString(), ...event }));
+const log = jsonLog("portable");
 
 const dataDir = process.env.RELAY_DATA_DIR;
 if (!dataDir) {
@@ -33,7 +34,7 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
 
 const origin = process.env.RELAY_ORIGIN;
 if (!origin) log({ event: "origin-defaulted", reason: "RELAY_ORIGIN is not set: machines must sign the http:// address, so only a local machine can authenticate" });
-const server = await serve({ runtime: "portable", blobs: new FsBlobStore(dataDir) }, { host, port, log, estate: new FsEstateSource(dataDir), mailbox: new SqliteMailbox(join(dataDir, "mailbox.sqlite")), presence: new SqlitePresence(join(dataDir, "presence.sqlite")), blobIndex: new FsBlobIndex(dataDir), ...(origin ? { origin } : {}) });
+const server = await serve({ runtime: "portable", blobs: new FsBlobStore(dataDir) }, { host, port, log, estate: new FsEstateSource(dataDir), mailbox: new SqliteMailbox(join(dataDir, "mailbox.sqlite")), lastSeen: new SqliteLastSeen(join(dataDir, "presence.sqlite")), blobIndex: new FsBlobIndex(dataDir), ...(origin ? { origin } : {}) });
 const address = server.address() as AddressInfo;
 log({ event: "listening", host: address.address, port: address.port, version: VERSION, protocol: PROTOCOL });
 

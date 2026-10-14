@@ -7,17 +7,22 @@
   "compatibility_date": "2026-08-01",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
+  // ESTATE is the estate hub, one hibernating Durable Object per estate (docs/adr/0002-estate-hub.md); MAILBOX is one
+  // object per recipient. The migrations were collapsed to one v1 in release iteration 1 because no deployment is known
+  // (docs/HANDOFF.md). Before the first deploy (iteration node F-8), `wrangler deployments list` is checked. If anything
+  // was deployed, the collapse is undone: restore v1-v3 exactly as deployed ({"tag":"v1","new_sqlite_classes":
+  // ["RelaySession"]}, {"tag":"v2","new_sqlite_classes":["RelayMailbox"]}, {"tag":"v3","new_sqlite_classes":
+  // ["RelayPresence"]}) and add {"tag":"v4","new_sqlite_classes":["RelayEstate"],"deleted_classes":["RelaySession",
+  // "RelayPresence"]}. Mailbox objects are now named "<context>/<kid>" (src/cloudflare/context.ts) instead of "<kid>":
+  // mail queued under the old names is unreachable after the rename, so F-8 also checks those mailboxes are empty.
   "durable_objects": {
     "bindings": [
-      { "name": "SESSIONS", "class_name": "RelaySession" },
-      { "name": "MAILBOX", "class_name": "RelayMailbox" },
-      { "name": "PRESENCE", "class_name": "RelayPresence" }
+      { "name": "ESTATE", "class_name": "RelayEstate" },
+      { "name": "MAILBOX", "class_name": "RelayMailbox" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["RelaySession"] },
-    { "tag": "v2", "new_sqlite_classes": ["RelayMailbox"] },
-    { "tag": "v3", "new_sqlite_classes": ["RelayPresence"] }
+    { "tag": "v1", "new_sqlite_classes": ["RelayEstate", "RelayMailbox"] }
   ],
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "relay-blobs" }],
   "observability": { "enabled": true }

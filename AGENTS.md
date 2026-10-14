@@ -50,7 +50,8 @@ PassionCode Relay: carries sessions, sealed secret envelopes and package blobs b
 - `npm run dev` (wrangler) and `npm run portable` run in the foreground of the terminal that started them and
   stop with it (Ctrl-C, SIGINT or SIGTERM).
 - Tests start workerd through Miniflare and dispose of it when they finish.
-- The hosted relay runs on Cloudflare once RLY-05 deploys it. Its idle cost is a Durable Object per open session.
+- The hosted relay runs on Cloudflare once RLY-05 deploys it. All of an estate's sessions live in one hibernating
+  Durable Object (docs/adr/0002-estate-hub.md): idle sockets cost no duration, and each event bills only while it runs.
 
 ## Organisation
 
