@@ -356,8 +356,12 @@ export class RelaySession {
 
   /** An error frame and, for an authentication failure, the close DEC-0047 item 3 names. */
   private refuse(code: RelayErrorCode, message: string): void {
-    this.error(code, message);
-    this.close(code === "not-admitted" ? CLOSE_CODES.notAdmitted : CLOSE_CODES.unauthenticated, code);
+    try {
+      this.error(code, message);
+    } finally {
+      // A transport that cannot take the error frame is still closed with the refusal's own code.
+      this.close(code === "not-admitted" ? CLOSE_CODES.notAdmitted : CLOSE_CODES.unauthenticated, code);
+    }
   }
 
   private error(code: RelayErrorCode, message: string, id?: string): void {
@@ -372,13 +376,23 @@ export class RelaySession {
 
   /**
    * A fault in the relay while serving this session (S5): logged as `session-fault`, answered `error internal`, then
-   * closed 1011. Adapters and the hub call it; it is never silent and never closes twice.
+   * closed 1011. Adapters and the hub call it; it is never silent, never closes twice and never throws: a transport
+   * whose `send` throws (a socket gone bad underneath) is still closed, and the failure is logged, not rethrown.
    */
   fault(error: unknown): void {
     this.env.log?.({ event: "session-fault", ...(this.kid ? { kid: this.kid } : {}), ...errorFields(error) });
     if (this.state === "closed") return;
-    this.error("internal", "the relay could not handle this");
-    this.close(1011, "internal error");
+    try {
+      this.error("internal", "the relay could not handle this");
+    } catch (sendError) {
+      this.env.log?.({ event: "session-fault", ...(this.kid ? { kid: this.kid } : {}), stage: "error-frame", ...errorFields(sendError) });
+    } finally {
+      try {
+        this.close(1011, "internal error");
+      } catch (closeError) {
+        this.env.log?.({ event: "session-fault", ...(this.kid ? { kid: this.kid } : {}), stage: "close", ...errorFields(closeError) });
+      }
+    }
   }
 
   /** The transport closed from the other side: stop delivering to this connection. */
