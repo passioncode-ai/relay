@@ -39,8 +39,12 @@ connections was a separate store reached by message:
      (`SessionIo.backlogged`); `drained(conn)` resumes it and counts as activity for the idle close;
    - at most `maxSessionsPerMachine` (default 8) admitted sessions per machine: the next is refused `rate-limited`, 1013;
      sessions restored after a hibernation wake count. The portable build frees the slot of a peer that vanished
-     through its socket heartbeat (30 to 40 s); the hosted build has none (a timer per hibernatable socket would keep
-     the object awake), so there a vanished peer holds its slot until the 90 s idle close;
+     through its socket heartbeat, which terminates only a socket with nothing outstanding (no bytes in the process,
+     at most 4 KiB unconfirmed by a pong) after 3 quiet 10 s beats; a socket with bytes outstanding is left to the 90 s
+     idle close, where drains and write progress count as activity, so no reader that keeps reading is cut off. The
+     hosted build has no heartbeat (a timer per hibernatable socket would keep the object awake), so there a vanished
+     peer holds its slot until the 90 s idle close; and since its socket reports no backlog, a flush there reads the
+     mailbox 64 messages a page (`FLUSH_PAGE_UNPACED`; [sessions.md, Flow control](../protocol/sessions.md));
    - `stop()`: closes every session through its own close (1001), writes `lastSeen`, announces nothing, and waits for
      the transports. A second call shares the first one's wait.
 2. **A session is a serializable `SessionRecord`** (`snapshot()`, `RelaySession.restore()`, `nextDeadline()`), handed

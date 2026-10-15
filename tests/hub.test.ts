@@ -533,3 +533,31 @@ test("no frame the relay sends exceeds MAX_FRAME_BYTES: the largest send it acce
   assert.ok(bytes(deliver) <= MAX_FRAME_BYTES, `deliver is ${bytes(deliver)} bytes`);
   for (const f of [...a.sent, ...b.sent]) assert.ok(bytes(f) <= MAX_FRAME_BYTES, `${f.type} is ${bytes(f)} bytes`);
 });
+
+test("a send whose recipient is over 256 code points is refused unknown-type and never echoed", async () => {
+  const r = rig();
+  const a = r.open();
+  await a.auth(A);
+  // A machine's #sig key id, so FAC-SEM-071's own rule passes and only the length is wrong; the schema allows 256.
+  const long = "k".repeat(253) + "#sig";
+  for (const to of [long, "\u{1F600}".repeat(253) + "#sig"]) {
+    const before = a.sent.length;
+    await a.frame({ type: "send", id: "s1", to, msgId: "m-1", body: "AA", ttl: 60 });
+    const replies = a.sent.slice(before);
+    assert.deepEqual(replies.map((f) => [f.type, f.code]), [["error", "unknown-type"]], `to of ${to.length}`);
+    assert.ok(!JSON.stringify(replies).includes(long), "the long recipient is not echoed");
+  }
+  // 256 code points (four-byte characters included) is a valid recipient: it is refused only as one the relay does not admit.
+  await a.frame({ type: "send", id: "s2", to: "\u{1F600}".repeat(252) + "#sig", msgId: "m-2", body: "AA", ttl: 60 });
+  assert.equal(a.sent.at(-1)!.code, "unknown-recipient");
+});
+
+test("a send whose msgId holds a control character (NUL) is refused unknown-type: no store truncates what accepted named", async () => {
+  const r = rig();
+  const a = r.open();
+  await a.auth(A);
+  for (const msgId of ["a\u0000b", "a\nb", "a\u007fb"]) {
+    await a.frame({ type: "send", id: "s1", to: B.kid, msgId, body: "AA", ttl: 60 });
+    assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.code], ["error", "unknown-type"], JSON.stringify(msgId));
+  }
+});

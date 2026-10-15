@@ -139,7 +139,12 @@ test("round 6: a slow reader with a 24 MiB backlog is still read while it drains
     const total = a.bytes();
     assert.equal(a.frames.filter((f) => f.type === "deliver").length, 24, `closed ${a.closed()}`);
     assert.equal(pongs.length, 1, "the ping was answered");
-    assert.ok(pongs[0]! < total * 0.7, `the pong came after ${(pongs[0]! / 1048576).toFixed(1)} of ${(total / 1048576).toFixed(1)} MiB: the ping waited for the drain`);
+    // Mid-drain: the pong is not behind the whole backlog. Where it lands depends on how much the kernel's buffers held
+    // when the ping was answered (up to about 9 MiB on macOS), so the check is that deliveries still followed it,
+    // several of them, rather than a fixed share of the bytes.
+    const pongAt = a.frames.findIndex((f) => f.type === "pong");
+    const after = a.frames.slice(pongAt).filter((f) => f.type === "deliver").length;
+    assert.ok(after >= 4, `the pong came after ${(pongs[0]! / 1048576).toFixed(1)} of ${(total / 1048576).toFixed(1)} MiB, with ${after} deliveries after it: the ping waited for the drain`);
     a.ws.send(JSON.stringify({ v: 1, type: "ping", id: "after-drain" }));
     const afterEnd = Date.now() + 3000;
     while (Date.now() < afterEnd && pongs.length < 2) await new Promise((resolve) => setTimeout(resolve, 50));
@@ -323,7 +328,7 @@ test("round 7: 2 machines x 8 sessions that never read, flooding pings with 1000
   }
 });
 
-test("round 7: the relay pings each socket; one that shows no sign of life for three heartbeats is terminated and frees its slot", async () => {
+test("round 7: the relay pings each socket; an idle one (nothing outstanding) that shows no sign of life for three heartbeats is terminated and frees its slot", async () => {
   const e = estate(new Date(), "ES256");
   const root = await dataDir(e);
   const r = await relay(root, new SqliteMailbox(join(root, "mailbox.sqlite")), { heartbeatMs: 200 });
@@ -339,7 +344,11 @@ test("round 7: the relay pings each socket; one that shows no sign of life for t
     }
     const end = Date.now() + 3000;
     while (r.events.filter((ev) => ev.event === "heartbeat-timeout").length < 8 && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50));
-    assert.equal(r.events.filter((ev) => ev.event === "heartbeat-timeout").length, 8, JSON.stringify(r.events.map((ev) => ev.event)));
+    const timeouts = r.events.filter((ev) => ev.event === "heartbeat-timeout");
+    assert.equal(timeouts.length, 8, JSON.stringify(r.events.map((ev) => ev.event)));
+    // Freed after 3 quiet beats, at the beat that sees it: within 4 beats of its last sign of life.
+    // (Interval timers drift by a few ms either way, so the bounds carry a margin.)
+    for (const t of timeouts) assert.ok(t.silentMs >= 550 && t.silentMs <= 900, JSON.stringify(t));
     await new Promise((resolve) => setTimeout(resolve, 100));
     const ninth = machine(r.url, e.machine, r.origin);
     assert.deepEqual(await ninth.outcome, { welcome: true }, "the dead sessions' slots are free");
@@ -412,23 +421,25 @@ async function slowReader(port: number, m: Estate["machine"], relay: string, byt
   return { frames, closed: () => closed, stop: () => { clearInterval(reader); socket.destroy(); } };
 }
 
-test("round 8: a slow reader (256 KiB/s) that acks every delivery gets its whole backlog: write progress is life to the heartbeat", async () => {
+test("round 10: a slow reader (20 KiB/s) that acks every delivery gets its whole backlog: unconfirmed bytes are never a heartbeat death", async () => {
   const e = estate(new Date(), "ES256");
   const root = await dataDir(e);
-  const mailbox = await prefill(root, e, 8, 760);
-  // A 1 s heartbeat: the relay's ping waits behind up to 2 MiB of deliveries, so at 256 KiB/s its pong comes back about
-  // eight heartbeats later; what shows the reader alive meanwhile is the relay's write progress (and its acks).
-  const r = await relay(root, mailbox, { heartbeatMs: 1000 });
+  // About 160 KiB queued: all of it fits in the kernel's buffers at once, so the relay's writes stop at once, and its
+  // ping waits behind all of it (about 8 s at this pace) while the heartbeat beats every 0.2 s. Only the rule "never
+  // terminate a socket with bytes outstanding" keeps this reader: at 958f16a it was terminated before its first pong.
+  const mailbox = await prefill(root, e, 3, 40);
+  const r = await relay(root, mailbox, { heartbeatMs: 200 });
   const port = Number(new URL(r.url).port);
-  const a = await slowReader(port, e.machine, r.origin, 256 * 1024);
+  const a = await slowReader(port, e.machine, r.origin, 20 * 1024);
   try {
-    const end = Date.now() + 60_000;
-    while (Date.now() < end && a.frames.filter((f) => f.type === "deliver").length < 8 && a.closed() === undefined) {
+    const end = Date.now() + 30_000;
+    while (Date.now() < end && a.frames.filter((f) => f.type === "deliver").length < 3 && a.closed() === undefined) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    assert.equal(a.frames.filter((f) => f.type === "deliver").length, 8, `closed ${a.closed()}; ${JSON.stringify(r.events.map((ev) => ev.event))}`);
-    assert.equal(a.closed(), undefined);
-    assert.ok(!r.events.some((ev) => ev.event === "heartbeat-timeout"));
+    const told = JSON.stringify(r.events);
+    assert.equal(a.frames.filter((f) => f.type === "deliver").length, 3, `closed ${a.closed()}; ${told}`);
+    assert.equal(a.closed(), undefined, told);
+    assert.ok(!r.events.some((ev) => ev.event === "heartbeat-timeout"), told);
     const until = Date.now() + 3000;
     while ((await mailbox.pending(e.machine.kid, new Date(), 0)).length > 0 && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal((await mailbox.pending(e.machine.kid, new Date(), 0)).length, 0, "every delivery acked");
@@ -438,19 +449,33 @@ test("round 8: a slow reader (256 KiB/s) that acks every delivery gets its whole
   }
 });
 
-test("round 8: a peer that vanishes with a backlog queued is still freed: write progress stops, and it never confirmed a read", async () => {
+test("round 10: a dead peer with a backlog is left to the 90 s idle close, not the heartbeat (fake clock), and its slot frees", async () => {
   const e = estate(new Date(), "ES256");
   const root = await dataDir(e);
   const mailbox = await prefill(root, e, 8, 760);
-  const r = await relay(root, mailbox, { heartbeatMs: 200 });
+  let skew = 0;
+  const r = await relay(root, mailbox, { heartbeatMs: 100, maxSessionsPerMachine: 1, now: () => new Date(Date.now() + skew) });
   const a = machine(r.url, e.machine, r.origin, (ws) => ws.pause()); // reads nothing after its welcome, answers no ping
   try {
     assert.deepEqual(await a.outcome, { welcome: true });
-    const end = Date.now() + 5000;
-    while (!r.events.some((ev) => ev.event === "heartbeat-timeout") && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50));
-    const timeout = r.events.find((ev) => ev.event === "heartbeat-timeout");
-    assert.ok(timeout, JSON.stringify(r.events.map((ev) => ev.event)));
-    assert.equal(timeout.graceMs, 0, "no pace was ever confirmed, so no extra time");
+    await new Promise((resolve) => setTimeout(resolve, 1500)); // 15 beats: bytes are outstanding, so no heartbeat death
+    assert.ok(!r.events.some((ev) => ev.event === "heartbeat-timeout"), JSON.stringify(r.events));
+    const blocked = machine(r.url, e.machine, r.origin);
+    assert.equal((await blocked.outcome).close, 1013, "the dead peer still holds the one slot");
+    skew = 91_000; // 91 s pass on the wall clock the sessions read: the next beats run the hub's due idle close
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    skew = 0; // back to now, so a new machine's auth (signed with the real time) is within its window
+    const end = Date.now() + 3000;
+    let after: Awaited<ReturnType<typeof machine>["outcome"]> | undefined;
+    while (Date.now() < end) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const again = machine(r.url, e.machine, r.origin);
+      after = await again.outcome;
+      again.ws.terminate();
+      if (after.welcome) break;
+    }
+    assert.deepEqual(after, { welcome: true }, `the idle close freed the slot: ${JSON.stringify(r.events.map((ev) => ev.event))}`);
+    assert.ok(!r.events.some((ev) => ev.event === "heartbeat-timeout"));
     assert.equal((await mailbox.pending(e.machine.kid, new Date(), 0)).length, 8, "nothing acked, nothing lost");
   } finally {
     a.ws.terminate();
@@ -458,8 +483,60 @@ test("round 8: a peer that vanishes with a backlog queued is still freed: write 
   }
 });
 
+test("round 10: a socket whose writes are backed up gets no second ping behind an unwritten one", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const mailbox = await prefill(root, e, 8, 760); // about 8 MiB: the kernel's buffers fill and the relay holds the rest
+  const r = await relay(root, mailbox, { heartbeatMs: 50 });
+  const a = machine(r.url, e.machine, r.origin, (ws) => ws.pause());
+  try {
+    assert.deepEqual(await a.outcome, { welcome: true });
+    await new Promise((resolve) => setTimeout(resolve, 2000)); // 40 beats
+    const flow = r.flow();
+    assert.ok(flow.pingsSent <= 3, JSON.stringify(flow));
+    assert.ok(flow.pingsSkipped >= 30, JSON.stringify(flow));
+  } finally {
+    a.ws.terminate();
+    await within(r.stop({ graceMs: 200 }), 3000);
+  }
+});
+
+test("round 10: the heartbeat runs on a monotonic clock: a wall clock stepped 30 s either way, or a stalled loop, kills no healthy peer and spares no dead one", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const r = await relay(root, new SqliteMailbox(join(root, "mailbox.sqlite")), { heartbeatMs: 200 });
+  const peers = [machine(r.url, e.machine, r.origin), machine(r.url, e.second, r.origin)]; // they read: ws answers pings
+  const realNow = Date.now;
+  try {
+    for (const p of peers) assert.deepEqual(await p.outcome, { welcome: true });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    Date.now = () => realNow() + 30_000; // an NTP step
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    Date.now = realNow;
+    const stalled = realNow() + 2000; // the loop stalls for 10 beats
+    while (realNow() < stalled) { /* busy */ }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    assert.ok(!r.events.some((ev) => ev.event === "heartbeat-timeout"), JSON.stringify(r.events));
+    for (const p of peers) assert.equal(p.closed(), undefined);
+    // And a wall clock stepped 30 s back does not make a dead idle peer immortal: it is still freed within a few beats.
+    const dead = machine(r.url, e.machine, r.origin, (ws) => ws.pause());
+    assert.deepEqual(await dead.outcome, { welcome: true });
+    Date.now = () => realNow() - 30_000;
+    const end = realNow() + 3000;
+    while (!r.events.some((ev) => ev.event === "heartbeat-timeout") && realNow() < end) await new Promise((resolve) => setTimeout(resolve, 50));
+    Date.now = realNow;
+    assert.equal(r.events.filter((ev) => ev.event === "heartbeat-timeout").length, 1, JSON.stringify(r.events.map((ev) => ev.event)));
+    for (const p of peers) assert.equal(p.closed(), undefined);
+    dead.ws.terminate();
+  } finally {
+    Date.now = realNow;
+    for (const p of peers) p.ws.terminate();
+    await within(r.stop({ graceMs: 200 }), 3000);
+  }
+});
+
 /** A paused (never reading) session flooding pings with `idLength`-character ids until the relay logs send-overflow. */
-async function overflow(extra: Record<string, unknown>, idLength: number, char = "x") {
+async function overflow(extra: Record<string, unknown>, idLength: number, char = "x", inspect?: (r: Awaited<ReturnType<typeof relay>>) => void) {
   const e = estate(new Date(), "ES256");
   const root = await dataDir(e);
   const r = await relay(root, new SqliteMailbox(join(root, "mailbox.sqlite")), extra);
@@ -474,6 +551,7 @@ async function overflow(extra: Record<string, unknown>, idLength: number, char =
       for (let k = 0; k < 2000; k += 1) a.ws.send(JSON.stringify({ v: 1, type: "ping", id: `${n++}`.padStart(8, "0") + pad }));
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
+    inspect?.(r);
     return r.events.find((ev) => ev.event === "send-overflow");
   } finally {
     a.ws.terminate();
@@ -482,10 +560,13 @@ async function overflow(extra: Record<string, unknown>, idLength: number, char =
 }
 
 test("round 8: the byte cap alone stops a non-reader at 3 MiB queued (the frame cap set aside)", async () => {
+  let peak = 0;
   // Ids of four-byte characters (still 128 code points): each pong is about 550 bytes, so 3 MiB is reached quickly.
-  const event = await overflow({ sendFramesCap: Infinity }, 128, "\u{1F600}");
+  const event = await overflow({ sendFramesCap: Infinity }, 128, "\u{1F600}", (r) => { peak = r.flow().peakBuffered; });
   assert.ok(event, "no send-overflow");
   // Checked before the write: what is queued stays within 3 MiB, and the frame that would have passed it is not written.
+  // The peak is read after every write, so a check made after the write (which lets one frame through) is caught too.
+  assert.ok(peak > 0 && peak <= 3 * 1024 * 1024, `peak queued ${peak}`);
   assert.ok(event.bufferedAmount <= 3 * 1024 * 1024 && event.bufferedAmount + event.frame > 3 * 1024 * 1024, JSON.stringify(event));
   assert.ok(event.frames > 4096, `the byte cap tripped, not the frame cap: ${JSON.stringify(event)}`);
 });

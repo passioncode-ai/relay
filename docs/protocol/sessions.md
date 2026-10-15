@@ -68,7 +68,7 @@ this link moves with the pin.
    - a known frame type not yet served (deltas and heartbeats: RLY-07) gets `error` `internal` "not served by this
      relay version yet";
    - an unknown type gets `unknown-type`, and the session stays open;
-   - a frame whose `id` is empty or longer than 128 characters (the relay-frame schema's limit) is not a
+   - a frame whose `id` is empty or longer than 128 code points (the relay-frame schema's limit) is not a
      fabric-relay/0.1 frame: it gets `unknown-type` with no `replyTo`, so the id is never echoed, and the session stays
      open (before `auth` it is refused `unauthenticated`, 4401).
 6. **Transport closes:**
@@ -86,8 +86,9 @@ connection set and everything that spans connections:
 
 - **Presence is derived from the set**, never stored: a machine is online while an admitted session in the set has its
   kid. Only `lastSeen` is kept.
-- **One timer.** Each session says when it next needs attention (`nextDeadline()`: the 10 s auth deadline, then 90 s of
-  silence); the hub arms the build's one timer at the earliest and closes exactly the sessions that are due.
+- **One scheduler timer.** Each session says when it next needs attention (`nextDeadline()`: the 10 s auth deadline,
+  then 90 s of silence); the hub arms its one timer at the earliest and closes exactly the sessions that are due. The
+  portable build's socket heartbeat (Flow control below) is a separate interval timer.
 - **Delivery wake-ups.** A message queued for a machine wakes every session it holds. One flush runs at a time per
   session; a wake during a flush runs one more, so a message is delivered once and never missed. A session is in the
   set before its first delivery, so nothing queued meanwhile is missed (RLY-013).
@@ -210,8 +211,10 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
     (SIGTERM is handled within one frame's work). Then:
     - **Deliveries are paced by the machine's reading.** A flush reads the mailbox four messages at a time
       (`FLUSH_PAGE`) and sends only while less than 1 MiB is queued on the socket (`SEND_HIGH`); when the socket
-      drains it goes on. What is not sent yet stays in the mailbox, durable. A reader at any speed gets its whole
-      backlog, in `seq` order, and its acks are read meanwhile.
+      drains it goes on. What is not sent yet stays in the mailbox, durable. A reader of any speed that shows activity
+      at least every 90 s (an ack or other frame, a drain, or the kernel taking more of what the relay queued; reading
+      a few KiB a minute is enough) gets its whole backlog, in `seq` order, and its acks are read meanwhile: the
+      heartbeat never terminates a socket with bytes outstanding (below).
     - **The socket is always read**, so acks and pings arrive whatever the relay has queued to send. A socket drain
       counts as activity for the 90 s idle close: a slow reader that is draining is not idle.
     - **Replies to a machine that never reads are capped.** A reply is small because what the relay echoes is held to
@@ -229,14 +232,17 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
       `error` `rate-limited` and closed 1013 (logged `session-limit`); a session that ends makes room. Sessions a
       hosted hub restored after a hibernation wake count too.
     - **Heartbeat** (portable). The relay pings every socket each 10 s (a WebSocket ping, which every client library
-      answers). Life is a pong, a frame, a socket drain, or write progress (the kernel took more of what the relay
-      queued), so a reader at any speed that keeps reading is alive even while its pong waits behind its backlog. Once
-      the relay has handed everything to the kernel its writes stop moving while the reader still reads what the
-      kernel holds: a pong proves the reader read everything written before its ping, the reader's pace is measured
-      between pongs, and a quiet reader gets the time its own pace needs for the unconfirmed rest, up to 120 s more.
-      A socket with no life for 30 s beyond that is terminated (`heartbeat-timeout`): a peer that vanished, having
-      never confirmed a read worth measuring, frees its slot within 30 to 40 s instead of the 90 s idle close. Write
-      progress also counts as activity for the idle close.
+      answers); a pong confirms every byte written before its ping. The heartbeat terminates a socket only when nothing
+      is outstanding to it: nothing left in the process (`bufferedAmount` 0) and at most 4 KiB written and not yet
+      confirmed by a pong (control traffic such as `welcome`). Such a socket, idle on the relay's side, with no life (a
+      pong, a frame, a drain) for 3 beats is terminated at the next beat (`heartbeat-timeout`): a peer that vanished
+      frees its slot within 30 to 40 s instead of the 90 s idle close. A socket with more outstanding is never
+      terminated by the heartbeat, however long the kernel holds bytes in front of its ping; it is governed by the
+      session's 90 s idle close, where its frames, its drains and the relay's write progress to it count as activity.
+      A second ping is never queued behind one not yet written. Time is monotonic: a wall clock stepped either way, or
+      a beat that fires late (a stalled loop), neither kills a healthy peer nor spares a dead idle one. The hub's own
+      timer runs its deadlines (`nextDeadline()`); the heartbeat is a separate interval timer, which also runs any
+      deadline that is due.
     - **The Worker has no socket heartbeat.** Its hibernatable sockets are not pinged by the relay (a timer per
       socket would keep the object awake), so a peer that vanishes without a close holds its slot until the 90 s idle
       close. The Worker also reports no backlog, so its flush reads the mailbox 64 messages a page (a 1000-message

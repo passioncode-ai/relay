@@ -369,6 +369,11 @@ export class RelaySession {
     if (frame.msgId.length < 1 || codePoints(frame.msgId) > MAX_ID_LENGTH) {
       return this.error("unknown-type", `not a valid send frame (msgId: 1 to ${MAX_ID_LENGTH} characters)`, id);
     }
+    // A control character (NUL above all) does not survive every store: SQLite's text read-back ends at a NUL, so the
+    // deliver would name another msgId than the accepted did. Refused, never echoed.
+    if (/[\u0000-\u001f\u007f]/.test(frame.msgId)) {
+      return this.error("unknown-type", "not a valid send frame (msgId: no control characters)", id);
+    }
     if (frame.to.length < 1 || codePoints(frame.to) > 256) return this.error("unknown-type", "not a valid send frame (to: 1 to 256 characters)", id);
     if (!BASE64URL.test(frame.body)) return this.error("unknown-type", "not a valid send frame (body: base64url characters only)", id);
     const admission = this.env.admission();
