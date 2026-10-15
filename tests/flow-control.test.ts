@@ -272,12 +272,16 @@ test("round 6: a machine flooding pings it never reads while the relay stops: th
   try {
     assert.deepEqual(await a.outcome, { welcome: true });
     a.ws.pause();
-    // Pings with the longest id the relay echoes (128 characters): each pong is as large as a reply gets.
-    const id = "x".repeat(120);
-    for (let n = 0; n < 100_000; n += 1) a.ws.send(JSON.stringify({ v: 1, type: "ping", id: `${n}`.padStart(8, "0") + id }));
-    // The replies pile up past the cap; the stop begins the moment the overflow is logged, while its close is in flight.
-    const until = Date.now() + 20_000;
-    while (!r.events.some((ev) => ev.event === "send-overflow") && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 5));
+    // Pings with the longest id the relay echoes (128 code points, four-byte characters): each pong is about 550 bytes.
+    // Sent in batches until the replies pile up past the cap, however much the kernel's buffers take first (Linux's
+    // grow larger than macOS's); the stop begins the moment the overflow is logged, while its close is in flight.
+    const id = "\u{1F600}".repeat(120);
+    let n = 0;
+    const until = Date.now() + 30_000;
+    while (!r.events.some((ev) => ev.event === "send-overflow") && Date.now() < until) {
+      for (let k = 0; k < 2000; k += 1) a.ws.send(JSON.stringify({ v: 1, type: "ping", id: `${n++}`.padStart(8, "0") + id }));
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
     assert.ok(r.events.some((ev) => ev.event === "send-overflow"), JSON.stringify(r.events.map((ev) => ev.event)));
     const started = Date.now();
     const result = await within(r.stop({ graceMs: 500 }), 4000);
