@@ -40,8 +40,12 @@ release iteration 1's inventory findings (Project Observatory `docs/runs/2026-10
   - **Portable: a socket heartbeat.** The relay pings each socket every 10 s. A socket with nothing outstanding (no
     bytes in the process, at most 4 KiB unconfirmed by a pong) and no pong, frame or drain for 30 s is terminated,
     logged `heartbeat-timeout`. A socket with bytes outstanding is never terminated by the heartbeat; it is left to
-    the 90 s idle close, where drains and write progress count, so a slow reader is never cut off for being slow. The
-    hosted build has no heartbeat: a vanished peer holds its slot until the 90 s idle close.
+    the idle close, where drains and the kernel taking its bytes count (the relay's own pings do not), with a limit of
+    **5 minutes while bytes are outstanding** (90 s otherwise). The slowest reader that keeps its session reads about
+    5 KiB/s; 8 KiB/s was measured on Linux. The hosted build has no heartbeat: a vanished peer holds its slot until
+    the 90 s idle close.
+  - **A `msgId` that is not well-formed text** (a lone surrogate) is refused `unknown-type`: stores collapsed it, so
+    two msgIds became one dedup key and a body was silently dropped.
   - **A `msgId` with a control character** (NUL, a line break) is refused `unknown-type`: SQLite truncated it at a
     NUL, so `deliver` named another msgId than `accepted` had.
   - **A blob path that is not valid percent-encoding** (`GET /v1/blobs/%`) gets **400 `malformed`**, not a 500.

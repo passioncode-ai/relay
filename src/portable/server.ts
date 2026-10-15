@@ -78,6 +78,8 @@ const HEARTBEAT_MS = 10_000;
 const HEARTBEAT_DEAD_BEATS = 3;
 /** Control traffic (hello, welcome, a pong, presence) may sit unconfirmed and still let an idle peer be freed. */
 const HEARTBEAT_IDLE_SLACK = 4 * 1024;
+/** What a ping with no payload puts on the wire (two header bytes): the relay's own bytes, never the peer's progress. */
+const PING_FRAME_BYTES = 2;
 /** Close code for a machine that does not read what the relay sends it: a policy violation (RFC 6455 §7.4.1). */
 const CLOSE_NOT_READING = 1008;
 /**
@@ -143,6 +145,8 @@ export interface ServeOptions {
    * is terminated; one with bytes outstanding is left to the session's 90 s idle close.
    */
   heartbeatMs?: number;
+  /** The idle limit while bytes are outstanding to a machine (default 5 minutes, IDLE_OUTSTANDING_MS). */
+  idleOutstandingMs?: number;
   /** The wall clock sessions and their deadlines read (default the system's); tests pass a fake one. */
   now?: () => Date;
   /** Tuning: the reply caps per session (defaults SEND_CAP, 3 MiB, and SEND_FRAMES_CAP, 4096 frames). */
@@ -254,6 +258,7 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
     ...(options.mailbox ? { mailbox: options.mailbox } : {}),
     ...(options.lastSeen ? { lastSeen: options.lastSeen } : {}),
     ...(options.maxSessionsPerMachine ? { maxSessionsPerMachine: options.maxSessionsPerMachine } : {}),
+    ...(options.idleOutstandingMs !== undefined ? { idleOutstandingMs: options.idleOutstandingMs } : {}),
     arm: (at) => {
       clearTimeout(timer);
       timer = at === undefined ? undefined : setTimeout(() => void hub.onWake(), Math.max(0, at - wallNow().getTime()));
@@ -280,7 +285,7 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
   const clock = () => performance.now();
   type Beat = {
     lastLife: number; written: number; confirmed: number; pings: number[]; pingUnwritten: boolean;
-    completed: number; inFlight: number; socket: Socket;
+    completed: number; inFlight: number; pingBytes: number; socket: Socket;
   };
   const alive = new Map<WebSocket, Beat>();
   const position = (socket: Socket) => ({
@@ -294,9 +299,12 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
     const late = now - lastBeat - beatMs;
     lastBeat = now;
     if (late > beatMs / 2) for (const state of alive.values()) state.lastLife += late;
+    const progressed: WebSocket[] = [];
     for (const [ws, state] of alive) {
+      // Progress the peer drove: the relay's own pings (PING_FRAME_BYTES each, counted when written) are not its reading.
       const at = position(state.socket);
-      if (at.completed > state.completed || (at.completed === state.completed && at.inFlight < state.inFlight)) hub.progressed(ws);
+      at.completed -= state.pingBytes;
+      if (at.completed > state.completed || (at.completed === state.completed && at.inFlight < state.inFlight)) progressed.push(ws);
       state.completed = at.completed;
       state.inFlight = at.inFlight;
       const idle = ws.bufferedAmount === 0 && state.written - state.confirmed <= HEARTBEAT_IDLE_SLACK;
@@ -315,11 +323,15 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
         state.pings.push(state.written);
         if (state.pings.length > 64) state.pings.shift();
         flow.pingsSent += 1;
-        ws.ping(undefined, undefined, () => { state.pingUnwritten = false; });
+        ws.ping(undefined, undefined, (error?: Error) => {
+          state.pingUnwritten = false;
+          if (!error) state.pingBytes += PING_FRAME_BYTES;
+        });
       } catch {
         // a socket already closing: its close event removes it
       }
     }
+    hub.progressedAll(progressed);
     // The hub's own timer covers its deadlines; a beat also runs what is due, so a late or skipped timer costs nothing.
     const due = hub.nextWake();
     if (due !== undefined && due <= wallNow().getTime()) void hub.onWake();
@@ -400,7 +412,7 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
       let unsent = 0; // frames handed to ws and not yet to the kernel
       let terminate: ReturnType<typeof setTimeout> | undefined;
       const lively = () => { const state = alive.get(ws); if (state) state.lastLife = clock(); };
-      alive.set(ws, { lastLife: clock(), written: 0, confirmed: 0, pings: [], pingUnwritten: false, ...position(socket as Socket), socket: socket as Socket });
+      alive.set(ws, { lastLife: clock(), written: 0, confirmed: 0, pings: [], pingUnwritten: false, pingBytes: 0, ...position(socket as Socket), socket: socket as Socket });
       ws.on("pong", () => {
         lively();
         const state = alive.get(ws);
@@ -448,6 +460,10 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
           terminate.unref();
         },
         backlogged: () => ws.bufferedAmount >= SEND_HIGH,
+        outstanding: () => {
+          const state = alive.get(ws);
+          return ws.bufferedAmount > 0 || (state !== undefined && state.written - state.confirmed > HEARTBEAT_IDLE_SLACK);
+        },
         close: (code, reason) => ws.close(code, reason),
       }, origin);
     });

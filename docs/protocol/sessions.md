@@ -74,7 +74,9 @@ this link moves with the pin.
 6. **Transport closes:**
    - a binary frame closes with 1003;
    - a frame over 1 MiB gets `too-large`, then 1009;
-   - 90 s of silence closes with 1001 ("going away"); a portable relay that stops closes every session with the
+   - 90 s of silence closes with 1001 ("going away"); in the portable build, while the relay has bytes outstanding to
+     the machine (queued, or written and not confirmed read), the limit is 5 minutes (`IDLE_OUTSTANDING_MS`, see Flow
+     control); a portable relay that stops closes every session with the
      same 1001. A client reconnects; when the upgrade is answered 503, it waits for the `retry-after` seconds first;
    - a fault in the relay while handling a frame is logged as `session-fault`, answered `error` `internal`, and closes
      with 1011 (`RelaySession.fault`).
@@ -211,10 +213,14 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
     (SIGTERM is handled within one frame's work). Then:
     - **Deliveries are paced by the machine's reading.** A flush reads the mailbox four messages at a time
       (`FLUSH_PAGE`) and sends only while less than 1 MiB is queued on the socket (`SEND_HIGH`); when the socket
-      drains it goes on. What is not sent yet stays in the mailbox, durable. A reader of any speed that shows activity
-      at least every 90 s (an ack or other frame, a drain, or the kernel taking more of what the relay queued; reading
-      a few KiB a minute is enough) gets its whole backlog, in `seq` order, and its acks are read meanwhile: the
-      heartbeat never terminates a socket with bytes outstanding (below).
+      drains it goes on. What is not sent yet stays in the mailbox, durable. Its acks are read meanwhile, and the
+      heartbeat never terminates a socket with bytes outstanding (below). **The floor:** while bytes are outstanding, a
+      reader must show activity at least every 5 minutes (an ack or other frame, a drain, or the kernel taking more of
+      what the relay queued). Between two such signals it may have to read up to about 1.4 MiB: the larger of the
+      largest frame (1 MiB, one ack each) and the step after which Linux reports the socket writable again (about a
+      third of a send buffer of up to 4 MiB). So the slowest reader that keeps its session reads about 5 KiB/s; a
+      slower one is idle-closed (1001) and its mail stays queued. Measured on Linux (Node 22): a reader at 8 KiB/s
+      with 760 KiB deliveries got both in 270 s and kept its session.
     - **The socket is always read**, so acks and pings arrive whatever the relay has queued to send. A socket drain
       counts as activity for the 90 s idle close: a slow reader that is draining is not idle.
     - **Replies to a machine that never reads are capped.** A reply is small because what the relay echoes is held to
@@ -238,7 +244,10 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
       pong, a frame, a drain) for 3 beats is terminated at the next beat (`heartbeat-timeout`): a peer that vanished
       frees its slot within 30 to 40 s instead of the 90 s idle close. A socket with more outstanding is never
       terminated by the heartbeat, however long the kernel holds bytes in front of its ping; it is governed by the
-      session's 90 s idle close, where its frames, its drains and the relay's write progress to it count as activity.
+      session's idle close, where its frames, its drains and the kernel taking more of what the relay queued count as
+      activity (the relay's own pings do not), with a limit of 5 minutes while bytes are outstanding
+      (`idleOutstandingMs`) and 90 s otherwise. A peer frozen with bytes outstanding is freed within the 5 minutes; a
+      client that answers pings but sends nothing is idle-closed at 90 s.
       A second ping is never queued behind one not yet written. Time is monotonic: a wall clock stepped either way, or
       a beat that fires late (a stalled loop), neither kills a healthy peer nor spares a dead idle one. The hub's own
       timer runs its deadlines (`nextDeadline()`); the heartbeat is a separate interval timer, which also runs any

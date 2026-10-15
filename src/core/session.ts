@@ -36,6 +36,14 @@ export interface SessionIo {
    * a backlog signal (the Worker's hibernatable socket has none) omits it, and a flush sends every page at once.
    */
   backlogged?(): boolean;
+  /**
+   * Whether the relay has bytes outstanding to this machine: queued in the process, or written and not yet confirmed
+   * read (the portable build: `bufferedAmount` > 0, or more than a few KiB unconfirmed by a pong). While it has, the
+   * idle close waits IDLE_OUTSTANDING_MS rather than 90 s: a slow reader in the middle of a large frame may show no
+   * activity for longer (Linux signals writability only once about a third of the send buffer is free). Omitted:
+   * never.
+   */
+  outstanding?(): boolean;
   close(code: number, reason: string): void;
   /** Called with the session's record after every change (the Worker: `serializeAttachment`); optional. */
   persist?(record: SessionRecord): void;
@@ -92,7 +100,15 @@ export interface SessionEnv {
   /** The estate hub this session lives in: delivery wake-ups and presence. */
   hub?: SessionHub;
   log?: (event: Record<string, unknown>) => void;
+  /** The idle limit while bytes are outstanding (default IDLE_OUTSTANDING_MS). */
+  idleOutstandingMs?: number;
 }
+
+/**
+ * How long a session with bytes outstanding to its machine may show no activity before it is closed 1001: 5 minutes.
+ * The send caps bound what it holds meanwhile; a frozen peer is freed within this bound.
+ */
+export const IDLE_OUTSTANDING_MS = 5 * 60 * 1000;
 
 export type SessionState = "awaiting-auth" | "admitted" | "closed";
 
@@ -220,7 +236,12 @@ export class RelaySession {
   nextDeadline(): number | undefined {
     if (this.state === "closed") return undefined;
     if (this.state === "awaiting-auth") return this.openedAt + AUTH_DEADLINE_SECONDS * 1000 + 1;
-    return this.lastFrameAt + IDLE_CLOSE_SECONDS * 1000 + 1;
+    return this.lastFrameAt + this.idleLimitMs() + 1;
+  }
+
+  /** 90 s of silence, or IDLE_OUTSTANDING_MS while the transport has bytes outstanding to the machine. */
+  private idleLimitMs(): number {
+    return this.io.outstanding?.() ? (this.env.idleOutstandingMs ?? IDLE_OUTSTANDING_MS) : IDLE_CLOSE_SECONDS * 1000;
   }
 
   /**
@@ -275,7 +296,11 @@ export class RelaySession {
     if (this.state === "awaiting-auth" && now - this.openedAt > AUTH_DEADLINE_SECONDS * 1000) {
       return this.refuse("unauthenticated", `no auth within ${AUTH_DEADLINE_SECONDS} s`);
     }
-    if (now - this.lastFrameAt > IDLE_CLOSE_SECONDS * 1000) this.close(CLOSE_CODES.idle, `silent for ${IDLE_CLOSE_SECONDS} s`);
+    const limit = this.idleLimitMs();
+    if (now - this.lastFrameAt > limit) {
+      this.env.log?.({ event: "idle-close", ...(this.kid ? { kid: this.kid } : {}), silentMs: now - this.lastFrameAt, limitMs: limit });
+      this.close(CLOSE_CODES.idle, `silent for ${Math.round(limit / 1000)} s`);
+    }
   }
 
   private async authenticate(frame: AuthFrame): Promise<void> {
@@ -371,6 +396,11 @@ export class RelaySession {
     }
     // A control character (NUL above all) does not survive every store: SQLite's text read-back ends at a NUL, so the
     // deliver would name another msgId than the accepted did. Refused, never echoed.
+    // A lone surrogate is not text: stores collapse it (SQLite writes U+FFFD), so two msgIds that differ only there
+    // would be one dedup key and a second body silently dropped.
+    if (/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(frame.msgId)) {
+      return this.error("unknown-type", "not a valid send frame (msgId: not well-formed text)", id);
+    }
     if (/[\u0000-\u001f\u007f]/.test(frame.msgId)) {
       return this.error("unknown-type", "not a valid send frame (msgId: no control characters)", id);
     }

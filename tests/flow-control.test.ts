@@ -381,7 +381,7 @@ function clientFrame(opcode: number, payload: Buffer): Buffer {
  * stops reading the kernel once its own buffer holds 64 KiB, so the relay sees a reader at exactly that pace. It answers
  * the relay's pings, acks every delivery, and reports what it got.
  */
-async function slowReader(port: number, m: Estate["machine"], relay: string, bytesPerSecond: number) {
+async function slowReader(port: number, m: Estate["machine"], relay: string, bytesPerSecond: number, reading: () => boolean = () => true) {
   const socket = tcp(port, "127.0.0.1");
   socket.on("error", () => {});
   await new Promise<void>((resolve) => socket.on("connect", () => resolve()));
@@ -422,6 +422,7 @@ async function slowReader(port: number, m: Estate["machine"], relay: string, byt
   };
   const slice = Math.max(1, Math.round(bytesPerSecond / 20));
   const reader = setInterval(() => {
+    if (!reading()) return;
     if (socket.readableLength === 0) socket.read(0); // ask Node to fill its buffer from the kernel
     const chunk = socket.read(Math.min(slice, socket.readableLength)) as Buffer | null;
     if (chunk) take(chunk);
@@ -457,7 +458,7 @@ test("round 10: a slow reader (20 KiB/s) that acks every delivery gets its whole
   }
 });
 
-test("round 10: a dead peer with a backlog is left to the 90 s idle close, not the heartbeat (fake clock), and its slot frees", async () => {
+test("round 10: a dead peer with a backlog is left to the idle close (5 min while bytes are outstanding), not the heartbeat (fake clock), and its slot frees", async () => {
   const e = estate(new Date(), "ES256");
   const root = await dataDir(e);
   const mailbox = await prefill(root, e, 8, 760);
@@ -470,7 +471,7 @@ test("round 10: a dead peer with a backlog is left to the 90 s idle close, not t
     assert.ok(!r.events.some((ev) => ev.event === "heartbeat-timeout"), JSON.stringify(r.events));
     const blocked = machine(r.url, e.machine, r.origin);
     assert.equal((await blocked.outcome).close, 1013, "the dead peer still holds the one slot");
-    skew = 91_000; // 91 s pass on the wall clock the sessions read: the next beats run the hub's due idle close
+    skew = 301_000; // 301 s pass on the wall clock the sessions read: the next beats run the hub's due idle close
     await new Promise((resolve) => setTimeout(resolve, 500));
     skew = 0; // back to now, so a new machine's auth (signed with the real time) is within its window
     const end = Date.now() + 3000;
@@ -584,4 +585,87 @@ test("round 8: the frame cap alone stops a non-reader at 4096 queued frames (the
   assert.ok(event, "no send-overflow");
   assert.equal(event.frames, 4096, JSON.stringify(event));
   assert.ok(event.bufferedAmount < 3 * 1024 * 1024, JSON.stringify(event));
+});
+
+// Round 12: only the peer's progress is activity (never the relay's own pings), and a session with bytes outstanding
+// gets IDLE_OUTSTANDING_MS (5 min) instead of 90 s.
+
+test("round 12: a client that answers pings but sends no frame is idle-closed at 90 s: the relay's own pings are not its activity", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  let skew = 0;
+  const r = await relay(root, new SqliteMailbox(join(root, "mailbox.sqlite")), { heartbeatMs: 100, now: () => new Date(Date.now() + skew) });
+  const a = machine(r.url, e.machine, r.origin); // reads, so ws answers every ping; sends nothing
+  try {
+    assert.deepEqual(await a.outcome, { welcome: true });
+    await new Promise((resolve) => setTimeout(resolve, 1000)); // 10 pings written and answered
+    skew = 87_000; // 88.x s since its welcome
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(a.closed(), undefined, "under 90 s: not idle yet");
+    skew = 91_000;
+    const end = Date.now() + 3000;
+    while (a.closed() === undefined && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(a.closed(), 1001, JSON.stringify(r.events));
+    assert.ok(r.events.some((ev) => ev.event === "idle-close" && ev.limitMs === 90_000), JSON.stringify(r.events));
+  } finally {
+    a.ws.terminate();
+    await within(r.stop({ graceMs: 200 }), 3000);
+  }
+});
+
+test("round 12: a frozen peer with one delivery unconfirmed keeps no slot past the 5 min bound, and is not cut at 90 s", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const mailbox = await prefill(root, e, 1, 15); // about 20 KiB: in the kernel at once, never confirmed by a pong
+  let skew = 0;
+  const r = await relay(root, mailbox, { heartbeatMs: 100, now: () => new Date(Date.now() + skew) });
+  const a = machine(r.url, e.machine, r.origin, (ws) => ws.pause()); // frozen after its welcome (SIGSTOP)
+  try {
+    assert.deepEqual(await a.outcome, { welcome: true });
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    assert.ok(!r.events.some((ev) => ev.event === "heartbeat-timeout"), "bytes outstanding: not the heartbeat's to end");
+    skew = 200_000; // past 90 s, inside 5 min
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    assert.ok(!r.events.some((ev) => ev.event === "idle-close"), JSON.stringify(r.events));
+    skew = 301_000; // past 5 min: freed, and its pings in the meantime did not count as its activity
+    const end = Date.now() + 3000;
+    while (!r.events.some((ev) => ev.event === "idle-close") && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50));
+    const close = r.events.find((ev) => ev.event === "idle-close");
+    assert.ok(close, JSON.stringify(r.events));
+    assert.equal(close.limitMs, 300_000);
+    assert.equal((await mailbox.pending(e.machine.kid, new Date(), 0)).length, 1, "nothing acked, nothing lost");
+  } finally {
+    a.ws.terminate();
+    await within(r.stop({ graceMs: 200 }), 3000);
+  }
+});
+
+test("round 12: a bursty slow reader (Linux-shaped: no progress for 120 s at a time, about 10 KiB/s overall) gets its whole backlog", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const mailbox = await prefill(root, e, 3, 760);
+  // A clock 20 times faster than real time: 6 s of real silence is 120 s on the clock the sessions read. Linux tells the
+  // relay its socket is writable only once about a third of the send buffer is free, so a slow reader's progress comes
+  // in steps that long; between them nothing shows it is alive. 90 s would cut it; 5 min does not.
+  const base = Date.now();
+  const r = await relay(root, mailbox, { heartbeatMs: 2000, now: () => new Date(base + (Date.now() - base) * 20) });
+  const port = Number(new URL(r.url).port);
+  const started = Date.now();
+  // Reads 1.5 s, then nothing for 6 s, and again: 1 MiB/s while reading, about 200 KiB/s real, 10 KiB/s on the clock.
+  // (Slower than that, on Linux one burst may not free a third of the send buffer: no step at all between two bursts,
+  // which is below the floor docs/protocol/sessions.md states.)
+  const a = await slowReader(port, e.machine, r.origin, 1024 * 1024, () => (Date.now() - started) % 7500 < 1500);
+  try {
+    const end = Date.now() + 60_000;
+    while (Date.now() < end && a.frames.filter((f) => f.type === "deliver").length < 3 && a.closed() === undefined) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const told = JSON.stringify(r.events);
+    assert.equal(a.frames.filter((f) => f.type === "deliver").length, 3, `closed ${a.closed()}; ${told}`);
+    assert.equal(a.closed(), undefined, told);
+    assert.ok(!r.events.some((ev) => ev.event === "idle-close" || ev.event === "heartbeat-timeout"), told);
+  } finally {
+    a.stop();
+    await within(r.stop({ graceMs: 200 }), 3000);
+  }
 });

@@ -27,7 +27,9 @@
   each drain; the socket is always read; replies are capped at 3 MiB or 4096 frames per session, checked before each
   write (`send-overflow`, 1008); ids and msgIds are held to 128 code points, so no frame exceeds 1 MiB; at most 8
   sessions per machine (1013); the portable socket heartbeat (10 s, monotonic) terminates only a socket with nothing
-  outstanding that stopped answering (30 to 40 s); a socket with bytes outstanding is left to the 90 s idle close. The hosted build has no backlog signal (page of 64) and no
+  outstanding that stopped answering (30 to 40 s); a socket with bytes outstanding is left to the idle close, 5 minutes
+  while bytes are outstanding (90 s otherwise); the relay's own pings are never the peer's activity. Floor: about
+  5 KiB/s (8 KiB/s measured on Linux). The hosted build has no backlog signal (page of 64) and no
   heartbeat (90 s idle close). Bound: 8 x 3 MiB queued per machine; `Served.flow().peakBuffered` shows it.
 - Decision records: [ADR-0001](adr/0001-relay-repository.md) (with Amendment 1) and [ADR-0002](adr/0002-estate-hub.md).
 

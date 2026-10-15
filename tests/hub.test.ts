@@ -11,7 +11,7 @@ import { MAX_BODY_BYTES, MAX_FRAME_BYTES, relayAuthSigningInput, type AdmissionR
 import { EstateHub, REFRESH_RETRY_MS, type HubDeps } from "../src/core/hub.ts";
 import { MemoryMailbox, type MailboxStore } from "../src/core/mailbox.ts";
 import { MemoryLastSeen } from "../src/core/presence.ts";
-import type { SessionIo } from "../src/core/session.ts";
+import { IDLE_OUTSTANDING_MS, type SessionIo } from "../src/core/session.ts";
 
 const require = createRequire(import.meta.url);
 const ajv = new (require("ajv/dist/2020").default)({ allErrors: true, strict: false });
@@ -41,7 +41,7 @@ function rig(options: { mailbox?: MailboxStore; refresh?: HubDeps["refresh"]; ma
     ...(options.refresh ? { refresh: options.refresh } : {}),
     ...(options.maxSessionsPerMachine ? { maxSessionsPerMachine: options.maxSessionsPerMachine } : {}),
   });
-  const open = (transport: { backlogged?: () => boolean } = {}) => {
+  const open = (transport: { backlogged?: () => boolean; outstanding?: () => boolean } = {}) => {
     const conn = {};
     const sent: Array<Record<string, any>> = [];
     const closed: number[] = [];
@@ -53,6 +53,7 @@ function rig(options: { mailbox?: MailboxStore; refresh?: HubDeps["refresh"]; ma
       },
       close: (code) => closed.push(code),
       ...(transport.backlogged ? { backlogged: transport.backlogged } : {}),
+      ...(transport.outstanding ? { outstanding: transport.outstanding } : {}),
     };
     hub.connect(conn, io, ORIGIN);
     const frame = (f: Record<string, unknown>) => hub.receive(conn, JSON.stringify({ v: 1, ...f }));
@@ -560,4 +561,54 @@ test("a send whose msgId holds a control character (NUL) is refused unknown-type
     await a.frame({ type: "send", id: "s1", to: B.kid, msgId, body: "AA", ttl: 60 });
     assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.code], ["error", "unknown-type"], JSON.stringify(msgId));
   }
+});
+
+// Round 12.
+
+test("a session with bytes outstanding to its machine is idle-closed after IDLE_OUTSTANDING_MS (5 min), not 90 s", async () => {
+  const r = rig();
+  let outstanding = true;
+  const a = r.open({ outstanding: () => outstanding });
+  const b = r.open();
+  await a.auth(A);
+  await b.auth(B);
+  assert.equal(r.hub.session(a.conn)!.nextDeadline(), T0 + IDLE_OUTSTANDING_MS + 1);
+  r.at(90_001);
+  await r.hub.onWake();
+  assert.deepEqual([a.closed, b.closed], [[], [1001]], "outstanding bytes: not idle yet; nothing outstanding: idle at 90 s");
+  r.at(IDLE_OUTSTANDING_MS + 1);
+  await r.hub.onWake();
+  assert.deepEqual(a.closed, [1001], "a frozen peer is still freed within the bound");
+  // Once nothing is outstanding, 90 s of silence is idle again.
+  const c = r.open({ outstanding: () => outstanding });
+  await c.auth(A);
+  outstanding = false;
+  r.at(IDLE_OUTSTANDING_MS + 1 + 90_001);
+  await r.hub.onWake();
+  assert.deepEqual(c.closed, [1001]);
+});
+
+test("progress for many sessions at once re-arms the hub's timer once", async () => {
+  const r = rig();
+  const sessions = [r.open(), r.open(), r.open()];
+  await sessions[0]!.auth(A);
+  await sessions[1]!.auth(B);
+  await sessions[2]!.auth(A);
+  r.at(10_000);
+  const before = r.armed.length;
+  r.hub.progressedAll(sessions.map((s) => s.conn));
+  assert.ok(r.armed.length - before <= 1, `${r.armed.length - before} re-arms`);
+  assert.equal(r.hub.session(sessions[2]!.conn)!.nextDeadline(), T0 + 10_000 + 90_001);
+});
+
+test("a msgId that is not well-formed UTF-16 (a lone surrogate) is refused unknown-type", async () => {
+  const r = rig();
+  const a = r.open();
+  await a.auth(A);
+  for (const msgId of ["a\uD800b", "\uDC00", "x\uD83D"]) {
+    await a.frame({ type: "send", id: "s1", to: B.kid, msgId, body: "AA", ttl: 60 });
+    assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.code], ["error", "unknown-type"], JSON.stringify(msgId));
+  }
+  await a.frame({ type: "send", id: "s2", to: B.kid, msgId: "\u{1F600}", body: "AA", ttl: 60 });
+  assert.equal(a.sent.at(-1)!.type, "accepted", "a well-formed pair is a msgId");
 });

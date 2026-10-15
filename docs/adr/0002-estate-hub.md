@@ -40,8 +40,9 @@ connections was a separate store reached by message:
    - at most `maxSessionsPerMachine` (default 8) admitted sessions per machine: the next is refused `rate-limited`, 1013;
      sessions restored after a hibernation wake count. The portable build frees the slot of a peer that vanished
      through its socket heartbeat, which terminates only a socket with nothing outstanding (no bytes in the process,
-     at most 4 KiB unconfirmed by a pong) after 3 quiet 10 s beats; a socket with bytes outstanding is left to the 90 s
-     idle close, where drains and write progress count as activity, so no reader that keeps reading is cut off. The
+     at most 4 KiB unconfirmed by a pong) after 3 quiet 10 s beats; a socket with bytes outstanding is left to the idle
+     close, where drains and the peer's write progress (never the relay's own pings) count as activity, with a 5 minute
+     limit while bytes are outstanding (90 s otherwise): a reader of about 5 KiB/s or faster keeps its session. The
      hosted build has no heartbeat (a timer per hibernatable socket would keep the object awake), so there a vanished
      peer holds its slot until the 90 s idle close; and since its socket reports no backlog, a flush there reads the
      mailbox 64 messages a page (`FLUSH_PAGE_UNPACED`; [sessions.md, Flow control](../protocol/sessions.md));

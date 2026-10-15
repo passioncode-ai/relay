@@ -46,6 +46,8 @@ export interface HubDeps {
    * refresh never spins the timer.
    */
   refresh?: { deadline(): number | undefined; run(now: Date): void | Promise<void> };
+  /** The idle limit while a session's transport has bytes outstanding (default IDLE_OUTSTANDING_MS, session.ts). */
+  idleOutstandingMs?: number;
   /** At most this many admitted sessions per machine (default DEFAULT_MAX_SESSIONS_PER_MACHINE); the next is refused 1013. */
   maxSessionsPerMachine?: number;
   log?: Log;
@@ -99,6 +101,7 @@ export class EstateHub<C = unknown> implements SessionHub {
     return {
       relay, now: this.deps.now, nonce: this.deps.nonce, sessionId: this.deps.sessionId, admission: () => this.admission(),
       ...(this.deps.mailbox ? { mailbox: this.deps.mailbox } : {}), hub: this, ...(this.deps.log ? { log: this.deps.log } : {}),
+      ...(this.deps.idleOutstandingMs !== undefined ? { idleOutstandingMs: this.deps.idleOutstandingMs } : {}),
     };
   }
 
@@ -236,8 +239,19 @@ export class EstateHub<C = unknown> implements SessionHub {
    * counts as activity for the idle close. Unlike `drained`, it does not resume a flush: the queue has not emptied.
    */
   progressed(conn: C): void {
-    this.#entries.get(conn)?.progressed();
-    this.#arm();
+    this.progressedAll([conn]);
+  }
+
+  /** `progressed` for many connections at once (a heartbeat's sweep), re-arming the timer once rather than per socket. */
+  progressedAll(conns: Iterable<C>): void {
+    let any = false;
+    for (const conn of conns) {
+      const session = this.#entries.get(conn);
+      if (!session) continue;
+      session.progressed();
+      any = true;
+    }
+    if (any) this.#arm();
   }
 
   /** A message was queued for `kid`: every session that machine holds delivers what waits for it. */
