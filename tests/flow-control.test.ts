@@ -275,6 +275,10 @@ test("round 6: a machine flooding pings it never reads while the relay stops: th
     // Pings with the longest id the relay echoes (128 code points, four-byte characters): each pong is about 550 bytes.
     // Sent in batches until the replies pile up past the cap, however much the kernel's buffers take first (Linux's
     // grow larger than macOS's); the stop begins the moment the overflow is logged, while its close is in flight.
+    // First about 9 MiB of mail to itself: deliveries fill the kernel's buffers in a few large writes (CI's Linux
+    // runners take up to ~10 MiB there, and pongs alone filled them too slowly under load: no overflow in 30 s).
+    const body = Buffer.alloc(760 * 1024, 7).toString("base64url");
+    for (let k = 0; k < 12; k += 1) a.ws.send(JSON.stringify({ v: 1, type: "send", id: `m${k}`, to: e.machine.kid, msgId: `self-${k}`, body, ttl: 600 }));
     const id = "\u{1F600}".repeat(120);
     let n = 0;
     const until = Date.now() + 30_000;
