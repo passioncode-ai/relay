@@ -12,7 +12,7 @@
 import { type Finding, type JsonObject, isObject } from "./findings.js";
 import { p256KeyRefusal } from "./p256.js";
 import { ENVELOPE_SUITE, MAX_ENVELOPE_LIFETIME_SECONDS } from "./secret-envelope.js";
-import { MAX_BODY_BYTES, MAX_MESSAGE_TTL_SECONDS, RELAY_ALG, RELAY_PROTOCOL } from "./relay.js";
+import { MAX_BODY_BYTES, MAX_MESSAGE_TTL_SECONDS, RELAY_ALG, RELAY_PROTOCOL, instant } from "./relay.js";
 
 const ends = (value: unknown, suffix: string) => typeof value === "string" && value.endsWith(suffix);
 
@@ -24,8 +24,9 @@ function envelope(value: JsonObject): Finding[] {
   if (!ends(h.sender, "#sig")) add("sender", "an envelope is signed by a signing key (#sig), never by a key-agreement key");
   if (h.alg !== RELAY_ALG) add("alg", "an envelope is signed with ES256, the only algorithm a relay participant uses (unsupported-alg)");
   if (JSON.stringify(h.suite) !== JSON.stringify(ENVELOPE_SUITE)) add("suite", "the only admitted suite is DHKEM(P-256, HKDF-SHA256) / HKDF-SHA256 / AES-128-GCM");
-  const iat = typeof h.iat === "string" ? Date.parse(h.iat) : Number.NaN;
-  const exp = typeof h.exp === "string" ? Date.parse(h.exp) : Number.NaN;
+  // Strict instants (DEC-0066): a day its month does not have is refused, never rolled forward into a valid life.
+  const iat = instant(h.iat) ?? Number.NaN;
+  const exp = instant(h.exp) ?? Number.NaN;
   if (!(exp > iat) || (exp - iat) / 1000 > MAX_ENVELOPE_LIFETIME_SECONDS) add("exp", "an envelope lives more than zero and at most 24 hours");
   if (typeof h.enc !== "string" || p256KeyRefusal(Buffer.from(h.enc, "base64url")) !== null) add("enc", "the encapsulated key is a valid uncompressed P-256 point");
   return out;

@@ -1,12 +1,12 @@
 // Store-and-forward (RLY-03, DEC-0047 item 5): the mailbox store, and two admitted machines exchanging a message through
 // sessions of one estate hub (src/core/hub.ts) over one store. Every frame the relay sends is valid against the contract's relay-frame schema.
 import assert from "node:assert/strict";
-import { generateKeyPairSync, sign } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { test } from "node:test";
-import { relayAuthSigningInput, type AdmissionResult } from "../src/contract/relay.ts";
+import { frameValid } from "./frame-schema.ts";
+import type { AdmissionResult } from "../src/contract/relay.ts";
+import { admittedSet, authFrame, machine, type TestMachine } from "./test-signer.ts";
 import { EstateHub } from "../src/core/hub.ts";
 import { MAILBOX_LIMIT, MemoryMailbox } from "../src/core/mailbox.ts";
 import { RelaySession } from "../src/core/session.ts";
@@ -22,10 +22,6 @@ const sqliteFile = () => { const d = mkdtempSync(path.join(tmpdir(), "relay-mail
 const stores: Array<[string, () => MailboxStore]> = [["memory", () => new MemoryMailbox()], ["sqlite", () => new SqliteMailbox(sqliteFile())]];
 
 const root = path.resolve(import.meta.dirname, "..");
-const require = createRequire(import.meta.url);
-const ajv = new (require("ajv/dist/2020").default)({ allErrors: true, strict: false });
-require("ajv-formats").default(ajv);
-const frameValid = ajv.compile(JSON.parse(readFileSync(path.join(root, "src/contract/schemas/relay-frame.schema.json"), "utf8")));
 
 const T0 = new Date("2026-10-12T12:00:00Z");
 
@@ -47,25 +43,18 @@ for (const [name, make] of stores) test(`${name}: the store numbers per mailbox,
   assert.deepEqual(await full.append("b#sig", "a#sig", "one-more", "AA", 60, T0), { full: true });
 });
 
-function machine(kid: string) {
-  const pair = generateKeyPairSync("ec", { namedCurve: "P-256" });
-  return { kid, privateKey: pair.privateKey, jwk: pair.publicKey.export({ format: "jwk" }) as Record<string, string> };
-}
 const A = machine("urn:fabric:machine:a#sig"), B = machine("urn:fabric:machine:b#sig");
-const admission = (): AdmissionResult => ({ ok: true, held: {}, revision: 1, set: new Map([[A.kid, A.jwk], [B.kid, B.jwk]]) as unknown as Map<string, Uint8Array> });
+const admission = (): AdmissionResult => admittedSet([A, B]);
 
 const NONCE = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
 let sessions = 0;
 const estateHub = (mailbox: MemoryMailbox) =>
   new EstateHub({ now: () => T0, nonce: () => NONCE, sessionId: () => `s-${++sessions}`, admission, mailbox });
 
-function connect(m: ReturnType<typeof machine>, hub: EstateHub, nonce = NONCE) {
+function connect(m: TestMachine, hub: EstateHub, nonce = NONCE) {
   const sent: Array<Record<string, any>> = [];
   const session = hub.connect({}, { send: (t) => sent.push(JSON.parse(t)), close: () => {} }, "https://relay.example")!;
-  const iat = T0.toISOString().replace(/\.\d{3}Z$/, "Z");
-  const fields = { relay: "https://relay.example", nonce, estate: "e", kid: m.kid, iat };
-  const sig = sign("sha256", Buffer.from(relayAuthSigningInput(fields)), { key: m.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
-  const auth = JSON.stringify({ v: 1, type: "auth", id: "a", protocol: "fabric-relay/0.1", alg: "ES256", ...fields, sig });
+  const auth = JSON.stringify(authFrame(m, { relay: "https://relay.example", nonce, at: T0, id: "a" }));
   return { session, sent, auth, frame: (f: Record<string, unknown>) => session.receive(JSON.stringify({ v: 1, ...f })) };
 }
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -110,17 +99,17 @@ test("a machine that connects later gets what waited for it; one that disconnect
   assert.equal(b.sent.filter((f) => f.type === "deliver").length, 1);
 });
 
-test("send is refused by name: a stranger recipient, a body over the limit, FAC-SEM-071's limits; nothing is queued", async () => {
+test("send is refused by name: a stranger recipient, a body over the limit, FAC-SEM-071's limits and the schema malformed; nothing is queued", async () => {
   const mailbox = new MemoryMailbox(), hub = estateHub(mailbox);
   const a = connect(A, hub);
   await a.session.receive(a.auth);
   const cases: Array<[Record<string, unknown>, string]> = [
     [{ to: "urn:fabric:machine:stranger#sig", msgId: "m", body: "AA", ttl: 60 }, "unknown-recipient"],
     [{ to: B.kid, msgId: "m", body: Buffer.alloc(783_361).toString("base64url"), ttl: 60 }, "too-large"],
-    [{ to: B.kid, msgId: "m", body: "AA", ttl: 0 }, "unknown-type"],
-    [{ to: B.kid, msgId: "m", body: "AA", ttl: 604_801 }, "unknown-type"],
-    [{ to: "urn:fabric:machine:b#kem", msgId: "m", body: "AA", ttl: 60 }, "unknown-type"],
-    [{ to: B.kid, body: "AA", ttl: 60 }, "unknown-type"],
+    [{ to: B.kid, msgId: "m", body: "AA", ttl: 0 }, "malformed"],
+    [{ to: B.kid, msgId: "m", body: "AA", ttl: 604_801 }, "malformed"],
+    [{ to: "urn:fabric:machine:b#kem", msgId: "m", body: "AA", ttl: 60 }, "malformed"],
+    [{ to: B.kid, body: "AA", ttl: 60 }, "malformed"],
   ];
   for (const [frame, code] of cases) {
     await a.frame({ type: "send", id: "s", ...frame });

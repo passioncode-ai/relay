@@ -1,7 +1,7 @@
 import { createHash, createPublicKey, verify as verifySignature, type KeyObject } from "node:crypto";
 import { rfc8785 } from "./canonical.js";
 import { isSmallOrderKey } from "./ed25519.js";
-import { type Finding, type JsonObject, isObject, jsonEqual } from "./findings.js";
+import { type Finding, type JsonObject, isObject, jsonEqual, show } from "./findings.js";
 import { secretArgument, secretValue } from "./secret-shape.js";
 
 // #region package-rules — docs: docs/specification/package.md#semantic-rules
@@ -163,7 +163,7 @@ const parsed = (bytes: Uint8Array | undefined): JsonObject | undefined => {
  */
 export function checkPackageFolder(pkg: JsonObject, files: ReadonlyMap<string, Uint8Array>): Array<{ problem: FolderProblem; path: string }> {
   const problems: Array<{ problem: FolderProblem; path: string }> = [];
-  const listed = new Map(list(pkg.files).map((entry) => [String(entry.path), entry.sha256] as const));
+  const listed = new Map(list(pkg.files).map((entry) => [show(entry.path), entry.sha256] as const));
   for (const [path, sha256] of listed) {
     const bytes = files.get(path);
     if (bytes === undefined) problems.push({ problem: "file-missing", path });
@@ -183,6 +183,9 @@ export function checkPackageFolder(pkg: JsonObject, files: ReadonlyMap<string, U
   return problems;
 }
 
+const mcpRequirements = (value: JsonObject): JsonObject[] =>
+  isObject(value.requires) && Array.isArray(value.requires.mcp) ? value.requires.mcp.filter(isObject) : [];
+
 /**
  * FAC-SEM-064: a package is whole — its digest is its own, each path is listed once and never `fabric.package.json`,
  * every file it names (the provider manifest, the service's entry, the evals suite, a vendored dependency) is listed,
@@ -200,7 +203,7 @@ function whole(value: JsonObject): Finding[] {
   }
   const sha = new Map<string, unknown>();
   list(value.files).forEach((entry, index) => {
-    const path = String(entry.path);
+    const path = show(entry.path);
     if (sha.has(path)) flag(`/files/${index}/path`, `${path} is listed twice`);
     if (path === PACKAGE_FILE) flag(`/files/${index}/path`, `${PACKAGE_FILE} carries the digest and is never listed in files[]`);
     sha.set(path, entry.sha256);
@@ -220,14 +223,16 @@ function whole(value: JsonObject): Finding[] {
   list(value.dependencies).forEach((dependency, index) => {
     if (!isString(dependency.path)) return;
     named(`/dependencies/${index}/path`, dependency.path, "the vendored dependency");
-    if (sha.has(dependency.path) && sha.get(dependency.path) !== dependency.sha256) flag(`/dependencies/${index}/sha256`, `the vendored ${String(dependency.name)} is not the file packed at ${dependency.path}`);
+    if (sha.has(dependency.path) && sha.get(dependency.path) !== dependency.sha256) flag(`/dependencies/${index}/sha256`, `the vendored ${show(dependency.name)} is not the file packed at ${dependency.path}`);
   });
   const paths = new Set<unknown>();
   list(value.state).forEach((entry, index) => {
-    if (paths.has(entry.path)) flag(`/state/${index}/path`, `state ${String(entry.path)} is declared twice`);
+    if (paths.has(entry.path)) flag(`/state/${index}/path`, `state ${show(entry.path)} is declared twice`);
     paths.add(entry.path);
   });
   if (value.kind === "skill-set" && !sha.has(PLUGIN_MANIFEST)) flag("/files", `a skill set is one Claude Code plugin folder and lists ${PLUGIN_MANIFEST}`);
+  // DEC-0071: a consumer agent is the plugin it is, so it lists the plugin manifest as a skill set does.
+  if (value.kind === "agent" && value.provider === undefined && mcpRequirements(value).length > 0 && !sha.has(PLUGIN_MANIFEST)) flag("/files", `a consumer agent is one Claude Code plugin folder and lists ${PLUGIN_MANIFEST}`);
   return findings;
 }
 
@@ -240,7 +245,7 @@ function noSecret(value: JsonObject): Finding[] {
   const flag = (instancePath: string, message: string) => findings.push({ code: "FAC-SEM-065", instancePath, message });
   const names = new Set<unknown>();
   list(value.secrets).forEach((slot, index) => {
-    if (names.has(slot.name)) flag(`/secrets/${index}/name`, `secret slot ${String(slot.name)} is declared twice`);
+    if (names.has(slot.name)) flag(`/secrets/${index}/name`, `secret slot ${show(slot.name)} is declared twice`);
     names.add(slot.name);
     // The message never repeats the value.
     for (const field of ["name", "purpose"] as const) {
@@ -248,6 +253,14 @@ function noSecret(value: JsonObject): Finding[] {
       if (isString(text) && secretValue(text)) flag(`/secrets/${index}/${field}`, "a secret slot is named, never filled: this looks like a credential");
     }
   });
+  // DEC-0071: a required MCP server is named by role and tools, never by a credential.
+  if (isObject(value.requires) && Array.isArray(value.requires.mcp)) {
+    value.requires.mcp.forEach((requirement: unknown, index: number) => {
+      if (!isObject(requirement)) return;
+      const texts: Array<[string, unknown]> = [["role", requirement.role], ["contract", requirement.contract], ...(Array.isArray(requirement.tools) ? requirement.tools.map((tool: unknown, t: number): [string, unknown] => [`tools/${t}`, tool]) : [])];
+      for (const [field, text] of texts) if (isString(text) && secretValue(text)) flag(`/requires/mcp/${index}/${field}`, "a required MCP server is named by role and tools, never by a credential");
+    });
+  }
   if (isObject(value.service) && Array.isArray(value.service.entry)) {
     value.service.entry.forEach((arg, index) => {
       if (isString(arg) && secretArgument(arg)) flag(`/service/entry/${index}`, "a launch argument never carries a credential: the secret reaches the service from its slot");
@@ -264,8 +277,59 @@ function agentRef(value: JsonObject): Finding[] {
   return [{ code: "FAC-SEM-066", instancePath: "/agentRef", message: `the agent is ${expected}: agentRef is derived from publisher and id` }];
 }
 
+/**
+ * FAC-SEM-102 (DEC-0071, DEC-0074): a package names each MCP role it requires once, so a placement maps one server to one
+ * role; each secret slot a role names is declared in `secrets[]`, and one slot feeds one role.
+ */
+function mcpRoles(value: JsonObject): Finding[] {
+  const seen = new Set<string>();
+  const declared = new Set(list(value.secrets).map((slot) => slot.name).filter(isString));
+  const feeds = new Map<string, string>();
+  const findings: Finding[] = [];
+  mcpRequirements(value).forEach((requirement, index) => {
+    if (!isString(requirement.role)) return;
+    if (seen.has(requirement.role)) findings.push({ code: "FAC-SEM-102", instancePath: `/requires/mcp/${index}/role`, message: `role ${requirement.role} is required twice: one role, one server` });
+    seen.add(requirement.role);
+    (Array.isArray(requirement.secrets) ? requirement.secrets : []).forEach((slot: unknown, s: number) => {
+      if (!isString(slot)) return;
+      const at = `/requires/mcp/${index}/secrets/${s}`;
+      if (!declared.has(slot)) findings.push({ code: "FAC-SEM-102", instancePath: at, message: `slot ${slot} is not declared in secrets[]` });
+      const other = feeds.get(slot);
+      if (other !== undefined && other !== requirement.role) findings.push({ code: "FAC-SEM-102", instancePath: at, message: `slot ${slot} already feeds role ${other}: one slot, one role` });
+      feeds.set(slot, other ?? (requirement.role as string));
+    });
+  });
+  return findings;
+}
+
+export type ConsumerPlacementProblem = { problem: "missing-role"; role: string } | { problem: "missing-tool"; role: string; tool: string };
+
+/**
+ * What a placement lacks for an agent's `requires.mcp` (DEC-0071): `configured` maps each role name the machine's
+ * configuration registers (in Claude Code's .mcp.json, the server key) to the tools that server exposes. Every required
+ * role must be registered and expose every tool it names; an empty answer means the placement can serve the agent.
+ */
+export function consumerPlacement(value: unknown, configured: ReadonlyMap<string, readonly string[]>): ConsumerPlacementProblem[] {
+  if (!isObject(value)) return [];
+  const problems: ConsumerPlacementProblem[] = [];
+  if (!(configured instanceof Map)) return mcpRequirements(value).filter((requirement) => isString(requirement.role)).map((requirement) => ({ problem: "missing-role" as const, role: requirement.role as string }));
+  for (const requirement of mcpRequirements(value)) {
+    if (!isString(requirement.role)) continue;
+    const registered = configured.get(requirement.role);
+    const tools = registered === undefined ? undefined : Array.isArray(registered) ? registered : [];
+    if (tools === undefined) {
+      problems.push({ problem: "missing-role", role: requirement.role });
+      continue;
+    }
+    for (const tool of Array.isArray(requirement.tools) ? requirement.tools : []) {
+      if (isString(tool) && !tools.includes(tool)) problems.push({ problem: "missing-tool", role: requirement.role, tool });
+    }
+  }
+  return problems;
+}
+
 export function packageRules(kind: string, value: JsonObject): Finding[] | undefined {
-  if (kind === "package") return [...whole(value), ...noSecret(value), ...agentRef(value)];
+  if (kind === "package") return [...whole(value), ...noSecret(value), ...agentRef(value), ...mcpRoles(value)];
   return undefined;
 }
 // #endregion package-rules

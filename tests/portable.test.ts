@@ -9,10 +9,10 @@ import { FsBlobStore, FsEstateSource } from "../src/portable/fs-store.ts";
 import { SqliteMailbox } from "../src/portable/sqlite-mailbox.ts";
 import { SqliteLastSeen } from "../src/portable/sqlite-last-seen.ts";
 import { mkdir } from "node:fs/promises";
-import { sign } from "node:crypto";
 import { relayAuthSigningInput } from "../src/contract/relay.ts";
 import { estate, revise } from "./estate-fixture.ts";
 import { serve } from "../src/portable/server.ts";
+import { signEs256 } from "../src/contract/p256.ts";
 
 const roots: string[] = [];
 after(async () => {
@@ -146,7 +146,7 @@ async function relayWithEstate(withEstate = true) {
 const authFrame = (e: ReturnType<typeof estate>, origin: string, nonce: string, kid = e.machine.kid, privateKey = e.machine.privateKey) => {
   const iat = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
   const fields = { relay: origin, nonce, estate: "estate-5d0f1a", kid, iat };
-  const sig = sign("sha256", Buffer.from(relayAuthSigningInput(fields)), { key: privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
+  const sig = signEs256(privateKey, relayAuthSigningInput(fields));
   return JSON.stringify({ v: 1, type: "auth", id: "a1", protocol: "fabric-relay/0.1", alg: "ES256", ...fields, sig });
 };
 
@@ -163,14 +163,14 @@ test("a machine of the verified estate record opens a session: hello, auth, welc
     assert.deepEqual([c.frames[1]!.type, c.frames[1]!.estateRevision], ["welcome", 1]);
     c.ws.send(JSON.stringify({ v: 1, type: "ping", id: "p1" }));
     await c.until(() => c.frames.length >= 3);
-    assert.deepEqual([c.frames[2]!.type, c.frames[2]!.id], ["pong", "p1"]);
+    assert.deepEqual([c.frames[2]!.type, c.frames[2]!.replyTo], ["pong", "p1"]);
     c.ws.close();
   } finally {
     await relay.stop({ graceMs: 100 });
   }
 });
 
-test("a machine the record does not list is refused 4403; with no estate at all, so is every machine", async () => {
+test("a machine the record does not list is refused unauthenticated, 4401; with no estate at all, so is every machine (DEC-0066: one answer)", async () => {
   for (const withEstate of [true, false]) {
     const relay = await relayWithEstate(withEstate);
     try {
@@ -178,8 +178,8 @@ test("a machine the record does not list is refused 4403; with no estate at all,
       await c.until(() => c.frames.length >= 1);
       c.ws.send(authFrame(relay.e, relay.origin, c.frames[0]!.nonce, withEstate ? "m-stranger#sig" : relay.e.machine.kid));
       await c.until(() => c.closed() !== undefined);
-      assert.equal(c.frames.at(-1)!.code, "not-admitted");
-      assert.equal(c.closed()!.code, 4403);
+      assert.equal(c.frames.at(-1)!.code, "unauthenticated");
+      assert.equal(c.closed()!.code, 4401);
     } finally {
       await relay.stop({ graceMs: 100 });
     }
@@ -254,8 +254,9 @@ test("through the portable relay a machine sees another come online and go offli
     await b.until(() => b.frames.some((f) => f.type === "presence" && f.state === "offline"));
     const offline = b.frames.find((f) => f.type === "presence" && f.state === "offline")!;
     b.ws.send(JSON.stringify({ v: 1, type: "presence-query", id: "q1", kids: [relay.e.machine.kid, "m-stranger#sig"] }));
-    await b.until(() => b.frames.filter((f) => f.type === "presence").length >= 3);
-    assert.deepEqual(b.frames.filter((f) => f.type === "presence").at(-1), { ...offline, id: b.frames.filter((f) => f.type === "presence").at(-1)!.id });
+    await b.until(() => b.frames.some((f) => f.type === "presence-result"));
+    const result = b.frames.find((f) => f.type === "presence-result")!;
+    assert.deepEqual([result.replyTo, result.presences, result.unknown], ["q1", [{ kid: offline.kid, state: offline.state, lastSeen: offline.lastSeen }], ["m-stranger#sig"]]);
     b.ws.close();
   } finally {
     await relay.stop({ graceMs: 100 });

@@ -19,6 +19,8 @@
 // http:// is allowed only on loopback literals — 127.0.0.0/8 and [::1] — never on the name "localhost", which resolves
 // where a literal cannot (fabric-agent-contract owner's answer to P9, 2026-10-12).
 
+import { isRelayOrigin } from "../contract/relay.ts";
+
 export type OriginRule =
   | { ok: true; localOnly: boolean; defaulted: boolean; at(boundPort: number): string }
   | { ok: false; reason: string };
@@ -136,6 +138,10 @@ export function relayOrigin(raw: string | undefined, host: string): OriginRule {
   if (url.search || raw.includes("?")) return { ok: false, reason: "RELAY_ORIGIN has a query; it must be a bare origin" };
   if (url.hash || raw.includes("#")) return { ok: false, reason: "RELAY_ORIGIN has a fragment; it must be a bare origin" };
   const origin = url.origin;
+  // Last, the contract's own rule for what `hello.relay` may be (DEC-0066, RELAY_ORIGIN_PATTERN): an origin that passes
+  // the checks above and that the contract would still refuse (a last label that is a number, a name over 253
+  // characters, an IPv6 address with leading zeros) refuses to start rather than greet with a relay no node accepts.
+  if (!isRelayOrigin(origin)) return { ok: false, reason: `RELAY_ORIGIN ${origin} is not an origin fabric-relay/0.1 accepts in hello.relay (DEC-0066)` };
   return { ok: true, localOnly: isLocalOnly(origin), defaulted: false, at: () => origin };
 }
 // #endregion portable-origin

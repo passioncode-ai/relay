@@ -31,9 +31,9 @@ test("a hibernation between frames: the session continues from its socket's atta
   await a.until(() => a.frames.some((f) => f.type === "pong"));
   a.ws.send(JSON.stringify({ v: 1, type: "teleport", id: "t1" }));
   await a.until(() => a.frames.some((f) => f.type === "error"));
-  // hello r1, welcome r2, the pong r3 (sent under the ping's id): the counter went on from the record, and the session
-  // is still admitted, not refused.
-  assert.deepEqual(a.frames.map((f) => [f.type, f.id]), [["hello", "r1"], ["welcome", "r2"], ["pong", "p1"], ["error", "r4"]]);
+  // hello r1, welcome r2, the pong r3 (answering p1): the counter went on from the record, and the session is still
+  // admitted, not refused.
+  assert.deepEqual(a.frames.map((f) => [f.type, f.id, f.replyTo]), [["hello", "r1", undefined], ["welcome", "r2", undefined], ["pong", "r3", "p1"], ["error", "r4", "t1"]]);
   assert.equal(a.frames.at(-1)!.code, "unknown-type");
   await hibernate();
   a.ws.send(auth(e.machine, a.frames[0]!.nonce));
@@ -108,8 +108,9 @@ test("an estate read that fails after a wake loses no event; presence is withhel
   const reader = await session(mf);
   await reader.until(() => reader.frames.length >= 1);
   b.ws.send(JSON.stringify({ v: 1, type: "presence-query", id: "q1", kids: [e.machine.kid] }));
-  await b.until(() => b.frames.some((f) => f.type === "presence" && f.kid === e.machine.kid && f.state === "offline"));
-  const answered = b.frames.filter((f) => f.type === "presence").at(-1)!;
+  await b.until(() => b.frames.some((f) => f.type === "presence-result"));
+  const answered = b.frames.find((f) => f.type === "presence-result")!.presences.find((p: Record<string, string>) => p.kid === e.machine.kid);
+  assert.equal(answered.state, "offline");
   assert.ok(Date.parse(answered.lastSeen) >= closedAt - 1000, `lastSeen ${answered.lastSeen} is the close`);
   for (const c of [b, reader]) c.ws.close(1000, "done");
   await remove();

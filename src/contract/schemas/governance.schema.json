@@ -26,6 +26,7 @@
         "principalKind": { "enum": ["agent", "session", "external"], "description": "DEC-0037: external is a person or organization outside the issuer's estate (a share grant)." },
         "audience": { "$ref": "common.schema.json#/$defs/agentId", "description": "DEC-0039: the callee agent this grant lets its principal call. A grant with an audience is a delegation grant: the hub mints delegation tokens only under one, and it then names capabilities, effectCeiling and principalKind." },
         "capabilities": { "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": { "$ref": "common.schema.json#/$defs/capabilityName" }, "description": "DEC-0039: the audience's capabilities (tool names) a token minted under this grant may name in its scope." },
+        "context": { "$ref": "common.schema.json#/$defs/contextId", "description": "DEC-0082: the context in which the grant's principal uses it; a share grant into an organization carries that organization's org:<orgId>. Absent: not stated. A grant with principalKind external is never personal (FAC-SEM-110). docs/specification/contexts.md." },
         "effectCeiling": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "common.schema.json#/$defs/effectClass" }, "description": "DEC-0039: the highest effects a token under this grant may carry; none (a read) and draft are allowed here, and every other member is one of effects (FAC-SEM-050)." },
         "spend": {
           "type": "object",

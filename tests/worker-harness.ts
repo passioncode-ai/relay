@@ -3,10 +3,11 @@
 // bindings are read from wrangler.jsonc, so a binding added there is in every test without editing this file.
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { sign as signBytes, type KeyObject } from "node:crypto";
+import type { KeyObject } from "node:crypto";
 import { Miniflare, type MiniflareOptions } from "miniflare";
 import { relayAuthSigningInput } from "../src/contract/relay.ts";
 import type { Estate } from "./estate-fixture.ts";
+import { signEs256 } from "../src/contract/p256.ts";
 
 export const SCRIPT = "dist/worker/worker.js";
 
@@ -85,7 +86,7 @@ export async function session(mf: Miniflare, relayOrigin = "http://relay.test") 
 export function authFrame(m: { kid: string; privateKey: KeyObject }, nonce: string, relay = "http://relay.test") {
   const iat = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
   const fields = { relay, nonce, estate: "estate-5d0f1a", kid: m.kid, iat };
-  const sig = signBytes("sha256", Buffer.from(relayAuthSigningInput(fields)), { key: m.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
+  const sig = signEs256(m.privateKey, relayAuthSigningInput(fields));
   return JSON.stringify({ v: 1, type: "auth", id: "a1", protocol: "fabric-relay/0.1", alg: "ES256", ...fields, sig });
 }
 

@@ -2,52 +2,41 @@
 // builds' forms, then sessions of the estate's machines seeing each other come and go, the query, the verified-set
 // filter, and the offline rule — a sender learns that its message was queued, and never that it was done.
 import assert from "node:assert/strict";
-import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
-import { relayAuthSigningInput, type AdmissionResult } from "../src/contract/relay.ts";
+import { frameValid } from "./frame-schema.ts";
+import type { AdmissionResult } from "../src/contract/relay.ts";
 import { EstateHub } from "../src/core/hub.ts";
 import { MemoryMailbox } from "../src/core/mailbox.ts";
 import { MemoryLastSeen, TOUCH_INTERVAL_SECONDS, type LastSeenStore } from "../src/core/presence.ts";
 import { SqliteLastSeen } from "../src/portable/sqlite-last-seen.ts";
+import { admittedSet, authFrame, machine, type TestMachine } from "./test-signer.ts";
 
 const dirs: string[] = [];
 after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
 const sqliteFile = () => { const d = mkdtempSync(path.join(tmpdir(), "relay-presence-")); dirs.push(d); return path.join(d, "data", "presence.sqlite"); };
 const stores: Array<[string, () => LastSeenStore]> = [["memory", () => new MemoryLastSeen()], ["sqlite", () => new SqliteLastSeen(sqliteFile())]];
 
-const require = createRequire(import.meta.url);
-const ajv = new (require("ajv/dist/2020").default)({ allErrors: true, strict: false });
-require("ajv-formats").default(ajv);
-const frameValid = ajv.compile(JSON.parse(readFileSync(path.resolve(import.meta.dirname, "../src/contract/schemas/relay-frame.schema.json"), "utf8")));
 
 const T0 = new Date("2026-10-12T12:00:00.000Z");
 const at = (seconds: number) => new Date(T0.getTime() + seconds * 1000);
 
-function machine(kid: string) {
-  const pair = generateKeyPairSync("ec", { namedCurve: "P-256" });
-  return { kid, privateKey: pair.privateKey, jwk: pair.publicKey.export({ format: "jwk" }) as Record<string, string> };
-}
 const A = machine("urn:fabric:machine:a#sig"), B = machine("urn:fabric:machine:b#sig"), C = machine("urn:fabric:machine:c#sig");
 
 function estateRelay(lastSeen: LastSeenStore = new MemoryLastSeen(), log?: (e: Record<string, unknown>) => void) {
   let now = T0;
   let admitted = [A, B, C];
-  const admission = (): AdmissionResult => ({ ok: true, held: {}, revision: 1, set: new Map(admitted.map((m) => [m.kid, m.jwk])) as unknown as Map<string, Uint8Array> });
+  const admission = (): AdmissionResult => admittedSet(admitted);
   const nonce = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
   let sessions = 0;
   const hub = new EstateHub<object>({ now: () => now, nonce: () => nonce, sessionId: () => `s${++sessions}`, admission, mailbox: new MemoryMailbox(), lastSeen, ...(log ? { log } : {}) });
-  const connect = async (m: ReturnType<typeof machine>) => {
+  const connect = async (m: TestMachine) => {
     const sent: Array<Record<string, any>> = [];
     const conn = {};
     const session = hub.connect(conn, { send: (t) => sent.push(JSON.parse(t)), close: () => {} }, "https://relay.example")!;
-    const iat = now.toISOString().replace(/\.\d{3}Z$/, "Z");
-    const fields = { relay: "https://relay.example", nonce, estate: "e", kid: m.kid, iat };
-    const sig = sign("sha256", Buffer.from(relayAuthSigningInput(fields)), { key: m.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
-    await hub.receive(conn, JSON.stringify({ v: 1, type: "auth", id: "a", protocol: "fabric-relay/0.1", alg: "ES256", ...fields, sig }));
+    await hub.receive(conn, JSON.stringify(authFrame(m, { relay: "https://relay.example", nonce, at: now })));
     assert.ok(sent.some((f) => f.type === "welcome"), JSON.stringify(sent.at(-1)));
     const frame = (f: Record<string, unknown>) => hub.receive(conn, JSON.stringify({ v: 1, ...f }));
     const presenceOf = () => sent.filter((f) => f.type === "presence").map((f) => [f.kid, f.state, f.lastSeen]);
@@ -107,18 +96,28 @@ test("a machine of the estate sees another come online and go offline, with when
   for (const c of [a1, a2, b]) for (const f of c.sent) assert.ok(frameValid(f), `${f.type}: ${JSON.stringify(frameValid.errors)}`);
 });
 
-test("presence-query answers each kid of the estate the relay has seen; a stranger and a machine never seen get nothing", async () => {
+test("presence-query is answered by one presence-result: every asked kid once, in presences when of the estate and seen, else in unknown", async () => {
   const r = estateRelay();
   const a = await r.connect(A);
   r.advance(3);
   const b = await r.connect(B);
   a.sent.length = 0;
-  await b.frame({ type: "presence-query", id: "q1", kids: [A.kid, "urn:fabric:machine:stranger#sig", C.kid, B.kid] });
-  assert.deepEqual(b.presenceOf(), [[A.kid, "online", T0.toISOString()], [B.kid, "online", at(3).toISOString()]]);
+  const pushed = b.presenceOf().length;
+  await b.frame({ type: "presence-query", id: "q1", kids: [A.kid, "urn:fabric:machine:stranger#sig", C.kid, B.kid, A.kid] });
+  const result = b.sent.at(-1)!;
+  assert.deepEqual({ ...result, id: "-" }, {
+    v: 1, id: "-", type: "presence-result", replyTo: "q1",
+    presences: [{ kid: A.kid, state: "online", lastSeen: T0.toISOString() }, { kid: B.kid, state: "online", lastSeen: at(3).toISOString() }],
+    // A kid outside the estate and a kid of the estate never seen are alike: nothing leaks across owners.
+    unknown: ["urn:fabric:machine:stranger#sig", C.kid],
+  });
+  assert.equal(b.presenceOf().length, pushed, "an answer is one presence-result, never pushed presence frames");
+  await b.frame({ type: "presence-query", id: "q0", kids: [] });
+  assert.deepEqual([b.sent.at(-1)!.type, b.sent.at(-1)!.presences, b.sent.at(-1)!.unknown], ["presence-result", [], []]);
   await b.frame({ type: "presence-query", id: "q2", kids: "everyone" });
-  assert.deepEqual([b.sent.at(-1)!.type, b.sent.at(-1)!.code, b.sent.at(-1)!.replyTo], ["error", "unknown-type", "q2"]);
+  assert.deepEqual([b.sent.at(-1)!.type, b.sent.at(-1)!.code, b.sent.at(-1)!.replyTo], ["error", "malformed", "q2"]);
   await b.frame({ type: "presence-query", id: "q3", kids: Array.from({ length: 257 }, (_, i) => `k${i}#sig`) });
-  assert.equal(b.sent.at(-1)!.code, "unknown-type");
+  assert.deepEqual([b.sent.at(-1)!.code, b.sent.at(-1)!.replyTo], ["malformed", "q3"]);
   await b.frame({ type: "presence", id: "p1", kid: A.kid, state: "offline", lastSeen: T0.toISOString() });
   assert.deepEqual([b.sent.at(-1)!.code, b.sent.at(-1)!.replyTo], ["unknown-type", "p1"]); // a node does not announce presence
   for (const f of b.sent) assert.ok(frameValid(f), `${f.type}: ${JSON.stringify(frameValid.errors)}`);
@@ -133,6 +132,7 @@ test("presence follows the verified set: a machine no longer admitted is neither
   assert.deepEqual(b.presenceOf(), [[A.kid, "online", T0.toISOString()]]); // the offline after revocation is not sent
   await b.frame({ type: "presence-query", id: "q", kids: [A.kid] });
   assert.equal(b.presenceOf().length, 1);
+  assert.deepEqual([b.sent.at(-1)!.presences, b.sent.at(-1)!.unknown], [[], [A.kid]], "a revoked machine is unknown");
 });
 
 test("lastSeen moves with a machine's frames, at most once per touch interval", async () => {
@@ -170,7 +170,7 @@ test("a lastSeen store that fails is logged and costs the machine nothing", asyn
   const a = await r.connect(A);
   r.advance(TOUCH_INTERVAL_SECONDS);
   await a.frame({ type: "ping", id: "p1" });
-  assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.id], ["pong", "p1"]);
+  assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.replyTo], ["pong", "p1"]);
   assert.ok(events.filter((e) => e.event === "presence-fault").every((e) => e.message === "store down"));
   assert.equal(events.filter((e) => e.event === "presence-fault").length, 2, "the admission and the frame each tried to write");
 });
