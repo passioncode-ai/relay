@@ -35,6 +35,20 @@ connections was a separate store reached by message:
      sessions; a refresh that fails (`refresh-fault`) or succeeds while still due (`refresh-stalled`) is retried no
      sooner than `REFRESH_RETRY_MS` later, so it never spins the timer;
    - mailbox wake-ups: `wake(kid)` flushes that machine's sessions, each flush single-flight with a "run again" flag;
+     a flush reads the mailbox a page at a time and stops while the transport says it is backlogged
+     (`SessionIo.backlogged`); `drained(conn)` resumes it and counts as activity for the idle close;
+   - at most `maxSessionsPerMachine` (default 8) admitted sessions per machine: the next is refused `rate-limited`, 1013;
+     sessions restored after a hibernation wake count. The portable build frees the slot of a peer that vanished
+     through its socket heartbeat, which terminates only a socket with nothing outstanding (no bytes in the process,
+     at most 4 KiB unconfirmed) after 3 quiet 10 s beats. One rule decides what counts: progress is only what the peer
+     confirms, a frame it sends or a pong matching one of the relay's sequenced pings; a write the relay makes (and a
+     drain, an unknown pong, a WebSocket ping from the peer) never is. A socket with bytes outstanding is left to the
+     idle close, 5 minutes while bytes are outstanding (90 s otherwise): a reader of about 9 to 10 KiB/s or faster (Linux defaults; the floor is
+     (`SEND_HIGH` + `MAX_FRAME_BYTES` + kernel buffers) / 5 min) keeps its
+     session, acks or not; a frozen peer is freed within the bound even while mail keeps arriving. The
+     hosted build has no heartbeat (a timer per hibernatable socket would keep the object awake), so there a vanished
+     peer holds its slot until the 90 s idle close; and since its socket reports no backlog, a flush there reads the
+     mailbox 64 messages a page (`FLUSH_PAGE_UNPACED`; [sessions.md, Flow control](../protocol/sessions.md));
    - `stop()`: closes every session through its own close (1001), writes `lastSeen`, announces nothing, and waits for
      the transports. A second call shares the first one's wait.
 2. **A session is a serializable `SessionRecord`** (`snapshot()`, `RelaySession.restore()`, `nextDeadline()`), handed

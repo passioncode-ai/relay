@@ -1,6 +1,6 @@
 # PassionCode Relay
 
-PassionCode Relay carries sessions, sealed secret envelopes and package blobs between machines. The machines can belong to one person or to an organization. The relay holds no authority and no plaintext: every machine proves itself with its own device key, and every secret is sealed to the machine that will open it. The relay sees only digests and ciphertext.
+PassionCode Relay carries sessions, sealed secret envelopes and package blobs between machines. The machines can belong to one person or to an organization. The relay holds no authority: every machine proves itself with its own device key, and every secret is sealed to the machine that will open it. It holds signed message bodies it can read but cannot forge, blobs by digest, and secrets only as sealed envelopes; a secret is never in plaintext at the relay.
 
 It ships as two builds of one runtime-neutral core:
 - **Hosted:** a Cloudflare Worker with Durable Objects and R2. PassionCode.ai runs it.
@@ -14,11 +14,12 @@ Its wire protocol belongs to [fabric-agent-contract](https://github.com/passionc
 
 **Configure.** The hosted build reads three bindings from [`wrangler.jsonc`](wrangler.jsonc): `ESTATE` (the estate hub), `MAILBOX` (one Durable Object per recipient) and `BLOBS` (an R2 bucket). One deployment serves one estate, one context per origin in this release, and its hub is one hibernating Durable Object ([ADR-0002](docs/adr/0002-estate-hub.md)). It needs no keys. Deployment values (account, routes) are not kept in this repository. The portable build reads four environment variables:
 - `RELAY_DATA_DIR` (required)
-- `RELAY_HOST` (default `127.0.0.1`)
-- `RELAY_PORT` (default `8787`)
-- `RELAY_ORIGIN` (the public origin machines sign; default `http://RELAY_HOST:RELAY_PORT`, local machines only)
+- `RELAY_HOST` (default `127.0.0.1`; a bare address, `::1` not `[::1]`: a bracketed one refuses to start)
+- `RELAY_PORT` (default `8787`; digits only, 0 to 65535. Anything else, or a listen that fails, refuses to start with exit 2)
+- `RELAY_MAX_SESSIONS_PER_MACHINE` (default `8`, 1 to 1000: how many sessions one machine may hold at once; the next is refused 1013. A peer that vanishes with nothing outstanding frees its slot within 30 to 40 s: the relay pings every socket each 10 s; one with bytes outstanding, and any in the hosted build, which has no heartbeat, at the 90 s idle close)
+- `RELAY_ORIGIN` (the public `https://` origin machines sign, normalised; a path, query, fragment or credentials refuse to start. `http://` only on a loopback literal, `127.0.0.0/8` or `[::1]`, never `localhost`, and only when `RELAY_HOST` is a loopback literal too. Unset, it is allowed only when `RELAY_HOST` is a loopback literal, and defaults to the canonical `http://RELAY_HOST:<bound port>` (`0:0:0:0:0:0:0:1` gives `http://[::1]:<port>`), local machines only)
 
-None of them is a secret. The estate the relay admits from (the pinned passkeys and the record's revisions) is kept
+None of them is a secret. Logs: one JSON object per line on stdout, `{at, service, runtime, event, …}`. The estate the relay admits from (the pinned passkeys and the record's revisions) is kept
 under `RELAY_DATA_DIR/estate/` in the portable build and under `estate/` in the R2 bucket in the hosted one.
 
 **MCP.** None: the relay is not an MCP server. Fabric's remote surfaces reach it as a client (Fabric ADR-0088). `GET /healthz` proves it is up; a session proves admission works.

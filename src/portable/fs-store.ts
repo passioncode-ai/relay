@@ -74,7 +74,17 @@ export class FsEstateSource implements EstateSource {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw error;
     }
-    return Promise.all(names.map(async (name) => JSON.parse(await readFile(join(this.#root, "revisions", name), "utf8")) as unknown));
+    // A file that does not parse is not thrown: it becomes an unreadable entry numbered by its name, which the contract
+    // refuses, so the revisions before it still hold and the refusal is reported (as the hosted R2EstateSource does).
+    return Promise.all(names.map(async (name) => {
+      const text = await readFile(join(this.#root, "revisions", name), "utf8");
+      try {
+        return JSON.parse(text) as unknown;
+      } catch {
+        const numbered = /^(\d+)\.json$/.exec(name);
+        return { revision: numbered ? Number(numbered[1]) : Number.MAX_SAFE_INTEGER, unreadable: `revisions/${name}` };
+      }
+    }));
   }
 }
 

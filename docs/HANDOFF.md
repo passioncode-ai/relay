@@ -1,34 +1,66 @@
 # Handoff
 
-**Where the work stands (2026-10-12, evening).**
-- **RLY-01 is done.** DEC-0047 is merged in fabric-agent-contract (#53, `8060254`).
-- **RLY-02 is done (relay#1).** A machine opens a `fabric-relay/0.1` session and is admitted only from
-  a verified estate record. Both builds do this; how is in [protocol/sessions.md](protocol/sessions.md).
-  - The contract's reference code is vendored at the pinned commit, and its vectors run here.
-  - `npm run check` is green: typecheck clean, 74 tests (after RLY-06).
-  - The Worker's tests run a whole session in workerd, for estate records signed by an EdDSA and by an ES256 passkey.
-- **Pin.** fabric-agent-contract `51719e4`, the merge of #61 (distinct blob recipients). Before it: `c00a0c3`, the merge of #59: the fix this work found (the contract's verifiers
-  threw in a Worker).
-- **RLY-03 and RLY-06 are done (relay#3, this change).** Store-and-forward messages, blob routes, and presence with
-  `lastSeen` run in both builds. In the Worker, presence lives in one Durable Object per estate, `PRESENCE`, under
-  migration `v3`.
-- **Sessions live in memory.** A Durable Object holds one connection; the portable build holds its sockets.
-  - Durable state starts with RLY-03 (mailboxes): SQLite in the Durable Object, files or SQLite in the portable
-    build.
-- Decision record: [ADR-0001](adr/0001-relay-repository.md).
+**Where the work stands (2026-10-12, release iteration 1, wave 1).**
+
+- **Done and merged on `main`:**
+  - RLY-01: DEC-0047 merged in fabric-agent-contract (#53, `8060254`).
+  - RLY-02: relay#1 `fa3d07f`.
+  - RLY-03: relay#3 `05072c9`.
+  - RLY-06: relay#5 `20bf599`.
+  - Backlog rows RLY-07 and RLY-08: relay#6 and #7.
+- **Pin.** fabric-agent-contract `51719e4`, the merge of #61. Re-pinning to the merge of the contract's iteration
+  pull request (N19) is wave 2's node RP.
+- **In review (wave 1 of release iteration 1):**
+  - relay#8: FB-0 (Worker split), F-1 (the serializable session record and the runtime-neutral estate hub) and F-2
+    (the Worker on one hibernating Durable Object per estate).
+  - The pull request stacked on it: F-4 (one normalised origin), F-3 (graceful stop), G-3 (`revise()`/`forge()`)
+    and G-1 (this truth pass).
+  - The plan, the inventory and the canvas are in Project Observatory
+    `docs/runs/2026-10-12-release-iteration-1/`.
+- **Durable state, both builds.**
+  - Mailboxes: one SQLite-backed Durable Object per recipient (hosted); `mailbox.sqlite` (portable).
+  - `lastSeen`: the estate hub's SQLite storage (hosted); `presence.sqlite` (portable).
+  - Sessions are records in their sockets' attachments (hosted) or in memory (portable). Who is online is derived,
+    never stored.
+- **Flow control** ([sessions.md, Flow control](protocol/sessions.md)): a session's flush reads the mailbox a page at
+  a time and, where the transport reports a backlog (portable), sends only while under 1 MiB is queued, going on at
+  each drain; the socket is always read; replies are capped at 3 MiB or 4096 frames per session, checked before each
+  write (`send-overflow`, 1008); ids and msgIds are held to 128 code points, so no frame exceeds 1 MiB; at most 8
+  sessions per machine (1013); the portable socket heartbeat (10 s, monotonic) terminates only a socket with nothing
+  outstanding that stopped answering (30 to 40 s); a socket with bytes outstanding is left to the idle close, 5 minutes
+  while bytes are outstanding (90 s otherwise). Progress is only what the peer confirms (a frame, or a pong matching
+  a heartbeat ping with a random payload); the relay answers WebSocket pings itself under the send caps. Floor: about
+  9 to 10 KiB/s on Linux defaults (about 7 KiB/s on macOS), acks not required; a slower reader is closed 1001 and keeps
+  its mail. The hosted build has no backlog signal (page of 64) and no
+  heartbeat (90 s idle close). Bound: 8 x 3 MiB queued per machine; `Served.flow().peakBuffered` shows it.
+- Decision records: [ADR-0001](adr/0001-relay-repository.md) (with Amendment 1) and [ADR-0002](adr/0002-estate-hub.md).
 
 **Decisions already taken:**
 - own repository;
 - AGPL-or-commercial;
 - Project Observatory owns the server code;
 - protocol in fabric-agent-contract DEC-0047, admission from DEC-0055's estate record;
-- the hosted relay is run by PassionCode.ai;
+- the hosted relay is run by PassionCode.ai; one hibernating estate hub per estate;
 - the self-hosted relay stays, as the portable build.
 
-**The exact next task.** RLY-04: the portable build as a single executable (Node single-executable application),
-with a reproducible-build check. RLY-03 (mailboxes and blobs) and RLY-06 (presence, `lastSeen`, the offline rule;
-[sessions](protocol/sessions.md#presence)) are done. Deltas and heartbeats wait for DEC-0054. RLY-05, the hosted
-deployment, waits on the Cloudflare account and route below.
+**The exact next task.** Wave 2 of release iteration 1, after relay#8 and its stacked pull request merge:
+- RP: re-pin the contract at N19's merge;
+- then, in the order of the iteration's `workgraph.json`:
+  - A-3 (`EstateCache`; it reuses `tests/estate-fixture.ts` `revise()`/`forge()`), A-6 (`/healthz` reports
+    admission), A-4 (revalidating open sessions through the hub), then A-5 and A-7;
+  - D-1, D-2;
+  - G-4.
+- RLY-07 (deltas and heartbeats) is unblocked and is wave 4 (H-1, H-2).
+- **Wave 2 backlog, from relay#10 review round 14: byte-based heartbeat markers.** Today a marker ping follows only a
+  frame of 64 KiB or more, no beat ping is sent while an earlier one is unwritten, `bufferedAmount` misses the kernel's
+  buffers, and markers stop at 64 awaiting pongs; round 14 measured gaps of 1.9 to 2.7 MiB between confirmable points
+  (its probes P2b, P2c and P3), hence a floor of about 9 to 10 KiB/s on Linux. Place a marker every 64 KiB written,
+  whatever the frame size, and allow markers past an unwritten ping; then re-measure the floor and restate it in
+  `docs/protocol/sessions.md` (Flow control).
 
-**Prerequisites nobody here can skip:** a Cloudflare account and route for the hosted deployment (RLY-05). Until
-then, the hosted build is tested locally only.
+**RLY-05, the hosted deployment, is agent work** (iteration nodes F-6, F-7, F-8):
+- scoped tokens are issued through Observatory's Cloudflare door into vault slots;
+- the release workflow is built behind the organization's release guard, and the agent deploys and tags.
+- **One conditional human gate:** if the door reports that R2 is not enabled on the account, enabling it asks for
+  billing details, and the operator does that. Until the first deploy, the hosted build is tested locally (workerd
+  through Miniflare).

@@ -29,6 +29,21 @@ import {
 /** What the transport gives a session: send a text frame, close with a code, and keep the session's record. */
 export interface SessionIo {
   send(text: string): void;
+  /**
+   * Whether the transport already holds as much as it should for this connection (the portable build: `ws`'s
+   * `bufferedAmount` at or past its high-water mark). While it does, a flush sends no more deliveries; the transport
+   * calls the hub's `drained(conn)` when it can take more, and the flush goes on from the mailbox. A transport without
+   * a backlog signal (the Worker's hibernatable socket has none) omits it, and a flush sends every page at once.
+   */
+  backlogged?(): boolean;
+  /**
+   * Whether the relay has bytes outstanding to this machine: queued in the process, or written and not yet confirmed
+   * read (the portable build: `bufferedAmount` > 0, or more than a few KiB unconfirmed by a pong). While it has, the
+   * idle close waits IDLE_OUTSTANDING_MS rather than 90 s: a slow reader in the middle of a large frame may show no
+   * activity for longer (Linux signals writability only once about a third of the send buffer is free). Omitted:
+   * never.
+   */
+  outstanding?(): boolean;
   close(code: number, reason: string): void;
   /** Called with the session's record after every change (the Worker: `serializeAttachment`); optional. */
   persist?(record: SessionRecord): void;
@@ -45,6 +60,8 @@ export interface SessionHub {
   left(session: RelaySession): void;
   /** A message was queued for `kid`. */
   queued(kid: string): void;
+  /** Whether `kid` may hold one more admitted session (the hub's `maxSessionsPerMachine`); absent means always. */
+  hasRoom?(kid: string): boolean;
   /** Presence (RLY-06), when the hub keeps `lastSeen`; without it presence frames are answered "not served yet". */
   presence?: {
     touch(kid: string, at: Date): void | Promise<void>;
@@ -83,21 +100,68 @@ export interface SessionEnv {
   /** The estate hub this session lives in: delivery wake-ups and presence. */
   hub?: SessionHub;
   log?: (event: Record<string, unknown>) => void;
+  /** The idle limit while bytes are outstanding (default IDLE_OUTSTANDING_MS). */
+  idleOutstandingMs?: number;
 }
+
+/**
+ * How long a session with bytes outstanding to its machine may show no activity before it is closed 1001: 5 minutes.
+ * The send caps bound what it holds meanwhile; a frozen peer is freed within this bound.
+ */
+export const IDLE_OUTSTANDING_MS = 5 * 60 * 1000;
 
 export type SessionState = "awaiting-auth" | "admitted" | "closed";
 
 /**
- * Until DEC-0054 defines the revocation delta, a relay has carried none: the head is sequence 0 over no bytes. It has
+ * Until RLY-07 carries DEC-0054's revocation delta, a relay has carried none: the head is sequence 0 over no bytes. It has
  * the check-in's `records.revocationDelta` shape, so a node can report it unchanged.
  */
 export const EMPTY_DELTA_HEAD = { sequence: 0, sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" } as const;
 
 const SERVED = ["hello", "auth", "welcome", "ping", "pong", "error"];
+/**
+ * How many mailbox entries a flush reads at a time. Where the transport reports a backlog (the portable build) a page
+ * is small, so a session holds little more than it can send: 4. Where it cannot (the Worker's hibernatable socket), a
+ * flush sends every page at once and each page is a call to the mailbox object, so a page is large: a 1000-message
+ * backlog is 16 calls, well inside a Worker's subrequest limit (F-8 revisits it with the hosted limits).
+ */
+export const FLUSH_PAGE = 4;
+export const FLUSH_PAGE_UNPACED = 64;
+/**
+ * The longest frame `id` and `msgId` (the relay-frame schema's maxLength, counted in code points as JSON Schema counts
+ * them): a longer one is refused and never echoed, so nothing the relay sends back is larger than a frame it would send
+ * itself, and no `deliver` can exceed MAX_FRAME_BYTES.
+ */
+export const MAX_ID_LENGTH = 128;
+/** A string's length in code points, as JSON Schema's maxLength counts it (an emoji is one, not two UTF-16 units). */
+const codePoints = (text: string) => { let n = 0; for (const _ of text) n += 1; return n; };
+const BASE64URL = /^[A-Za-z0-9_-]+$/;
+/** Close code for a session refused because its machine holds as many as it may: "try again later" (RFC 6455 §7.4.1). */
+export const CLOSE_TRY_AGAIN_LATER = 1013;
 const MAIL = ["send", "ack"];
 /** The most kids one `presence-query` may name, and the longest kid (the relay-frame schema's limits). */
 const MAX_QUERY_KIDS = 256;
 const MAX_KID_LENGTH = 256;
+/**
+ * Whether `text` takes more than `limit` bytes as UTF-8, counted without encoding it: a frame near 1 MiB is not copied
+ * just to be measured.
+ */
+function utf8Exceeds(text: string, limit: number): boolean {
+  if (text.length > limit) return true; // every UTF-16 unit is at least one byte
+  if (text.length * 3 <= limit) return false; // and at most three
+  let bytes = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const unit = text.charCodeAt(i);
+    if (unit < 0x80) bytes += 1;
+    else if (unit < 0x800) bytes += 2;
+    else if (unit >= 0xd800 && unit <= 0xdbff && i + 1 < text.length && (text.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+      bytes += 4;
+      i += 1;
+    } else bytes += 3;
+    if (bytes > limit) return true;
+  }
+  return false;
+}
 /** The decoded length of a base64url string, without decoding it (the core uses web-standard APIs only). */
 const base64urlLength = (text: string) => Math.floor(text.replace(/=+$/, "").length * 3 / 4);
 const isFrame = (value: unknown): value is { v: unknown; type: unknown; id: unknown } & Record<string, unknown> =>
@@ -166,12 +230,18 @@ export class RelaySession {
 
   /**
    * The first instant (epoch ms) at which `tick()` has something to do: past the 10 s auth deadline while awaiting
-   * `auth`, past 90 s of silence once admitted; undefined once closed.
+   * `auth`, past the idle limit once admitted (silence: no frame from the machine and nothing it confirmed, see
+   * `progressed`; 90 s, or IDLE_OUTSTANDING_MS while bytes are outstanding); undefined once closed.
    */
   nextDeadline(): number | undefined {
     if (this.state === "closed") return undefined;
     if (this.state === "awaiting-auth") return this.openedAt + AUTH_DEADLINE_SECONDS * 1000 + 1;
-    return this.lastFrameAt + IDLE_CLOSE_SECONDS * 1000 + 1;
+    return this.lastFrameAt + this.idleLimitMs() + 1;
+  }
+
+  /** 90 s of silence, or IDLE_OUTSTANDING_MS while the transport has bytes outstanding to the machine. */
+  private idleLimitMs(): number {
+    return this.io.outstanding?.() ? (this.env.idleOutstandingMs ?? IDLE_OUTSTANDING_MS) : IDLE_CLOSE_SECONDS * 1000;
   }
 
   /**
@@ -188,7 +258,7 @@ export class RelaySession {
     if (this.state === "closed") return;
     if (typeof data !== "string") return this.close(CLOSE_CODES.binary, "binary frames are not part of fabric-relay/0.1");
     this.lastFrameAt = this.env.now().getTime();
-    if (new TextEncoder().encode(data).byteLength > MAX_FRAME_BYTES) {
+    if (utf8Exceeds(data, MAX_FRAME_BYTES)) {
       this.error("too-large", `frames are at most ${MAX_FRAME_BYTES} bytes`);
       return this.close(CLOSE_CODES.tooLarge, "frame too large");
     }
@@ -198,7 +268,10 @@ export class RelaySession {
     } catch {
       frame = undefined;
     }
-    if (!isFrame(frame) || frame.v !== 1 || typeof frame.type !== "string" || typeof frame.id !== "string") {
+    // An id the relay would echo (a pong's id, an error's replyTo) is held to the schema's length, so a reply is never
+    // larger than a frame the relay itself would send.
+    if (!isFrame(frame) || frame.v !== 1 || typeof frame.type !== "string" || typeof frame.id !== "string"
+      || frame.id.length < 1 || codePoints(frame.id) > MAX_ID_LENGTH) {
       if (this.state === "awaiting-auth") return this.refuse("unauthenticated", "the first frame is a fabric-relay/0.1 auth frame");
       return this.error("unknown-type", "not a fabric-relay/0.1 frame");
     }
@@ -223,7 +296,11 @@ export class RelaySession {
     if (this.state === "awaiting-auth" && now - this.openedAt > AUTH_DEADLINE_SECONDS * 1000) {
       return this.refuse("unauthenticated", `no auth within ${AUTH_DEADLINE_SECONDS} s`);
     }
-    if (now - this.lastFrameAt > IDLE_CLOSE_SECONDS * 1000) this.close(CLOSE_CODES.idle, `silent for ${IDLE_CLOSE_SECONDS} s`);
+    const limit = this.idleLimitMs();
+    if (now - this.lastFrameAt > limit) {
+      this.env.log?.({ event: "idle-close", ...(this.kid ? { kid: this.kid } : {}), silentMs: now - this.lastFrameAt, limitMs: limit });
+      this.close(CLOSE_CODES.idle, `silent for ${Math.round(limit / 1000)} s`);
+    }
   }
 
   private async authenticate(frame: AuthFrame): Promise<void> {
@@ -238,6 +315,14 @@ export class RelaySession {
       return this.refuse(result.code, admission.ok || result.code !== "not-admitted" ? result.code : `no verified estate record (${admission.refusal})`);
     }
     if (!admission.ok) return this.refuse("not-admitted", `no verified estate record (${admission.refusal})`); // unreachable: admit found no key
+    if (this.env.hub?.hasRoom && !this.env.hub.hasRoom(result.kid)) {
+      try {
+        this.error("rate-limited", "this machine already holds as many relay sessions as it may; close one and try again");
+      } finally {
+        this.close(CLOSE_TRY_AGAIN_LATER, "too many sessions for this machine");
+      }
+      return;
+    }
     this.state = "admitted";
     this.kid = result.kid;
     this.revision = admission.revision;
@@ -304,6 +389,23 @@ export class RelaySession {
     if (findings.length > 0 || typeof frame.msgId !== "string" || typeof frame.to !== "string" || typeof frame.body !== "string") {
       return this.error("unknown-type", `not a valid send frame (FAC-SEM-071 at ${findings.map((f) => f.instancePath).join(", ") || "msgId/to/body"})`, id);
     }
+    // The schema's own limits on what the relay echoes or stores (relayRules checks FAC-SEM-071's, not these): a msgId
+    // of 1 to 128 characters, a recipient of 1 to 256, a body of base64url characters. Neither is ever echoed.
+    if (frame.msgId.length < 1 || codePoints(frame.msgId) > MAX_ID_LENGTH) {
+      return this.error("unknown-type", `not a valid send frame (msgId: 1 to ${MAX_ID_LENGTH} characters)`, id);
+    }
+    // A control character (NUL above all) does not survive every store: SQLite's text read-back ends at a NUL, so the
+    // deliver would name another msgId than the accepted did. Refused, never echoed.
+    // A lone surrogate is not text: stores collapse it (SQLite writes U+FFFD), so two msgIds that differ only there
+    // would be one dedup key and a second body silently dropped.
+    if (/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(frame.msgId)) {
+      return this.error("unknown-type", "not a valid send frame (msgId: not well-formed text)", id);
+    }
+    if (/[\u0000-\u001f\u007f]/.test(frame.msgId)) {
+      return this.error("unknown-type", "not a valid send frame (msgId: no control characters)", id);
+    }
+    if (frame.to.length < 1 || codePoints(frame.to) > 256) return this.error("unknown-type", "not a valid send frame (to: 1 to 256 characters)", id);
+    if (!BASE64URL.test(frame.body)) return this.error("unknown-type", "not a valid send frame (body: base64url characters only)", id);
     const admission = this.env.admission();
     if (!admission.ok || !admission.set.has(frame.to)) return this.error("unknown-recipient", "the recipient is not a machine this relay admits", id);
     const result = await this.env.mailbox!.append(frame.to, this.kid as string, frame.msgId, frame.body, frame.ttl as number, this.env.now());
@@ -343,15 +445,36 @@ export class RelaySession {
     return this.flushing;
   }
 
-  /** Every unacknowledged message this connection has not been sent yet, in seq order. */
+  /**
+   * Every unacknowledged message this connection has not been sent yet, in seq order, read from the mailbox one page
+   * (FLUSH_PAGE) at a time and sent only while the transport is not backlogged. What is not sent yet stays in the
+   * mailbox, durable, not in a socket buffer; the transport's `drained` wakes the session to go on.
+   */
   private async flush(): Promise<void> {
     if (this.state !== "admitted" || !this.env.mailbox) return;
-    const entries = await this.env.mailbox.pending(this.kid as string, this.env.now(), this.delivered);
-    for (const entry of entries) {
-      if (this.state !== "admitted" || entry.seq <= this.delivered) continue;
-      this.delivered = entry.seq;
-      this.send({ type: "deliver", from: entry.from, msgId: entry.msgId, seq: entry.seq, body: entry.body, sentAt: entry.sentAt });
+    for (;;) {
+      if (this.io.backlogged?.()) return;
+      const page = this.io.backlogged ? FLUSH_PAGE : FLUSH_PAGE_UNPACED;
+      const entries = await this.env.mailbox.pending(this.kid as string, this.env.now(), this.delivered, page);
+      for (const entry of entries) {
+        if (this.state !== "admitted") return;
+        if (entry.seq <= this.delivered) continue;
+        if (this.io.backlogged?.()) return;
+        this.delivered = entry.seq;
+        this.send({ type: "deliver", from: entry.from, msgId: entry.msgId, seq: entry.seq, body: entry.body, sentAt: entry.sentAt });
+      }
+      if (entries.length < page) return;
     }
+  }
+
+  /**
+   * The machine confirmed it read more of what the relay sent (the portable build: a pong matching one of the relay's
+   * pings): activity for the idle close, the same as a frame from it. A write the relay makes is never activity.
+   */
+  progressed(): void {
+    if (this.state !== "admitted") return;
+    this.lastFrameAt = this.env.now().getTime();
+    this.changed();
   }
 
   /** An error frame and, for an authentication failure, the close DEC-0047 item 3 names. */

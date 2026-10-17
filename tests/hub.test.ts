@@ -7,11 +7,11 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { test } from "node:test";
-import { relayAuthSigningInput, type AdmissionResult } from "../src/contract/relay.ts";
+import { MAX_BODY_BYTES, MAX_FRAME_BYTES, relayAuthSigningInput, type AdmissionResult } from "../src/contract/relay.ts";
 import { EstateHub, REFRESH_RETRY_MS, type HubDeps } from "../src/core/hub.ts";
 import { MemoryMailbox, type MailboxStore } from "../src/core/mailbox.ts";
 import { MemoryLastSeen } from "../src/core/presence.ts";
-import type { SessionIo } from "../src/core/session.ts";
+import { IDLE_OUTSTANDING_MS, type SessionIo } from "../src/core/session.ts";
 
 const require = createRequire(import.meta.url);
 const ajv = new (require("ajv/dist/2020").default)({ allErrors: true, strict: false });
@@ -29,7 +29,7 @@ function machine(kid: string) {
 const A = machine("urn:fabric:machine:a#sig"), B = machine("urn:fabric:machine:b#sig");
 const admission = (): AdmissionResult => ({ ok: true, held: {}, revision: 1, set: new Map([[A.kid, A.jwk], [B.kid, B.jwk]]) as unknown as Map<string, Uint8Array> });
 
-function rig(options: { mailbox?: MailboxStore; refresh?: HubDeps["refresh"] } = {}) {
+function rig(options: { mailbox?: MailboxStore; refresh?: HubDeps["refresh"]; maxSessionsPerMachine?: number } = {}) {
   let now = T0;
   const armed: Array<number | undefined> = [];
   const log: Array<Record<string, unknown>> = [];
@@ -39,8 +39,9 @@ function rig(options: { mailbox?: MailboxStore; refresh?: HubDeps["refresh"] } =
     now: () => new Date(now), nonce: () => NONCE, sessionId: () => `s${++ids}`, admission, lastSeen,
     mailbox: options.mailbox ?? new MemoryMailbox(), arm: (at) => armed.push(at), log: (e) => log.push(e),
     ...(options.refresh ? { refresh: options.refresh } : {}),
+    ...(options.maxSessionsPerMachine ? { maxSessionsPerMachine: options.maxSessionsPerMachine } : {}),
   });
-  const open = () => {
+  const open = (transport: { backlogged?: () => boolean; outstanding?: () => boolean } = {}) => {
     const conn = {};
     const sent: Array<Record<string, any>> = [];
     const closed: number[] = [];
@@ -51,6 +52,8 @@ function rig(options: { mailbox?: MailboxStore; refresh?: HubDeps["refresh"] } =
         sent.push(JSON.parse(t));
       },
       close: (code) => closed.push(code),
+      ...(transport.backlogged ? { backlogged: transport.backlogged } : {}),
+      ...(transport.outstanding ? { outstanding: transport.outstanding } : {}),
     };
     hub.connect(conn, io, ORIGIN);
     const frame = (f: Record<string, unknown>) => hub.receive(conn, JSON.stringify({ v: 1, ...f }));
@@ -367,4 +370,255 @@ test("an admission refresh that succeeds without moving its deadline backs off i
   moving.at(20_000);
   await moving.hub.onWake();
   assert.equal(moving.hub.nextWake(), T0 + 80_000);
+});
+
+// Round 6: delivery is paced by the transport, outbound progress is liveness, and one machine holds a bounded number of
+// sessions.
+
+test("a flush stops while the transport is backlogged and goes on when it drains: every message once, in order", async () => {
+  const mailbox = new MemoryMailbox();
+  for (let n = 1; n <= 5; n += 1) await mailbox.append(A.kid, B.kid, `m-${n}`, "AA", 60, new Date(T0));
+  const r = rig({ mailbox });
+  let released = false;
+  const delivered = () => a.sent.filter((f) => f.type === "deliver").map((f) => f.msgId);
+  // The transport is full once two deliveries are queued in it, until it drains.
+  const a = r.open({ backlogged: () => !released && delivered().length >= 2 });
+  await a.auth(A);
+  await r.settle();
+  assert.deepEqual(delivered(), ["m-1", "m-2"], "nothing more while the transport is backlogged");
+  released = true;
+  await r.hub.drained(a.conn);
+  await r.settle();
+  assert.deepEqual(delivered(), ["m-1", "m-2", "m-3", "m-4", "m-5"]);
+});
+
+test("a flush pages the mailbox: it never asks for more than one page at a time", async () => {
+  const inner = new MemoryMailbox();
+  for (let n = 1; n <= 40; n += 1) await inner.append(A.kid, B.kid, `m-${n}`, "AA", 60, new Date(T0));
+  const limits: Array<number | undefined> = [];
+  const mailbox: MailboxStore = {
+    append: (...args) => inner.append(...args),
+    ack: (...args) => inner.ack(...args),
+    pending: (to, now, after, limit) => { limits.push(limit); return inner.pending(to, now, after, limit); },
+  };
+  const r = rig({ mailbox });
+  const a = r.open({ backlogged: () => false }); // a transport that reports its backlog: the small page
+  await a.auth(A);
+  await r.settle();
+  assert.equal(a.sent.filter((f) => f.type === "deliver").length, 40);
+  assert.ok(limits.length >= 2 && limits.every((l) => l !== undefined && l <= 4), JSON.stringify(limits));
+});
+
+test("only what the machine confirms is activity: a drain resumes delivery but keeps no session open; progressed does", async () => {
+  const r = rig();
+  const drained = r.open({ backlogged: () => true });
+  const confirmed = r.open({ backlogged: () => true });
+  await drained.auth(A);
+  await confirmed.auth(B);
+  r.at(80_000);
+  await r.hub.drained(drained.conn); // the kernel took the relay's writes: not the peer confirming anything
+  r.hub.progressed(confirmed.conn); // a pong matching one of the relay's pings: the peer read more
+  r.at(90_001);
+  await r.hub.onWake();
+  assert.deepEqual([drained.closed, confirmed.closed], [[1001], []]);
+  assert.equal(r.hub.session(confirmed.conn)!.nextDeadline(), T0 + 80_000 + 90_001);
+});
+
+test("one machine holds at most maxSessionsPerMachine sessions: the next is refused rate-limited and closed 1013", async () => {
+  const r = rig({ maxSessionsPerMachine: 2 });
+  const a1 = r.open(), a2 = r.open(), a3 = r.open(), b = r.open();
+  await a1.auth(A);
+  await a2.auth(A);
+  const iat = new Date(T0).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const fields = { relay: ORIGIN, nonce: NONCE, estate: "e", kid: A.kid, iat };
+  const sig = sign("sha256", Buffer.from(relayAuthSigningInput(fields)), { key: A.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
+  await r.hub.receive(a3.conn, JSON.stringify({ v: 1, type: "auth", id: "a", protocol: "fabric-relay/0.1", alg: "ES256", ...fields, sig }));
+  assert.deepEqual([a3.sent.at(-1)!.type, a3.sent.at(-1)!.code, a3.closed], ["error", "rate-limited", [1013]]);
+  assert.ok(r.log.some((e) => e.event === "session-limit" && e.kid === A.kid && e.limit === 2));
+  await b.auth(B); // another machine is not counted against A
+  a1.gone();
+  const a4 = r.open();
+  await a4.auth(A); // room again
+  for (const f of a3.sent) assert.ok(frameValid(f), `${f.type}: ${JSON.stringify(frameValid.errors)}`);
+});
+
+// Round 7: an id the relay would echo is held to the schema's 128 characters, and the flush page fits the transport.
+
+test("an id over 128 characters is refused like any frame that is not fabric-relay/0.1, and is never echoed", async () => {
+  const r = rig();
+  const a = r.open();
+  await a.auth(A);
+  const long = "i".repeat(129);
+  for (const frame of [{ type: "ping", id: long }, { type: "send", id: long, to: B.kid, msgId: "m-1", body: "AA", ttl: 60 }, { type: "presence-query", id: long, kids: [B.kid] }, { type: "nope", id: long }, { type: "ping", id: "" }]) {
+    const before = a.sent.length;
+    await a.frame(frame);
+    const replies = a.sent.slice(before);
+    assert.deepEqual(replies.map((f) => [f.type, f.code, f.replyTo]), [["error", "unknown-type", undefined]], JSON.stringify(frame).slice(0, 80));
+    assert.ok(!JSON.stringify(replies).includes(long), "the long id is not echoed");
+  }
+  assert.deepEqual(a.closed, [], "the session stays open, as for any frame that is not fabric-relay/0.1");
+  await a.frame({ type: "ping", id: "i".repeat(128) });
+  assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.id.length], ["pong", 128], "128 characters is still an id");
+  // Before auth, an over-long id is a first frame that is not an auth frame: refused unauthenticated, 4401.
+  const b = r.open();
+  await b.frame({ type: "auth", id: long });
+  assert.deepEqual([b.sent.at(-1)!.code, b.closed], ["unauthenticated", [4401]]);
+  assert.ok(!JSON.stringify(b.sent).includes(long));
+  for (const f of [...a.sent, ...b.sent]) assert.ok(frameValid(f), `${f.type}: ${JSON.stringify(frameValid.errors)}`);
+});
+
+test("the flush page fits the transport: 4 where it reports a backlog, 64 where it cannot (the Worker)", async () => {
+  for (const [backlog, page] of [[true, 4], [false, 64]] as const) {
+    const inner = new MemoryMailbox();
+    for (let n = 1; n <= 70; n += 1) await inner.append(A.kid, B.kid, `m-${n}`, "AA", 60, new Date(T0));
+    const limits: Array<number | undefined> = [];
+    const mailbox: MailboxStore = {
+      append: (...args) => inner.append(...args),
+      ack: (...args) => inner.ack(...args),
+      pending: (to, now, after, limit) => { limits.push(limit); return inner.pending(to, now, after, limit); },
+    };
+    const r = rig({ mailbox });
+    const a = r.open(backlog ? { backlogged: () => false } : {});
+    await a.auth(A);
+    await r.settle();
+    assert.equal(a.sent.filter((f) => f.type === "deliver").length, 70);
+    assert.ok(limits.every((l) => l === page), `${backlog}: ${JSON.stringify(limits)}`);
+    assert.equal(limits.length, Math.ceil(70 / page) + (70 % page === 0 ? 1 : 0), `${backlog}: ${limits.length} mailbox calls`);
+  }
+});
+
+// Round 8: msgId and body held to the schema, ids counted in code points, and no relay frame larger than a frame.
+
+test("a send whose msgId is empty or over 128 code points, or whose body is not base64url, is refused unknown-type and never echoed", async () => {
+  const r = rig();
+  const a = r.open();
+  await a.auth(A);
+  const long = "m".repeat(129);
+  for (const frame of [
+    { type: "send", id: "s1", to: B.kid, msgId: long, body: "AA", ttl: 60 },
+    { type: "send", id: "s2", to: B.kid, msgId: "", body: "AA", ttl: 60 },
+    { type: "send", id: "s3", to: B.kid, msgId: "m-3", body: "not base64url!", ttl: 60 },
+  ]) {
+    const before = a.sent.length;
+    await a.frame(frame);
+    const replies = a.sent.slice(before);
+    assert.deepEqual(replies.map((f) => [f.type, f.code, f.replyTo]), [["error", "unknown-type", frame.id]], JSON.stringify(frame).slice(0, 80));
+    assert.ok(!JSON.stringify(replies).includes(long), "the long msgId is not echoed");
+  }
+  // 128 code points of a four-byte character is a valid msgId (and id): JSON Schema counts code points, not UTF-16 units.
+  const emoji = "\u{1F600}".repeat(128);
+  await a.frame({ type: "send", id: "\u{1F600}".repeat(100), to: B.kid, msgId: emoji, body: "AA", ttl: 60 });
+  assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.msgId], ["accepted", emoji]);
+  for (const f of a.sent) assert.ok(frameValid(f), `${f.type}: ${JSON.stringify(frameValid.errors)}`);
+});
+
+test("no frame the relay sends exceeds MAX_FRAME_BYTES: the largest send it accepts is delivered in one frame of at most 1 MiB", async () => {
+  const r = rig();
+  const a = r.open(), b = r.open();
+  await a.auth(A);
+  await b.auth(B);
+  const bytes = (f: Record<string, unknown>) => Buffer.byteLength(JSON.stringify(f));
+  // A send frame filled to the frame limit with its msgId: refused (msgId over 128), so its deliver, which carries more
+  // than the send did, can never pass the limit.
+  const body = "A".repeat(1000);
+  const shell = { v: 1, type: "send", id: "big", to: B.kid, msgId: "", body, ttl: 60 };
+  const msgId = "m".repeat(MAX_FRAME_BYTES - Buffer.byteLength(JSON.stringify(shell)) - 8);
+  await a.frame({ type: "send", id: "big", to: B.kid, msgId, body, ttl: 60 });
+  assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.code], ["error", "unknown-type"]);
+  // The largest send the relay accepts: the largest body and a 128-code-point msgId of four-byte characters.
+  const maxBody = "A".repeat(Math.floor((MAX_BODY_BYTES * 4) / 3));
+  await a.frame({ type: "send", id: "max", to: B.kid, msgId: "\u{1F600}".repeat(128), body: maxBody, ttl: 60 });
+  assert.equal(a.sent.at(-1)!.type, "accepted", JSON.stringify(a.sent.at(-1)).slice(0, 200));
+  await r.settle();
+  const deliver = b.sent.find((f) => f.type === "deliver" && f.body === maxBody)!;
+  assert.ok(deliver, "delivered");
+  assert.ok(bytes(deliver) <= MAX_FRAME_BYTES, `deliver is ${bytes(deliver)} bytes`);
+  for (const f of [...a.sent, ...b.sent]) assert.ok(bytes(f) <= MAX_FRAME_BYTES, `${f.type} is ${bytes(f)} bytes`);
+});
+
+test("a send whose recipient is over 256 code points is refused unknown-type and never echoed", async () => {
+  const r = rig();
+  const a = r.open();
+  await a.auth(A);
+  // A machine's #sig key id, so FAC-SEM-071's own rule passes and only the length is wrong; the schema allows 256.
+  const long = "k".repeat(253) + "#sig";
+  for (const to of [long, "\u{1F600}".repeat(253) + "#sig"]) {
+    const before = a.sent.length;
+    await a.frame({ type: "send", id: "s1", to, msgId: "m-1", body: "AA", ttl: 60 });
+    const replies = a.sent.slice(before);
+    assert.deepEqual(replies.map((f) => [f.type, f.code]), [["error", "unknown-type"]], `to of ${to.length}`);
+    assert.ok(!JSON.stringify(replies).includes(long), "the long recipient is not echoed");
+  }
+  // 256 code points (four-byte characters included) is a valid recipient: it is refused only as one the relay does not admit.
+  await a.frame({ type: "send", id: "s2", to: "\u{1F600}".repeat(252) + "#sig", msgId: "m-2", body: "AA", ttl: 60 });
+  assert.equal(a.sent.at(-1)!.code, "unknown-recipient");
+});
+
+test("a send whose msgId holds a control character (NUL) is refused unknown-type: no store truncates what accepted named", async () => {
+  const r = rig();
+  const a = r.open();
+  await a.auth(A);
+  for (const msgId of ["a\u0000b", "a\nb", "a\u007fb"]) {
+    await a.frame({ type: "send", id: "s1", to: B.kid, msgId, body: "AA", ttl: 60 });
+    assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.code], ["error", "unknown-type"], JSON.stringify(msgId));
+  }
+});
+
+// Round 12.
+
+test("a session with bytes outstanding to its machine is idle-closed after IDLE_OUTSTANDING_MS (5 min), not 90 s", async () => {
+  const r = rig();
+  let outstanding = true;
+  const a = r.open({ outstanding: () => outstanding });
+  const b = r.open();
+  await a.auth(A);
+  await b.auth(B);
+  assert.equal(r.hub.session(a.conn)!.nextDeadline(), T0 + IDLE_OUTSTANDING_MS + 1);
+  r.at(90_001);
+  await r.hub.onWake();
+  assert.deepEqual([a.closed, b.closed], [[], [1001]], "outstanding bytes: not idle yet; nothing outstanding: idle at 90 s");
+  r.at(IDLE_OUTSTANDING_MS + 1);
+  await r.hub.onWake();
+  assert.deepEqual(a.closed, [1001], "a frozen peer is still freed within the bound");
+  // Once nothing is outstanding, 90 s of silence is idle again.
+  const c = r.open({ outstanding: () => outstanding });
+  await c.auth(A);
+  outstanding = false;
+  r.at(IDLE_OUTSTANDING_MS + 1 + 90_001);
+  await r.hub.onWake();
+  assert.deepEqual(c.closed, [1001]);
+});
+
+test("progressedAll re-arms the hub's timer exactly once for many sessions, and not at all for none or unknown ones", async () => {
+  const r = rig();
+  const [a, b, c] = [r.open(), r.open(), r.open()];
+  // Admitted at 0, 10 and 20 s: each one progressed in turn moves the earliest deadline, so arming per session would
+  // arm three times.
+  await a.auth(A);
+  r.at(10_000);
+  await b.auth(B);
+  r.at(20_000);
+  await c.auth(A);
+  assert.equal(r.armed.at(-1), T0 + 90_001);
+  r.at(30_000);
+  const before = r.armed.length;
+  r.hub.progressedAll([a.conn, b.conn, c.conn]);
+  assert.equal(r.armed.length - before, 1, `${r.armed.length - before} arms`);
+  assert.equal(r.armed.at(-1), T0 + 30_000 + 90_001, "armed at the new earliest deadline");
+  const after = r.armed.length;
+  r.hub.progressedAll([]);
+  r.hub.progressedAll([{}, {}]);
+  assert.equal(r.armed.length, after, "nothing progressed: no arm");
+});
+
+test("a msgId that is not well-formed UTF-16 (a lone surrogate) is refused unknown-type", async () => {
+  const r = rig();
+  const a = r.open();
+  await a.auth(A);
+  for (const msgId of ["a\uD800b", "\uDC00", "x\uD83D"]) {
+    await a.frame({ type: "send", id: "s1", to: B.kid, msgId, body: "AA", ttl: 60 });
+    assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.code], ["error", "unknown-type"], JSON.stringify(msgId));
+  }
+  await a.frame({ type: "send", id: "s2", to: B.kid, msgId: "\u{1F600}", body: "AA", ttl: 60 });
+  assert.equal(a.sent.at(-1)!.type, "accepted", "a well-formed pair is a msgId");
 });

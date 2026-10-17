@@ -39,7 +39,7 @@
 
    No client depends on this server's code. Until DEC-0047 is accepted, the relay refuses every session
    (`protocol-not-ready`): an endpoint that accepted connections before machines could prove themselves would be
-   an open relay.
+   an open relay. *(Superseded: DEC-0047 was accepted on 2026-10-12; see [Amendment 1](#amendment-1-2026-10-12).)*
 4. **Owners:**
    - Project Observatory owns the server code: its node is a relay client that opens envelopes into its vault.
    - Fabric owns its remote surfaces' client side (ADR-0088).
@@ -52,8 +52,8 @@ every request through it and add no route of their own:
 
 | Build | Where | Sessions | Blobs |
 |---|---|---|---|
-| Hosted (`src/cloudflare/`) | Cloudflare Worker, run by PassionCode.ai | Durable Objects (SQLite) | R2 |
-| Portable (`src/portable/`) | one Node server, for self-hosting | (with DEC-0047) | files under `RELAY_DATA_DIR`, owner-only |
+| Hosted (`src/cloudflare/`) | Cloudflare Worker, run by PassionCode.ai | Durable Objects (SQLite) *(amended: one hibernating Durable Object per estate, the estate hub; [ADR-0002](0002-estate-hub.md))* | R2 |
+| Portable (`src/portable/`) | one Node server, for self-hosting | (with DEC-0047) *(amended: in memory; mailboxes and `lastSeen` in SQLite)* | files under `RELAY_DATA_DIR`, owner-only |
 
 Packaging the portable build as a single executable is a backlog item (RLY-04).
 
@@ -62,7 +62,8 @@ Packaging the portable build as a single executable is a backlog item (RLY-04).
 - It holds sessions, sealed envelopes and package blobs, the last two by the SHA-256 digest of their bytes.
 - It recomputes the digest of every blob on write and on read. It refuses bytes that do not match their name, so a
   corrupted file or an edited bucket is refused, never served.
-- It never holds plaintext content at rest.
+- It never holds plaintext content at rest. *(Superseded by [Amendment 1](#amendment-1-2026-10-12): message bodies
+  are stored as sent.)*
 - It makes no trust decision and serves no signing page.
 
 ### The security model DEC-0047 pins
@@ -80,7 +81,8 @@ Packaging the portable build as a single executable is a backlog item (RLY-04).
   refuses the tokens that delta governs. The relay can delay revocation but cannot forge it.
 - **The contract owner's review conditions:**
   - everything signed or hashed uses RFC 8785 canonical form;
-  - every Ed25519 key passes the small-order check, the envelope's target device keys included;
+  - every Ed25519 key passes the small-order check, the envelope's target device keys included *(amended: every relay
+    participant signs ES256; the small-order rule covers the Ed25519 keys elsewhere in the contract)*;
   - the revocation delta ships vectors.
 
 ## Consequences
@@ -88,5 +90,20 @@ Packaging the portable build as a single executable is a backlog item (RLY-04).
 - The org-index `repositories.json` gains a `relay` row. The roadmap's RM-21 names this repository.
 - Fabric amends ADR-0088 to say where the relay lives: server `passioncode-ai/relay`, owner Project Observatory,
   protocol DEC-0047, Fabric a client.
-- The next work is the DEC-0047 draft, then the handshake and session (RLY-01, RLY-02); see
-  [the backlog](../backlog.md).
+- The next work is in [the backlog](../backlog.md). *(Amended: RLY-01 and RLY-02 are done.)*
+
+## Amendment 1 (2026-10-12)
+
+Release iteration 1's truth pass (relay RLY-018, RLY-019). The lines above that it supersedes are kept and marked.
+
+1. **What the relay holds.** It holds signed message bodies it can read but cannot forge, blobs by digest, and
+   secrets only as sealed envelopes; a secret is never in plaintext at the relay. A `send` body is opaque to the relay
+   but is stored as sent (`src/cloudflare/mailbox.ts`, `src/portable/sqlite-mailbox.ts`); end-to-end confidentiality
+   of a body is the sending machines' choice, by sealing it. This replaces "never holds plaintext content at rest".
+2. **DEC-0047 was accepted** (fabric-agent-contract #53, `8060254`, 2026-10-12). The not-ready refusal is gone;
+   sessions run as `docs/protocol/sessions.md` describes.
+3. **Sessions.** Hosted: every session of an estate lives in one hibernating Durable Object, the estate hub
+   ([ADR-0002](0002-estate-hub.md)). Portable: sessions in memory in one process hub; mailboxes and `lastSeen` in
+   SQLite under `RELAY_DATA_DIR`.
+4. **Keys.** Every relay participant signs ES256 (DEC-0047 *Why*: "ES256 only for the relay"); the small-order rule
+   covers the Ed25519 keys elsewhere in the contract.

@@ -24,8 +24,11 @@ export type AppendResult = { seq: number; duplicate: boolean } | { full: true };
 export interface MailboxStore {
   /** Appends, or answers the first `seq` of the same (from, msgId) still in the mailbox; refuses past the limit. */
   append(to: string, from: string, msgId: string, body: string, ttlSeconds: number, now: Date): Promise<AppendResult>;
-  /** Unacknowledged, unexpired messages after `afterSeq`, in `seq` order. Expired ones are deleted on the way. */
-  pending(to: string, now: Date, afterSeq?: number): Promise<MailEntry[]>;
+  /**
+   * Unacknowledged, unexpired messages after `afterSeq`, in `seq` order, at most `limit` of them (all when omitted).
+   * Expired ones are deleted on the way. A session's flush reads one page at a time (`FLUSH_PAGE`, session.ts).
+   */
+  pending(to: string, now: Date, afterSeq?: number, limit?: number): Promise<MailEntry[]>;
   /** Deletes one acknowledged message; false when the mailbox holds no such `seq`. */
   ack(to: string, seq: number): Promise<boolean>;
 }
@@ -56,10 +59,10 @@ export class MemoryMailbox implements MailboxStore {
     return { seq: entry.seq, duplicate: false };
   }
 
-  async pending(to: string, now: Date, afterSeq = 0): Promise<MailEntry[]> {
+  async pending(to: string, now: Date, afterSeq = 0, limit?: number): Promise<MailEntry[]> {
     const box = this.#box(to);
     box.entries = box.entries.filter((entry) => entry.expiresAt > now.getTime());
-    return box.entries.filter((entry) => entry.seq > afterSeq).map((entry) => ({ ...entry }));
+    return box.entries.filter((entry) => entry.seq > afterSeq).slice(0, limit ?? Infinity).map((entry) => ({ ...entry }));
   }
 
   async ack(to: string, seq: number): Promise<boolean> {

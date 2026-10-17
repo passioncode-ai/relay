@@ -166,3 +166,15 @@ test("sqlite: queued messages and their numbering survive a restart, in an owner
   assert.deepEqual(await second.append(B.kid, A.kid, "m-2", "AA", 3600, T0), { seq: 2, duplicate: false });
   second.close();
 });
+
+for (const [name, make] of stores) {
+  test(`${name}: pending pages with a limit, in seq order, from after a seq`, async () => {
+    const store = make();
+    const now = new Date();
+    for (let n = 1; n <= 7; n += 1) await store.append("to#sig", "from#sig", `m-${n}`, "AA", 60, now);
+    assert.deepEqual((await store.pending("to#sig", now, 0, 3)).map((e) => e.msgId), ["m-1", "m-2", "m-3"]);
+    assert.deepEqual((await store.pending("to#sig", now, 3, 3)).map((e) => e.msgId), ["m-4", "m-5", "m-6"]);
+    assert.deepEqual((await store.pending("to#sig", now, 6, 3)).map((e) => e.msgId), ["m-7"]);
+    assert.equal((await store.pending("to#sig", now, 0)).length, 7, "no limit: every message");
+  });
+}

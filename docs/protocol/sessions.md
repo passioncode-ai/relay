@@ -1,5 +1,9 @@
 # Sessions and admission (RLY-02, RLY-03, RLY-06)
 
+Ids: `RLY-0n` (two digits) are this repository's backlog rows (`docs/backlog.md`). `RLY-0nn` (three digits) are
+findings in release iteration 1's inventory (Project Observatory `docs/runs/2026-10-12-release-iteration-1/`), and
+letter-number ids such as A-4 are that iteration's nodes.
+
 How this relay runs a `fabric-relay/0.1` session. The protocol is fabric-agent-contract's DEC-0047 (merged at
 `8060254`), on top of DEC-0055's estate record. This page says how the code applies it; the contract's
 [relay specification at the pinned commit `51719e4`](https://github.com/passioncode-ai/fabric-agent-contract/blob/51719e4/docs/specification/relay.md)
@@ -53,7 +57,7 @@ this link moves with the pin.
    `kid`.
 3. **`welcome`** answers a successful `auth` with `{session, estateRevision, deltaHead, heartbeat: null}`.
    - `estateRevision` is the verified revision.
-   - Until DEC-0054 defines the revocation delta, `deltaHead` is `{sequence: 0, sha256: <SHA-256 of no bytes>}`.
+   - Until RLY-07 carries DEC-0054's revocation delta, `deltaHead` is `{sequence: 0, sha256: <SHA-256 of no bytes>}`.
 4. **Refusals.** A failed `auth` is answered with a named `error`, then a close:
    - `unauthenticated`, `unsupported-alg`, `not-yet-valid`, `protocol-unsupported` and `replay` close with 4401;
    - `not-admitted` closes with 4403.
@@ -61,13 +65,19 @@ this link moves with the pin.
    - `ping` is answered with `pong`;
    - `send`, `deliver` and `ack` are store-and-forward (see [Messages](#messages));
    - `presence` and `presence-query` are [presence](#presence);
-   - a known frame type not yet served (deltas, until DEC-0054) gets `error` `internal` "not served by this relay
-     version yet";
-   - an unknown type gets `unknown-type`, and the session stays open.
+   - a known frame type not yet served (deltas and heartbeats: RLY-07) gets `error` `internal` "not served by this
+     relay version yet";
+   - an unknown type gets `unknown-type`, and the session stays open;
+   - a frame whose `id` is empty or longer than 128 code points (the relay-frame schema's limit) is not a
+     fabric-relay/0.1 frame: it gets `unknown-type` with no `replyTo`, so the id is never echoed, and the session stays
+     open (before `auth` it is refused `unauthenticated`, 4401).
 6. **Transport closes:**
    - a binary frame closes with 1003;
    - a frame over 1 MiB gets `too-large`, then 1009;
-   - 90 s of silence closes with 1001;
+   - 90 s of silence closes with 1001 ("going away"); in the portable build, while the relay has bytes outstanding to
+     the machine (queued, or written and not confirmed read), the limit is 5 minutes (`IDLE_OUTSTANDING_MS`, see Flow
+     control); a portable relay that stops closes every session with the
+     same 1001. A client reconnects; when the upgrade is answered 503, it waits for the `retry-after` seconds first;
    - a fault in the relay while handling a frame is logged as `session-fault`, answered `error` `internal`, and closes
      with 1011 (`RelaySession.fault`).
 
@@ -78,8 +88,9 @@ connection set and everything that spans connections:
 
 - **Presence is derived from the set**, never stored: a machine is online while an admitted session in the set has its
   kid. Only `lastSeen` is kept.
-- **One timer.** Each session says when it next needs attention (`nextDeadline()`: the 10 s auth deadline, then 90 s of
-  silence); the hub arms the build's one timer at the earliest and closes exactly the sessions that are due.
+- **One scheduler timer.** Each session says when it next needs attention (`nextDeadline()`: the 10 s auth deadline,
+  then 90 s of silence); the hub arms its one timer at the earliest and closes exactly the sessions that are due. The
+  portable build's socket heartbeat (Flow control below) is a separate interval timer.
 - **Delivery wake-ups.** A message queued for a machine wakes every session it holds. One flush runs at a time per
   session; a wake during a flush runs one more, so a message is delivered once and never missed. A session is in the
   set before its first delivery, so nothing queued meanwhile is missed (RLY-013).
@@ -101,7 +112,9 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
   - On success the relay answers `accepted {msgId, seq}`. `seq` is monotonic per mailbox.
   - A repeat of the same `(from, msgId)` while it is still queued answers its first `seq` and is not delivered again.
 - **`deliver`.** Every connection the recipient holds gets each unacknowledged message once, in `seq` order. A
-  connection that opens later gets what waited for it.
+  connection that opens later gets what waited for it. Where the transport reports a backlog (the portable build),
+  delivery goes at the pace the machine reads (see Flow control); the Worker's hibernatable socket reports none, so
+  there a flush sends every page at once, 64 messages a page.
 - **`ack {seq}`.** It deletes the message for every connection.
 - **Expiry.** An expired message is deleted when it is met.
 - **Where mail is kept.**
@@ -121,6 +134,9 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
   - `presence {kid, state: online, lastSeen}` is sent when a machine's first connection is admitted.
   - `presence {kid, state: offline, lastSeen}` is sent when its last connection ends.
   - A second connection of a machine that is already online changes nothing anyone is told.
+  - These pushes report changes that happen after this session's `welcome`. For the state at `welcome`, a node asks
+    once it is admitted: one presence query for the kids it cares about (`presence-query` below). A machine that
+    came online while this session was still authenticating is not pushed to it.
 - **`lastSeen`** is when the relay last heard from the machine: a connection admitted, a frame, or a connection
   ended.
   - Frames move it at most once per 30 s (`TOUCH_INTERVAL_SECONDS`).
@@ -152,8 +168,10 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
   - The relay recomputes the digest on `PUT`: a mismatch gets 422 `digest-mismatch`.
   - It keeps the blob's recipient list.
   - It refuses a body over 32 MiB with 413.
+  - A blob path that is not valid percent-encoding (`/v1/blobs/%`) is 400 `malformed`.
 - **Serving a blob.** It re-checks the digest on `GET` before serving.
-- **Deletion.** A blob is deleted once every stored recipient fetched it (counted per kid), or after 7 days.
+- **Deletion.** A blob is deleted once every stored recipient fetched it (counted per kid), or after 7 days, when it
+  is next requested.
   - A `GET` for a blob the relay does not hold gets 403 `not-admitted`, the same answer as a machine that may not
     fetch it. The relay does not say whether a blob exists.
 - **Where blobs are kept.**
@@ -167,10 +185,121 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
   the socket with the WebSocket Hibernation API, keeps each session's record in the socket's attachment, and runs one
   alarm at the earliest deadline. After a hibernation wake it rebuilds its set from the sockets the runtime kept. The
   relay origin signed into `relay-auth/1` is the request's origin.
-- **Portable.** The `ws` package (8.22.0) upgrades the connection and selects `fabric-relay.v1`. The origin is
-  `RELAY_ORIGIN`, which must be the public `https://` URL behind a TLS terminator.
-  - If `RELAY_ORIGIN` is unset, the relay uses `http://RELAY_HOST:RELAY_PORT` and logs `origin-defaulted`. Only a
-    local machine can then authenticate.
+- **Portable.** The `ws` package (8.22.0) upgrades the connection and selects `fabric-relay.v1`. The relay has **one
+  origin**, the same for sessions and blob routes (`src/portable/origin.ts`, RLY-017):
+  - `RELAY_ORIGIN` set: it must be a bare `https://` origin (behind a TLS terminator). It is normalised, so the host is
+    lowercased and `:443` and a trailing `/` are dropped. A path, query, fragment, credentials or another scheme refuse
+    to start (`refused-to-start`, exit 2). `http://` is accepted only on a loopback literal (`127.0.0.0/8`, `[::1]`),
+    and only when `RELAY_HOST` is a loopback literal too; the name `localhost` is refused, since a name resolves where
+    a literal cannot. Its host must mean what it says: an IPv4 address written as four decimal parts (a URL reads
+    `127.010.0.1` as `127.8.0.1`, `0x7f.1` and `127.1` as `127.0.0.1`), no trailing dot, no empty label
+    (`.relay.test`), and no port 0.
+  - `RELAY_ORIGIN` unset: allowed only when `RELAY_HOST` is a loopback literal. The origin is then the URL parser's
+    origin of `http://RELAY_HOST:<bound port>`, computed after listen, and logged as `origin-defaulted`; only a local
+    machine can authenticate. It is canonical, not `RELAY_HOST` verbatim: `0:0:0:0:0:0:0:1` gives `http://[::1]:<port>`
+    and `127.000.000.001` gives `http://127.0.0.1:<port>`; a spelling a URL reads as another address (`127.010.0.1`,
+    whose parts are octal there) refuses to start. On any other host the relay refuses to start.
+  - `RELAY_HOST` is a bare address or name a URL can carry, whether `RELAY_ORIGIN` is set or not. A bracketed one
+    (`[::1]`), a zone id (`fe80::1%lo0`), a space, a port or a path, or an IPv4 address not written as four decimal
+    parts refuses to start (`refused-to-start`, exit 2) rather than listening and then failing on each request.
+  - `RELAY_PORT` is digits only, 0 to 65535 (`""`, `1e3` and `0x50` refuse to start). A listen that fails (the port
+    taken, a host that does not resolve) is `refused-to-start` and exit 2 too, never a crash.
+  - **Input it cannot read.** A request target Node's HTTP parser accepts but a URL does not (`//[`,
+    `http://[/v1/connect`, `http://x:99999/`) gets 400 `bad-request` (logged `request-refused`), or a bare 400 on an
+    upgrade (`upgrade-refused`); the target is parsed once, before anything else, and the relay stays up. Targets
+    resolve against a fixed base, `http://relay.invalid`, never `RELAY_HOST`.
+  - **Flow control** (`src/portable/server.ts`, the flush in `src/core/session.ts`). `ws` emits one message per turn
+    of the event loop (`allowSynchronousEvents: false`), so a flooding machine cannot delay a signal or a timer
+    (SIGTERM is handled within one frame's work). Then:
+    - **Deliveries are paced by the machine's reading.** A flush reads the mailbox four messages at a time
+      (`FLUSH_PAGE`) and sends only while less than 1 MiB is queued on the socket (`SEND_HIGH`); when the socket
+      drains it goes on. What is not sent yet stays in the mailbox, durable. Its acks are read meanwhile, and the
+      heartbeat never terminates a socket with bytes outstanding (below). **The floor:** while bytes are outstanding, a
+      reader must confirm progress at least every 5 minutes: a frame of its own (an ack, a ping) or a pong to one of
+      the relay's heartbeat pings, which it answers on its own (every client library does) once it has read the ping.
+      Acks are not required. Between two points it can confirm, a reader may have to read up to `SEND_HIGH` (1 MiB)
+      plus one largest frame (1 MiB) plus what the kernel's send and receive buffers hold, so the floor is about
+      (`SEND_HIGH` + `MAX_FRAME_BYTES` + kernel buffers) / 5 min: about 9 to 10 KiB/s with Linux's default buffers
+      (round 14 measured gaps of 1.9 to 2.7 MiB; about 7 KiB/s on macOS), a few KiB/s more with a large `tcp_rmem`.
+      The gaps are that large for four reasons: a frame under 64 KiB gets no marker ping; a beat sends no ping while
+      an earlier one is unwritten; `bufferedAmount` does not see the kernel's buffers; and markers stop once 64 pings
+      await their pongs. A slower reader is idle-closed (1001) and its mail stays queued for its next session. Placing
+      markers by bytes written (one every 64 KiB, whatever the frame size) would lower the floor; it is a wave-2
+      backlog item (HANDOFF).
+    - **The socket is always read**, so acks and pings arrive whatever the relay has queued to send. A socket drain
+      resumes delivery but is not activity: it is the kernel taking the relay's writes, not the peer confirming them.
+    - **Replies to a machine that never reads are capped.** A reply is small because what the relay echoes is held to
+      the relay-frame schema: a frame's `id` (echoed as a `pong`'s id or an error's `replyTo`) and a `send`'s `msgId`
+      (echoed in `accepted` and `deliver`) are 1 to 128 code points, a recipient 1 to 256, and a body base64url
+      characters only. A frame with a longer or empty `id` is refused like any frame that is not fabric-relay/0.1
+      (`error unknown-type` with no `replyTo`; before `auth`, `unauthenticated` and 4401); a `send` with a bad `msgId`,
+      recipient or body gets `error unknown-type`; neither echoes what it refused. So the largest frame the relay sends
+      is a `deliver` of the largest body, under `MAX_FRAME_BYTES`. The caps are checked before each write: a write
+      that would take the socket's queue past 3 MiB (`SEND_CAP` = `SEND_HIGH` plus two 1 MiB frames, just above what
+      deliveries can reach) or past 4096 frames not yet handed to the kernel (`SEND_FRAMES_CAP`: each queued write
+      costs a few hundred bytes beyond its payload) is not made — a pong to the peer's own WebSocket ping included —
+      and the session is logged `send-overflow`, closed 1008
+      through its own close (its messages stay queued) and the socket terminated 1 s later unless it closes first.
+    - **At most 8 sessions per machine** (`RELAY_MAX_SESSIONS_PER_MACHINE`, 1 to 1000): the next `auth` is answered
+      `error` `rate-limited` and closed 1013 (logged `session-limit`); a session that ends makes room. Sessions a
+      hosted hub restored after a hibernation wake count too.
+    - **Heartbeat** (portable). One rule decides what counts: **progress is only what the peer confirms** — a frame
+      it sends, or a pong whose 8-byte payload is that of a heartbeat ping the relay sent and still awaits. A pong for
+      a ping confirms the bytes written before it only if the peer read them; payloads are random, so a peer cannot
+      answer a ping it has not read. A write the relay makes is never progress,
+      whether or not the kernel took it; nor is a drain, nor an unsolicited or unknown pong, nor a WebSocket ping the
+      peer sends: the relay answers that ping itself (ws's automatic pong is off) under the same send caps as every
+      other frame, and it keeps no session open, which stays open by its frames.
+      - The relay pings every socket each 10 s, never a second ping behind one not yet written, and never more than
+        64 awaiting their pongs; and it sends a marker ping right behind each frame of 64 KiB or more, so a slow reader
+        confirms each delivery as soon as it has read it.
+      - It terminates a socket only when nothing is outstanding to it (`bufferedAmount` 0 and at most 4 KiB not yet
+        confirmed, the control traffic such as `welcome`) and it has shown no life (a matched pong or a frame) for 3
+        beats (`heartbeat-timeout`): a peer that vanished frees its slot within 30 to 40 s.
+      - A socket with more outstanding is never terminated by the heartbeat; it is governed by the session's idle
+        close, where its frames and the matched pongs that confirm new bytes are activity, with a limit of 5 minutes
+        while bytes are outstanding (`idleOutstandingMs`) and 90 s otherwise. A frozen peer is freed within the 5
+        minutes even while other machines keep sending to it; a client that answers pings but sends no frame, or that
+        only sends WebSocket pings, is idle-closed at 90 s.
+      - Clocks: the heartbeat runs on a monotonic clock, and a beat that fires late (a stalled loop) does not count its
+        lateness as silence. Session deadlines (the auth deadline and the idle close) use the wall clock the relay is
+        given (`ServeOptions.now`, the system's by default), so a wall clock stepped forward by 90 s or more closes the
+        sessions that were quiet; a step back delays their idle close by as much. The hub's own timer runs its
+        deadlines (`nextDeadline()`); the heartbeat is a separate interval timer, which also runs any deadline that is
+        due.
+    - **The Worker has no socket heartbeat.** Its hibernatable sockets are not pinged by the relay (a timer per
+      socket would keep the object awake), so a peer that vanishes without a close holds its slot until the 90 s idle
+      close. The Worker also reports no backlog, so its flush reads the mailbox 64 messages a page (a 1000-message
+      backlog is 16 mailbox calls; F-8 revisits it against the hosted limits).
+    - **The bound** this gives: what the relay holds queued for one session is at most `SEND_CAP`, 3 MiB, so for one
+      machine at most 8 x 3 MiB = 24 MiB (`Served.flow().peakBuffered` reports the most any socket held). On top of it
+      come the mailbox page a flush is sending from (four bodies), the inbound frames being parsed, and memory the
+      allocator has not returned yet. Measured: 2 machines x 8 non-reading sessions flooding pings with 1000 KiB ids
+      and sends with 1000 KiB msgIds queue under 64 KiB with no overflow (before the id and msgId limits every session
+      overflowed, with up to 4 MiB queued); 30 non-reading sessions of one machine with 11 MiB of mail grew the
+      footprint by 41 to 75 MiB (727 MiB before paced delivery and the session limit).
+    - Inbound: a socket with 64 frames waiting in its session is not read until they drain to 16; with the real stores
+      a frame is handled in its own turn, so this seldom trips.
+  - **CONNECT** is not served: it is answered 405 (`connect-refused`) and the socket is let go of.
+  - **Stopping (RLY-010).** SIGTERM, SIGINT or SIGHUP (the terminal that started the relay closed) stops gracefully. New upgrades get 503, and HTTP answers carry
+    `connection: close`. Every session is closed 1001 through the estate hub, so each machine's `lastSeen` is written.
+    A socket still open after 5 s is terminated. Then the listener, the connections and both SQLite stores close (a
+    connection still open then, an upgraded one included, is destroyed and counted in `forced`), and
+    the relay logs `stopped {sessions, forced, ms}` and exits 0. Past a 10 s ceiling it logs `stop-timeout` and exits 1;
+    a stop that fails logs `stop-failed` and exits 1. A second press (a different signal, or the same one more than
+    1 s after the first) logs `stop-forced` and exits 1 at once; the same signal within 1 s is the same press
+    (`npm run portable` forwards the terminal's SIGINT, so the relay sees one Ctrl-C twice) and is logged
+    `signal-repeated`. A supervisor waits longer than the ceiling (systemd `TimeoutStopSec=20`, launchd
+    `ExitTimeOut=20`).
+    - A refused upgrade (404, 400, the 503 below) is answered and its socket destroyed once the answer is flushed (1 s
+      at most), so a client that keeps its side of the connection open cannot hold the stop.
+    - The 503 carries `retry-after: 5`. An upgrade that was already past that gate when the stop began (its estate
+      read in flight) is waited for, then closed 1001, and terminated with the others at the grace period if it has not
+      closed. A socket that closes while its estate is read never joins the hub.
+    - A revision file that does not parse is refused like any other bad revision, so the revisions before it still
+      hold; a read that fails as a whole (an unparsable `pinned.json`) is logged `estate-unreadable` and the hub keeps
+      what it held.
+    - `/healthz` keeps answering 200 while the relay stops, until iteration node A-6 makes health report it.
 
 ## Found on the way
 

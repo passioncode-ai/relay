@@ -46,8 +46,19 @@ export interface HubDeps {
    * refresh never spins the timer.
    */
   refresh?: { deadline(): number | undefined; run(now: Date): void | Promise<void> };
+  /** The idle limit while a session's transport has bytes outstanding (default IDLE_OUTSTANDING_MS, session.ts). */
+  idleOutstandingMs?: number;
+  /** At most this many admitted sessions per machine (default DEFAULT_MAX_SESSIONS_PER_MACHINE); the next is refused 1013. */
+  maxSessionsPerMachine?: number;
   log?: Log;
 }
+
+/**
+ * How many admitted sessions one machine may hold at once in a hub. Each session gets its own copy of every delivery,
+ * so this bounds what one machine can make the relay hold for it: at most this many times one session's send cap. In
+ * the portable build that cap is 3 MiB (`SEND_CAP`, src/portable/server.ts), so 8 x 3 MiB = 24 MiB per machine.
+ */
+export const DEFAULT_MAX_SESSIONS_PER_MACHINE = 8;
 
 /** How long the hub waits before running a refresh again after one failed, or one that left its deadline due. */
 export const REFRESH_RETRY_MS = 5000;
@@ -90,6 +101,7 @@ export class EstateHub<C = unknown> implements SessionHub {
     return {
       relay, now: this.deps.now, nonce: this.deps.nonce, sessionId: this.deps.sessionId, admission: () => this.admission(),
       ...(this.deps.mailbox ? { mailbox: this.deps.mailbox } : {}), hub: this, ...(this.deps.log ? { log: this.deps.log } : {}),
+      ...(this.deps.idleOutstandingMs !== undefined ? { idleOutstandingMs: this.deps.idleOutstandingMs } : {}),
     };
   }
 
@@ -210,6 +222,38 @@ export class EstateHub<C = unknown> implements SessionHub {
     }
   }
 
+  /**
+   * The transport of `conn` can take more (its socket drained): its session goes on delivering from the mailbox. A
+   * drain is the kernel taking the relay's writes, not the peer confirming anything, so it is not activity for the idle
+   * close. Never rejects.
+   */
+  async drained(conn: C): Promise<void> {
+    const session = this.#entries.get(conn);
+    if (!session) return;
+    await session.wake();
+    this.#arm();
+  }
+
+  /**
+   * The machine of `conn` confirmed it read more of what the relay sent (a pong matching one of the relay's pings): that
+   * counts as activity for the idle close. Only what the peer confirms is progress; a write the relay makes never is.
+   */
+  progressed(conn: C): void {
+    this.progressedAll([conn]);
+  }
+
+  /** `progressed` for many connections at once (a heartbeat's sweep), re-arming the timer once rather than per socket. */
+  progressedAll(conns: Iterable<C>): void {
+    let any = false;
+    for (const conn of conns) {
+      const session = this.#entries.get(conn);
+      if (!session) continue;
+      session.progressed();
+      any = true;
+    }
+    if (any) this.#arm();
+  }
+
   /** A message was queued for `kid`: every session that machine holds delivers what waits for it. */
   async wake(kid: string): Promise<void> {
     const sessions = [...this.#entries.values()].filter((session) => session.state === "admitted" && session.kid === kid);
@@ -270,6 +314,15 @@ export class EstateHub<C = unknown> implements SessionHub {
     const kid = session.kid as string;
     const lastSeen = this.#seen(kid, this.deps.now());
     if (!this.#online(kid)) this.#publish({ kid, state: "offline", lastSeen });
+  }
+
+  hasRoom(kid: string): boolean {
+    const limit = this.deps.maxSessionsPerMachine ?? DEFAULT_MAX_SESSIONS_PER_MACHINE;
+    let held = 0;
+    for (const session of this.#entries.values()) if (session.state === "admitted" && session.kid === kid) held += 1;
+    if (held < limit) return true;
+    this.deps.log?.({ event: "session-limit", kid, limit });
+    return false;
   }
 
   queued(kid: string): void {

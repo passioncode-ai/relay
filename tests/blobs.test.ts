@@ -104,3 +104,10 @@ test("a declared body over the limit is 413 before it is read; other methods 405
   assert.equal((await handle(new Request(`${ORIGIN}/v1/blobs/not-a-digest`), r.deps)).status, 404);
   assert.equal((await handle(new Request(`${ORIGIN}/v1/blobs/${digest}`), { runtime: "portable", blobs: r.blobs })).status, 404);
 });
+
+test("a blob path that is not valid percent-encoding (/v1/blobs/%) is 400 malformed, not a 500", async () => {
+  const r = relay();
+  for (const path of ["%", "%E0%A4%A", "sha256:%ZZ"]) {
+    assert.deepEqual(await code(await handle(new Request(`${ORIGIN}/v1/blobs/${path}`), r.deps)), [400, "malformed"], path);
+  }
+});
