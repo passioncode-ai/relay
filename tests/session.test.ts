@@ -3,27 +3,31 @@
 // Every frame the relay sends is validated against the contract's relay-frame schema.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { test } from "node:test";
+import { frameValid } from "./frame-schema.ts";
 import validateEstateRecord from "../src/contract/estate-record.validate.js";
 import type { AdmissionResult } from "../src/contract/relay.ts";
 import { AdmissionHolder } from "../src/core/admission.ts";
-import { EMPTY_DELTA_HEAD, RelaySession } from "../src/core/session.ts";
+import { P256_CURVE } from "../src/contract/p256.ts";
+import { deltaGenesis } from "../src/contract/revocation-delta.ts";
+import { RelaySession } from "../src/core/session.ts";
 
 const root = path.resolve(import.meta.dirname, "..");
 const json = (file: string) => JSON.parse(readFileSync(path.join(root, file), "utf8"));
 const relay = json("tests/vectors/relay.json");
 const estate = json("tests/vectors/estate-record.json");
-const require = createRequire(import.meta.url);
-const Ajv2020 = require("ajv/dist/2020").default;
-const ajv = new Ajv2020({ allErrors: true, strict: false });
-require("ajv-formats").default(ajv);
-const frameValid = ajv.compile(json("src/contract/schemas/relay-frame.schema.json"));
 
 const T0 = Date.parse(relay.auth.context.now);
-const admitted = (set: Map<string, unknown> = new Map([[relay.auth.frame.kid, relay.machineKey]])): AdmissionResult =>
-  ({ ok: true, held: {}, revision: 3, set: set as Map<string, Uint8Array> });
+const ESTATE = relay.auth.frame.estate as string;
+const admitted = (set: Map<string, unknown> = new Map([[relay.auth.frame.kid, relay.machineKey]]), estate = ESTATE): AdmissionResult =>
+  ({ ok: true, held: { estate }, revision: 3, set: set as Map<string, Uint8Array>, excluded: [] });
+/** The vector signature in its high-S twin (r, n − s): plain ECDSA verifies it, a relay-family verifier refuses it. */
+const highS = (() => {
+  const raw = Buffer.from(relay.auth.frame.sig, "base64url");
+  const s = BigInt(`0x${raw.subarray(32).toString("hex")}`);
+  return Buffer.concat([raw.subarray(0, 32), Buffer.from((P256_CURVE.n - s).toString(16).padStart(64, "0"), "hex")]).toString("base64url");
+})();
 
 function harness(admission: () => AdmissionResult = () => admitted(), nonce = relay.auth.context.nonce) {
   let now = T0;
@@ -50,12 +54,13 @@ test("hello names the protocol, this relay and a nonce; every frame sent is sche
   for (const frame of h.sent) assert.ok(frameValid(frame), `${frame.type}: ${JSON.stringify(frameValid.errors)}`);
 });
 
-test("admits the vector machine and welcomes it with the verified revision and the empty delta head", async () => {
+test("admits the vector machine and welcomes it with the verified revision and the delta head at its estate's genesis", async () => {
   const h = harness();
   await h.session.receive(auth());
   assert.equal(h.session.state, "admitted");
   assert.equal(h.session.kid, relay.auth.frame.kid);
-  assert.deepEqual(h.sent[1], { v: 1, id: "r2", type: "welcome", session: "s-1", estateRevision: 3, deltaHead: EMPTY_DELTA_HEAD, heartbeat: null });
+  assert.deepEqual(h.sent[1], { v: 1, id: "r2", type: "welcome", session: "s-1", estateRevision: 3, deltaHead: { sequence: 0, sha256: deltaGenesis(ESTATE) }, heartbeat: null });
+  assert.notEqual(deltaGenesis(ESTATE), deltaGenesis("urn:fabric:estate:other"), "the genesis head names its estate");
   assert.equal(h.closed.length, 0);
 });
 
@@ -65,15 +70,22 @@ test("admits the same machine when the set holds its key as DEC-0053's SEC 1 oct
   assert.equal(h.session.state, "admitted");
 });
 
+// DEC-0066: past the frame's own bytes and the nonce, every failure is one answer, `unauthenticated`, closed 4401; 4403
+// is only ever sent to a session whose signer was proven.
 const refusals: Array<[string, () => ReturnType<typeof harness>, string, string, number]> = [
-  ["a machine outside the admission set", () => harness(() => admitted(new Map())), auth(), "not-admitted", 4403],
-  ["its own key filed under another machine's kid", () => harness(() => admitted(new Map([["urn:fabric:machine:other#sig", relay.machineKey]]))), auth(), "not-admitted", 4403],
-  ["any machine while the relay holds no verified record", () => harness(() => ({ ok: false, refusal: "no-record" })), auth(), "not-admitted", 4403],
-  ["any machine once the held record's window ended", () => harness(() => ({ ok: false, refusal: "expired" })), auth(), "not-admitted", 4403],
+  ["a machine outside the admission set", () => harness(() => admitted(new Map())), auth(), "unauthenticated", 4401],
+  ["its own key filed under another machine's kid", () => harness(() => admitted(new Map([["urn:fabric:machine:other#sig", relay.machineKey]]))), auth(), "unauthenticated", 4401],
+  ["any machine while the relay holds no verified record", () => harness(() => ({ ok: false, refusal: "no-record" })), auth(), "unauthenticated", 4401],
+  ["any machine once the held record's window ended", () => harness(() => ({ ok: false, refusal: "expired" })), auth(), "unauthenticated", 4401],
+  ["a proof for another estate than the held record's", () => harness(() => admitted(undefined, "urn:fabric:estate:other")), auth(), "unauthenticated", 4401],
+  ["a high-S signature", () => harness(), auth({ sig: highS }), "unauthenticated", 4401],
   ["a proof signed for another connection's nonce", () => harness(undefined, "BBECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"), auth(), "unauthenticated", 4401],
   ["another algorithm", () => harness(), auth({ alg: "EdDSA" }), "unsupported-alg", 4401],
-  ["an Ed25519 participant", () => harness(() => admitted(new Map([[relay.auth.frame.kid, relay.ed25519.key]]))), auth(), "unsupported-alg", 4401],
+  ["an Ed25519 key in the set", () => harness(() => admitted(new Map([[relay.auth.frame.kid, relay.ed25519.key]]))), auth(), "unauthenticated", 4401],
   ["another protocol", () => harness(), auth({ protocol: "fabric-relay/9" }), "protocol-unsupported", 4401],
+  ["an auth frame that fails the schema", () => harness(), auth({ sig: 7 }), "unauthenticated", 4401],
+  ["an auth frame whose members are not strings", () => harness(), auth({ kid: {}, estate: [], sig: null }), "unauthenticated", 4401],
+  ["an auth frame with no alg (admit's answer, not the schema's)", () => harness(), auth({ alg: undefined }), "unsupported-alg", 4401],
   ["a frame other than auth first", () => harness(), JSON.stringify({ v: 1, type: "ping", id: "p" }), "unauthenticated", 4401],
   ["text that is not a frame", () => harness(), "not json", "unauthenticated", 4401],
 ];
@@ -89,6 +101,16 @@ for (const [name, make, frame, code, close] of refusals) {
   });
 }
 
+test("an auth refusal's message is fixed per code; why goes to the relay's log only", async () => {
+  const none = harness(() => ({ ok: false, refusal: "no-record" }));
+  const other = harness(() => admitted(new Map()));
+  await none.session.receive(auth());
+  await other.session.receive(auth());
+  assert.equal(none.sent.at(-1)?.message, other.sent.at(-1)?.message);
+  assert.deepEqual(none.log.filter((e) => e.event === "auth-refused").map((e) => [e.code, e.admission]), [["unauthenticated", "no-record"]]);
+  assert.deepEqual(other.log.filter((e) => e.event === "auth-refused").map((e) => [e.code, e.admission]), [["unauthenticated", "held"]]);
+});
+
 test("a second auth on one connection is a replay: the nonce admits once", async () => {
   const h = harness();
   await h.session.receive(auth());
@@ -97,17 +119,32 @@ test("a second auth on one connection is a replay: the nonce admits once", async
   assert.deepEqual(h.closed.map((c) => c.code), [4401]);
 });
 
-test("after welcome: ping gets pong, a known frame not served yet a named refusal, an unknown type an error; the session stays open", async () => {
+test("after welcome: every answer names the frame it answers in replyTo; unknown and relay-only types are unknown-type, a known type that fails the schema or FAC-SEM-071 malformed; the session stays open", async () => {
   const h = harness();
   await h.session.receive(auth());
   await h.session.receive(JSON.stringify({ v: 1, type: "ping", id: "p1" }));
-  assert.deepEqual(h.sent.at(-1), { v: 1, id: "p1", type: "pong" });
+  assert.deepEqual(h.sent.at(-1), { v: 1, id: "r3", type: "pong", replyTo: "p1" });
   await h.session.receive(JSON.stringify({ v: 1, type: "send", id: "s1" }));
-  assert.deepEqual([h.sent.at(-1)?.code, h.sent.at(-1)?.replyTo], ["internal", "s1"]);
+  assert.deepEqual([h.sent.at(-1)?.code, h.sent.at(-1)?.replyTo], ["malformed", "s1"]);
+  await h.session.receive(JSON.stringify({ v: 1, type: "send", id: "s2", to: "x#sig", msgId: "m", body: "AA", ttl: 0 }));
+  assert.deepEqual([h.sent.at(-1)?.code, h.sent.at(-1)?.replyTo], ["malformed", "s2"]);
   await h.session.receive(JSON.stringify({ v: 1, type: "teleport", id: "t1" }));
-  assert.equal(h.sent.at(-1)?.code, "unknown-type");
+  assert.deepEqual([h.sent.at(-1)?.code, h.sent.at(-1)?.replyTo], ["unknown-type", "t1"]);
+  for (const type of ["hello", "welcome", "accepted", "deliver", "presence", "presence-result", "error"]) {
+    await h.session.receive(JSON.stringify({ v: 1, type, id: `x-${type}` }));
+    assert.deepEqual([h.sent.at(-1)?.code, h.sent.at(-1)?.replyTo], ["unknown-type", `x-${type}`], type);
+  }
   await h.session.receive("{");
-  assert.equal(h.sent.at(-1)?.code, "unknown-type");
+  assert.deepEqual([h.sent.at(-1)?.code, h.sent.at(-1)?.replyTo], ["malformed", undefined]);
+  await h.session.receive(JSON.stringify({ v: 1, type: "ping", id: "" }));
+  assert.deepEqual([h.sent.at(-1)?.code, h.sent.at(-1)?.replyTo], ["malformed", undefined], "an unusable id is never echoed");
+  await h.session.receive(JSON.stringify({ v: 1, type: "delta-query", id: "d1", fromSeq: 1 }));
+  assert.deepEqual([h.sent.at(-1)?.code, h.sent.at(-1)?.replyTo], ["internal", "d1"], "known, not served yet (H-2)");
+  await h.session.receive(JSON.stringify({ v: 1, type: "delta-query", id: "d2", after: 0 }));
+  assert.deepEqual([h.sent.at(-1)?.code, h.sent.at(-1)?.replyTo], ["malformed", "d2"], "a known type failing its schema");
+  await h.session.receive(JSON.stringify({ v: 1, type: "ping", id: "p2", extra: { ignored: true } }));
+  assert.deepEqual([h.sent.at(-1)?.type, h.sent.at(-1)?.replyTo], ["pong", "p2"], "unknown members are ignored");
+  for (const frame of h.sent) assert.ok(frameValid(frame), `${frame.type}: ${JSON.stringify(frameValid.errors)}`);
   assert.equal(h.closed.length, 0);
 });
 
@@ -180,7 +217,7 @@ test("restore(snapshot()) mid-session keeps the outbound ids and the delivered s
   await again.receive(JSON.stringify({ v: 1, type: "teleport", id: "t1" }));
   assert.deepEqual([sent.at(-1)!.code, sent.at(-1)!.id], ["unknown-type", "r4"]);
   await again.receive(JSON.stringify({ v: 1, type: "ping", id: "p1" }));
-  assert.deepEqual(sent.at(-1), { v: 1, id: "p1", type: "pong" });
+  assert.deepEqual(sent.at(-1), { v: 1, id: "r5", type: "pong", replyTo: "p1" });
   await again.receive(auth());
   assert.deepEqual([sent.at(-1)!.code, closed], ["replay", [4401]], "the restored nonce is still used");
 });

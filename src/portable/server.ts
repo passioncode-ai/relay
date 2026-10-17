@@ -211,7 +211,10 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
     const started = Date.now();
     if (stopping) reply.setHeader("connection", "close");
     const declared = Number(message.headers["content-length"] ?? 0);
-    if (declared > MAX_BODY_BYTES) {
+    // A blob PUT's length is checked by handleBlob, after the request's own header (DEC-0066's order of checks, step 5):
+    // an over-long PUT with a malformed header is 400, not 413. Every other body is refused here before it is read.
+    const blobPath = (message.url ?? "").startsWith("/v1/blobs/");
+    if (declared > MAX_BODY_BYTES && !blobPath) {
       reply.statusCode = 413;
       reply.setHeader("connection", "close");
       reply.setHeader("content-type", "application/json");
@@ -237,6 +240,8 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
     }
     try {
       const response = await handle(request, deps);
+      // A refused PUT may leave its body unread or half read (a 413 stops reading): the connection is not reused.
+      if (request.method === "PUT" && response.status >= 400) reply.setHeader("connection", "close");
       await send(response, reply);
       log({ event: "request", method: message.method, path: url.pathname, status: response.status, ms: Date.now() - started });
     } catch (error) {

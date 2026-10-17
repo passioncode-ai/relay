@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fabric.passioncode.ai/agent-contract/0.1.0/schemas/revocation-delta.schema.json",
+  "title": "Revocation delta page (revocation-delta/1, DEC-0054)",
+  "description": "A page of the revocation delta: consecutive signed entries of one estate's append-only chain and the head they lead to. A relay's delta frame and a check-in response's records.revocationDelta carry it unchanged. The page's head is the carrier's hint; only a signed heartbeat's head binds. FAC-SEM-082 and the verifier applyDelta apply.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "head",
+    "entries"
+  ],
+  "properties": {
+    "head": {
+      "$ref": "#/$defs/head"
+    },
+    "entries": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/entry"
+      },
+      "description": "Consecutive entries, oldest first: at most 256, so a relay frame stays under 1 MiB; a machine further behind asks again with delta-query."
+    }
+  },
+  "$defs": {
+    "head": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "sha256"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "description": "A head of the revocation delta: the sequence of its last entry (0 before any) and the hex SHA-256 of that entry's RFC 8785 form without sig (the estate's genesis at 0). The shape of a device check-in's records.revocationDelta (DEC-0053) and a relay's welcome.deltaHead (DEC-0047)."
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "alg",
+        "estate",
+        "sequence",
+        "prev",
+        "at",
+        "revocation",
+        "kid",
+        "sig"
+      ],
+      "properties": {
+        "type": {
+          "const": "revocation-delta/1"
+        },
+        "alg": {
+          "const": "EdDSA",
+          "description": "The estate key's algorithm, signed; EdDSA until Fabric records D2, when ES256 joins additively (DEC-0055 item 9). Anything else is unsupported-alg."
+        },
+        "estate": {
+          "$ref": "activity-common.schema.json#/$defs/opaqueId",
+          "description": "The estate whose chain this is: the estate record's estate id."
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "description": "1 for the estate's first entry, then the previous entry's plus one: never skipped, never repeated."
+        },
+        "prev": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "description": "The head hash before this entry: the previous entry's hash, or for entry 1 the estate's genesis, SHA-256 of the RFC 8785 form of {type: \"revocation-delta/1\", estate, sequence: 0}."
+        },
+        "at": {
+          "$ref": "common.schema.json#/$defs/timestamp",
+          "description": "When the hub issued the entry (RFC 3339 with an offset). A revision issued at or after it lists its revocation (FAC-SEM-084)."
+        },
+        "revocation": {
+          "$ref": "#/$defs/revocation"
+        },
+        "kid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "The estate key: the kid of a machine's hubKey that the highest estate-record revision the verifier applied certifies (DEC-0055), not revoked there or by an entry applied before."
+        },
+        "sig": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}$",
+          "description": "The 64-byte Ed25519 signature (RFC 8032) over the UTF-8 RFC 8785 form of the document without sig, base64url without padding."
+        }
+      },
+      "description": "One signed revocation. Its hash, the next head, is the hex SHA-256 of its RFC 8785 form without sig."
+    },
+    "revocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "revokedAt"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "machine",
+            "device-key",
+            "hub-key",
+            "publisher-key",
+            "package",
+            "grant"
+          ],
+          "description": "The estate record's revocation kinds (DEC-0055 item 7) without authority: a passkey is revoked only by a revision a passkey signs."
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1366,
+          "description": "What is revoked, in its kind's own form, as the estate record's revocation names it."
+        },
+        "revokedAt": {
+          "$ref": "common.schema.json#/$defs/timestamp",
+          "description": "When the revocation took effect; never after the entry's at."
+        }
+      },
+      "description": "A revocation in the estate record's own shape, so the next revision lists it as it came."
+    }
+  }
+}

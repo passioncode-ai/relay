@@ -12,7 +12,7 @@
  * consumer — relay envelopes (DEC-0047), packages (DEC-0051), estate records — so no two of them disagree on a key.
  */
 
-import { createPublicKey, type KeyObject } from "node:crypto";
+import { createPublicKey, sign as nodeSign, type KeyObject } from "node:crypto";
 
 /** SEC 2 v2 §2.4.2, secp256r1 (NIST P-256). */
 export const P256_CURVE = {
@@ -119,5 +119,32 @@ export function isEd25519Key(key: unknown): boolean {
   if (key instanceof Uint8Array) return key.length === 32;
   const jwk = key as { kty?: unknown; crv?: unknown } | null;
   return !!jwk && typeof jwk === "object" && jwk.kty === "OKP" && jwk.crv === "Ed25519";
+}
+// ---- One ES256 rule for the relay family: low-S (DEC-0066) --------------------------------------------------------
+
+const HALF_N = P256_CURVE.n / 2n;
+const scalar = (bytes: Uint8Array) => BigInt(`0x${Buffer.from(bytes).toString("hex")}`);
+
+/** Whether a raw ES256 signature (r ‖ s, 64 bytes) has s ≤ n/2. A signature of another length is not low-S. */
+export function isLowS(raw: Uint8Array): boolean {
+  return raw.length === 64 && scalar(raw.subarray(32)) <= HALF_N;
+}
+
+/**
+ * The low-S form of a raw ES256 signature: (r, n − s) when s > n/2, otherwise the same bytes. Both forms verify under
+ * plain ECDSA, so any signer — a Secure Enclave, a TPM, Python's `cryptography` — normalises after signing, without
+ * its key. Throws on a signature that is not 64 bytes.
+ */
+export function toLowS(raw: Uint8Array): Uint8Array {
+  if (raw.length !== 64) throw new Error("an ES256 signature is 64 bytes (r ‖ s)");
+  const s = scalar(raw.subarray(32));
+  if (s <= HALF_N) return raw;
+  return Buffer.concat([Buffer.from(raw.subarray(0, 32)), Buffer.from((P256_CURVE.n - s).toString(16).padStart(64, "0"), "hex")]);
+}
+
+/** ES256 over `bytes` (a string is UTF-8) as raw r ‖ s, base64url, in the low-S form a relay-family verifier admits. */
+export function signEs256(privateKey: KeyObject, bytes: string | Uint8Array): string {
+  const raw = nodeSign("sha256", typeof bytes === "string" ? Buffer.from(bytes, "utf8") : bytes, { key: privateKey, dsaEncoding: "ieee-p1363" });
+  return Buffer.from(toLowS(raw)).toString("base64url");
 }
 // #endregion p256

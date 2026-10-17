@@ -2,10 +2,10 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import type { Miniflare } from "miniflare";
-import { sign as signBytes } from "node:crypto";
 import { relayAuthSigningInput } from "../src/contract/relay.ts";
 import { estate, revise } from "./estate-fixture.ts";
 import { authFrame, session, startLoggedWorker } from "./worker-harness.ts";
+import { signEs256 } from "../src/contract/p256.ts";
 
 let mf: Miniflare;
 let events: (name: string) => Array<Record<string, any>>;
@@ -44,7 +44,7 @@ for (const passkey of ["EdDSA", "ES256"] as const) test(`a machine of an estate 
   const iat = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
   const sign = (kid: string, nonce: string) => {
     const fields = { relay: "http://relay.test", nonce, estate: "estate-5d0f1a", kid, iat };
-    const sig = signBytes("sha256", Buffer.from(relayAuthSigningInput(fields)), { key: e.machine.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
+    const sig = signEs256(e.machine.privateKey, relayAuthSigningInput(fields));
     return JSON.stringify({ v: 1, type: "auth", id: "a1", protocol: "fabric-relay/0.1", alg: "ES256", ...fields, sig });
   };
   c.ws.send(sign(e.machine.kid, hello.nonce));
@@ -52,14 +52,14 @@ for (const passkey of ["EdDSA", "ES256"] as const) test(`a machine of an estate 
   assert.deepEqual([c.frames[1]!.type, c.frames[1]!.estateRevision], ["welcome", 1]);
   c.ws.send(JSON.stringify({ v: 1, type: "ping", id: "p1" }));
   await c.until(() => c.frames.length >= 3);
-  assert.deepEqual([c.frames[2]!.type, c.frames[2]!.id], ["pong", "p1"]);
+  assert.deepEqual([c.frames[2]!.type, c.frames[2]!.replyTo], ["pong", "p1"]);
   c.ws.close(1000, "done");
 
   const stranger = await session(mf);
   await stranger.until(() => stranger.frames.length >= 1);
   stranger.ws.send(sign("m-stranger#sig", stranger.frames[0]!.nonce));
   await stranger.until(() => stranger.closed() !== undefined);
-  assert.deepEqual([stranger.frames.at(-1)!.code, stranger.closed()], ["not-admitted", 4403]);
+  assert.deepEqual([stranger.frames.at(-1)!.code, stranger.closed()], ["unauthenticated", 4401]); // DEC-0066: one answer
   await bucket.delete(["estate/pinned.json", "estate/revisions/1.json"]);
 });
 

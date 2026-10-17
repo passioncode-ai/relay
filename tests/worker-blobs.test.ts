@@ -2,10 +2,11 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import type { Miniflare } from "miniflare";
-import { createHash, sign as signBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { relayBlobSigningInput, relayRequestHeader } from "../src/contract/relay.ts";
 import { estate } from "./estate-fixture.ts";
 import { startWorker } from "./worker-harness.ts";
+import { signEs256 } from "../src/contract/p256.ts";
 
 let mf: Miniflare;
 before(async () => { mf = await startWorker(); });
@@ -26,10 +27,11 @@ test("a blob goes through the Worker: PUT by one machine of the record, GET by i
   const header = (m: { kid: string; privateKey: import("node:crypto").KeyObject }, method: "PUT" | "GET") => {
     const iat = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
     const recipients = [e.second.kid];
-    const sig = signBytes("sha256", Buffer.from(relayBlobSigningInput({ relay: "http://relay.test", method, digest, recipients, iat })), { key: m.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
+    const sig = signEs256(m.privateKey, relayBlobSigningInput({ relay: "http://relay.test", method, digest, recipients, iat }));
     return relayRequestHeader({ alg: "ES256", kid: m.kid, recipients, iat, sig });
   };
-  const put = await mf.dispatchFetch(`http://relay.test/v1/blobs/${digest}`, { method: "PUT", body: bytes, headers: { "Fabric-Relay-Request": header(e.machine, "PUT") } });
+  // dispatchFetch does not carry a body's length to workerd on its own; a client on the wire does (DEC-0066 step 5: 411 without it).
+  const put = await mf.dispatchFetch(`http://relay.test/v1/blobs/${digest}`, { method: "PUT", body: bytes, headers: { "Fabric-Relay-Request": header(e.machine, "PUT"), "content-length": String(bytes.byteLength) } });
   assert.equal(put.status, 201, await put.text());
   const got = await mf.dispatchFetch(`http://relay.test/v1/blobs/${digest}`, { headers: { "Fabric-Relay-Request": header(e.second, "GET") } });
   assert.equal(got.status, 200);

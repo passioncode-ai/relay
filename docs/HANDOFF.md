@@ -1,6 +1,29 @@
 # Handoff
 
-**Where the work stands (2026-10-12, release iteration 1, wave 1).**
+**Wave 2 status (2026-10-17).** Wave 1 is merged (relay#8, relay#10 as `5fa0d881`). The first wave-2 pull request,
+branch `wave2/rp-dec0066`, carries:
+- **RP:** the contract pinned at fabric-agent-contract `bf3fd6b`; every shared-vector case runs here; tests sign
+  through the contract's `signEs256`.
+- **D-1:** frames classified against the AOT relay-frame schema (`src/core/frames.ts`); `replyTo` on every answer;
+  `presence-result`; close codes from `closeCodeFor`; `malformed` and `unknown-type` as DEC-0066 splits them.
+- **DEC-0066's other relay deltas that need no new state:** one-answer `unauthenticated` auth refusals with the
+  estate bound; the genesis delta head; blobs in the contract's order of checks (411, 409 after the digest, 403 never
+  404, a repeat `PUT` restores); the portable origin checked against `RELAY_ORIGIN_PATTERN`.
+- **Regression:** the engine's walking skeleton (`observatory/engine/tools/node_skeleton.py`, project-observatory-dashboard
+  `main`) passes every step against this branch on loopback, presence included; against relay `main` its presence
+  step times out, because the engine's node waits for the `presence-result` this branch adds.
+- **Still open from DEC-0066, by node:** A-4 (revalidate open sessions: 4403 `not-admitted`/`expired` before any
+  frame), D-2 (`welcome.limits`, `rate-limited` with `retryAfter`, msgId tombstones after an ack), H-1/H-2 (delta and
+  heartbeat ingress and carry, `delta-query`, `extraRevocations`), A-3/A-5/A-6/A-7 (estate cache, adapters' estate
+  handling, health).
+- **A flake to watch:** `tests/shutdown.test.ts` "a distinct second press … forces the stop" failed once in a full
+  Node 24 run of this branch (the exit code was not seen within 3 s) and passed in isolation three times and on the
+  next full run. It is a timing test of the portable process; if it fails again, widen its wait or measure the stop
+  under load.
+- **Exact next task:** A-3 (`EstateCache`), then A-6, A-4, A-5, A-7; then D-2; then G-4 — the order of the
+  iteration's `workgraph.json`.
+
+**Where the work stood (2026-10-12, release iteration 1, wave 1).**
 
 - **Done and merged on `main`:**
   - RLY-01: DEC-0047 merged in fabric-agent-contract (#53, `8060254`).
@@ -8,8 +31,7 @@
   - RLY-03: relay#3 `05072c9`.
   - RLY-06: relay#5 `20bf599`.
   - Backlog rows RLY-07 and RLY-08: relay#6 and #7.
-- **Pin.** fabric-agent-contract `51719e4`, the merge of #61. Re-pinning to the merge of the contract's iteration
-  pull request (N19) is wave 2's node RP.
+- **Pin.** fabric-agent-contract `51719e4`, the merge of #61, until wave 2's node RP moved it to `bf3fd6b` (above).
 - **In review (wave 1 of release iteration 1):**
   - relay#8: FB-0 (Worker split), F-1 (the serializable session record and the runtime-neutral estate hub) and F-2
     (the Worker on one hibernating Durable Object per estate).

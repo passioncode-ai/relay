@@ -23,9 +23,11 @@ test("through the Worker a machine sees another come online and go offline, and 
   a.ws.close(1000, "done");
   await b.until(() => b.frames.some((f) => f.type === "presence" && f.kid === e.machine.kid && f.state === "offline"));
   b.ws.send(JSON.stringify({ v: 1, type: "presence-query", id: "q1", kids: [e.machine.kid, e.second.kid, "m-stranger#sig"] }));
-  await b.until(() => b.frames.filter((f) => f.type === "presence").length >= 4);
-  const answered = b.frames.filter((f) => f.type === "presence").slice(-2).map((f) => [f.kid, f.state]);
-  assert.deepEqual(answered, [[e.machine.kid, "offline"], [e.second.kid, "online"]]);
+  await b.until(() => b.frames.some((f) => f.type === "presence-result"));
+  const result = b.frames.find((f) => f.type === "presence-result")!;
+  assert.equal(result.replyTo, "q1");
+  assert.deepEqual(result.presences.map((p: Record<string, string>) => [p.kid, p.state]), [[e.machine.kid, "offline"], [e.second.kid, "online"]]);
+  assert.deepEqual(result.unknown, ["m-stranger#sig"]);
   b.ws.close(1000, "done");
   await remove();
 });
@@ -61,8 +63,8 @@ test("a deploy drops every socket without a close: after the restart, a machine 
     await b.until(() => b.frames.some((f) => f.type === "welcome"));
     // lastSeen survived the restart in the hub's storage; who was connected did not.
     b.ws.send(JSON.stringify({ v: 1, type: "presence-query", id: "q1", kids: [e.machine.kid] }));
-    await b.until(() => b.frames.some((f) => f.type === "presence"));
-    const answered = b.frames.find((f) => f.type === "presence")!;
+    await b.until(() => b.frames.some((f) => f.type === "presence-result"));
+    const answered = b.frames.find((f) => f.type === "presence-result")!.presences[0];
     assert.deepEqual([answered.kid, answered.state, answered.lastSeen], [e.machine.kid, "offline", seen]);
     const a = await session(second);
     await a.until(() => a.frames.length >= 1);

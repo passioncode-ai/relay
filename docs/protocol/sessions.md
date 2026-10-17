@@ -5,22 +5,35 @@ findings in release iteration 1's inventory (Project Observatory `docs/runs/2026
 letter-number ids such as A-4 are that iteration's nodes.
 
 How this relay runs a `fabric-relay/0.1` session. The protocol is fabric-agent-contract's DEC-0047 (merged at
-`8060254`), on top of DEC-0055's estate record. This page says how the code applies it; the contract's
-[relay specification at the pinned commit `51719e4`](https://github.com/passioncode-ai/fabric-agent-contract/blob/51719e4/docs/specification/relay.md)
-is the authority on every rule. Iteration node RP re-pins the relay to `464c45e` (fabric-agent-contract #70), and
-this link moves with the pin.
+`8060254`) as amended by DEC-0066, on top of DEC-0055's estate record. This page says how the code applies it; the
+contract's
+[relay specification at the pinned commit `bf3fd6b`](https://github.com/passioncode-ai/fabric-agent-contract/blob/bf3fd6b2a9387ee501ef635de4e26524c3ea2b4f/docs/specification/relay.md)
+is the authority on every rule (iteration node RP moved the pin from `51719e4`). Where a DEC-0066 rule is not applied
+yet, this page names the iteration node that owns it.
 
 ## The contract, vendored
 
 - `fabric-contract.lock.json` pins one contract commit.
-- `scripts/vendor-contract.ts <checkout>` copies, byte for byte, the closure of the contract's `src/relay.ts` and
-  `src/secret-envelope.ts` into `src/contract/`. It also copies the contract's vectors into `tests/vectors/`.
+- `scripts/vendor-contract.ts <checkout>` copies, byte for byte, the closure of the contract's `src/relay.ts`,
+  `src/secret-envelope.ts` and `src/relay-vectors.ts` (the shared-vector runner) into `src/contract/`. It also copies
+  the contract's vectors into `tests/vectors/`.
 - The script records each file's SHA-256 in `src/contract/VENDORED.json`. `tests/contract.test.ts` refuses a drifted
-  file or a manifest of another commit, and runs the vectors.
+  file or a manifest of another commit, and runs **every case of the shared vectors** through the vendored runner
+  (DEC-0066 "Shared vectors": `relayVectorResults`, `envelopeVectorResults`, `placementVectorResults`), one test per
+  case group. The `admit` group runs a second time through `RelaySession` itself, so the session answers what `admit`
+  answers.
+- Tests sign through the contract's `signEs256` only (`tests/test-signer.ts`): it emits the low-S form a relay admits.
 - The relay never re-implements a check the contract owns.
-- **The estate-record schema validator is compiled ahead of time.** Ajv 8.17.1 generates standalone code, and esbuild
-  bundles it into `src/contract/estate-record.validate.js`. The reason: Ajv compiles with `new Function`, which a
-  Worker forbids. The bundled module has no `require` and loads the same way under Node and in workerd.
+- **The schema validators are compiled ahead of time.** Ajv 8.17.1 generates standalone code, and esbuild bundles it
+  into `src/contract/estate-record.validate.js` and `src/contract/relay-frame.validate.js` (the frame schema with the
+  revocation-delta and heartbeat schemas it references). The reason: Ajv compiles with `new Function`, which a Worker
+  forbids. The bundled modules have no `require` and load the same way under Node and in workerd.
+- **A frame is validated against its own type's branch.** The frame module exports one validator per frame `type`
+  (each `oneOf` branch has its own `type` const, which the script checks) plus `frame`, the whole schema, and fails
+  fast. The whole schema under `allErrors` runs all sixteen branches to the end: about 200 µs for a ping with a
+  128-code-point id against about 1 µs without the schema, which slowed a ping flood enough that the round-8 flow
+  tests stopped reaching the byte cap within 30 s. `tests/frames.test.ts` checks that each type's validator answers
+  what the whole schema answers.
 - **Moving the pin** is one change:
   1. update the lock;
   2. re-run the script;
@@ -35,8 +48,14 @@ this link moves with the pin.
     `verifyEstateRecord` accepts it against the revision held (revision 1: against the pinned passkeys);
   - revisions are offered in order, and the first one refused stops the walk;
   - a refused revision changes nothing.
-- **Fails closed.** With no verified record, or once the held revision's window has ended, the relay admits nobody
-  (`not-admitted`, close 4403).
+- **Fails closed.** With no verified record, or once the held revision's window has ended, the relay admits nobody:
+  every `auth` is refused `unauthenticated`, close 4401 (DEC-0066: before the signer is proven there is one answer).
+- **One estate per origin.** `admit` compares the estate the machine signed with the held record's `estate`
+  (`AuthContext.estate`), and nowhere else; a proof for another estate is `unauthenticated`. The relay never keys
+  anything by the estate id: its Durable Object names and R2 keys come from `src/cloudflare/context.ts` (RLY-08).
+- **The admission set** is the contract's: the held record's machines' `#sig` keys, minus revocations and minus every
+  key that could never verify (an Ed25519 key, or one SEC 1 refuses), which `relayAdmissionSet` lists in `excluded`.
+  Revocations from verified delta entries (`extraRevocations`) arrive with the delta (wave 4, H-1).
 - **Where the estate is kept.** It is never in this repository:
   - hosted: R2 `estate/pinned.json` and `estate/revisions/<n>.json`;
   - portable: `RELAY_DATA_DIR/estate/pinned.json` and `revisions/<n>.json`.
@@ -46,7 +65,10 @@ this link moves with the pin.
   contract like any other bad revision, so the revisions before it still hold. A read that fails is logged
   `estate-unreadable` and loses no event: the hub keeps what it held, which after a wake is nothing, and then admits
   nobody (fail closed). Presence follows that empty set: while no estate is held, a machine coming or going is not
-  announced and a query answers nothing; `lastSeen` is still written, and answers again once a read succeeds. Re-checking open sessions when the set changes is iteration node A-4's.
+  announced and a query names every kid `unknown`; `lastSeen` is still written, and answers again once a read succeeds.
+  Re-checking open sessions when the set changes (DEC-0066: `not-admitted` or `expired`, close 4403, before any frame
+  is sent or accepted for the session) is iteration node A-4's; until it lands an open session keeps its admission
+  until it closes.
 
 ## One session
 
@@ -54,23 +76,39 @@ this link moves with the pin.
 
 1. **`hello`** carries `{protocol, relay, nonce, time}`. The nonce is 32 random bytes, used once.
 2. **`auth`** must arrive within 10 s. It is checked by the contract's `admit` against the admission set, keyed by
-   `kid`.
-3. **`welcome`** answers a successful `auth` with `{session, estateRevision, deltaHead, heartbeat: null}`.
+   `kid`, and the held record's estate. The whole `auth` frame is `admit`'s to judge, schema included, in its own
+   order and with its own codes: an `auth` with no `alg` is `unsupported-alg`, one whose `sig` is not a string
+   `unauthenticated`, never `malformed`.
+3. **`welcome`** answers a successful `auth` with `{session, estateRevision, deltaHead, heartbeat: null}` and no
+   `limits` (optional; advertised with the limits of iteration node D-2).
    - `estateRevision` is the verified revision.
-   - Until RLY-07 carries DEC-0054's revocation delta, `deltaHead` is `{sequence: 0, sha256: <SHA-256 of no bytes>}`.
-4. **Refusals.** A failed `auth` is answered with a named `error`, then a close:
+   - Until the relay carries DEC-0054's revocation delta (wave 4, H-1), `deltaHead` is the delta's head before any
+     entry: `{sequence: 0, sha256: deltaGenesis(<the held record's estate>)}`.
+4. **Refusals.** A failed `auth` is answered with an `error`, then a close, both from the contract's `closeCodeFor`:
    - `unauthenticated`, `unsupported-alg`, `not-yet-valid`, `protocol-unsupported` and `replay` close with 4401;
-   - `not-admitted` closes with 4403.
-5. **After `welcome`:**
-   - `ping` is answered with `pong`;
+   - past the frame's own bytes and the nonce there is one answer, `unauthenticated` (DEC-0066): an unknown kid, a
+     revoked one, a relay holding no record or an expired one, another estate, a bad or high-S signature;
+   - the message is fixed per code; the reason (no record, expired, an unknown kid) goes to the log line
+     `auth-refused` only;
+   - 4403 is sent only to a session whose signer was proven (A-4's revalidation, not yet applied).
+5. **After `welcome`** (`src/core/frames.ts` classifies each frame against the relay-frame schema, compiled ahead of
+   time, and FAC-SEM-071):
+   - every answer carries `replyTo`, the id of the frame it answers, and its own fresh `id`: an `error` answering a
+     frame, `accepted`, `pong`, `presence-result`;
+   - `ping` is answered with `pong {replyTo}`;
    - `send`, `deliver` and `ack` are store-and-forward (see [Messages](#messages));
-   - `presence` and `presence-query` are [presence](#presence);
-   - a known frame type not yet served (deltas and heartbeats: RLY-07) gets `error` `internal` "not served by this
-     relay version yet";
-   - an unknown type gets `unknown-type`, and the session stays open;
-   - a frame whose `id` is empty or longer than 128 code points (the relay-frame schema's limit) is not a
-     fabric-relay/0.1 frame: it gets `unknown-type` with no `replyTo`, so the id is never echoed, and the session stays
-     open (before `auth` it is refused `unauthenticated`, 4401).
+   - `presence-query` is answered with one `presence-result` ([presence](#presence));
+   - a type a node never sends (`hello`, `welcome`, `accepted`, `deliver`, `presence`, `presence-result`, `error`) or
+     no type the protocol knows gets `unknown-type`;
+   - a known type that fails the schema or FAC-SEM-071 gets `malformed` (a `send` with `ttl` 0, `kids` that is not a
+     list);
+   - unknown members are ignored;
+   - a known frame type not yet served (`delta`, `heartbeat`, `delta-query`: wave 4, H-1 and H-2) gets `error`
+     `internal` "not served by this relay version yet";
+   - text that is not a `{v: 1, type, id}` frame, including an `id` that is empty or longer than 128 code points, gets
+     `malformed` with no `replyTo`, so the id is never echoed;
+   - every one of these leaves the session open (before `auth`, anything but `auth` is refused `unauthenticated`,
+     4401).
 6. **Transport closes:**
    - a binary frame closes with 1003;
    - a frame over 1 MiB gets `too-large`, then 1009;
@@ -104,13 +142,17 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
 
 - **`send`.** It is checked by the contract's FAC-SEM-071 (`relay-rules.ts`): a `#sig` recipient, a `ttl` of 1 s to
   7 days, a body of at most 765 KiB decoded.
-  - A body over the limit gets `too-large`.
-  - Any other violation, or a missing `msgId`, `to` or `body`, gets `unknown-type`, naming the rule's path.
+  - A body over the limit gets `too-large`, whatever else the frame breaks.
+  - Any other violation of the schema or FAC-SEM-071, or a missing `msgId`, `to` or `body`, gets `malformed`, naming
+    the path. So does a `msgId` with a control character or a lone surrogate (this relay's own rule: stores would
+    truncate or collapse it).
   - The recipient must be a machine the relay admits, else `unknown-recipient`.
   - If the recipient's mailbox already holds 1000 messages, the answer is `mailbox-full`. DEC-0047 leaves quotas
     undecided; 1000 is this relay's own limit.
-  - On success the relay answers `accepted {msgId, seq}`. `seq` is monotonic per mailbox.
+  - On success the relay answers `accepted {replyTo, msgId, seq}`. `seq` is monotonic per mailbox.
   - A repeat of the same `(from, msgId)` while it is still queued answers its first `seq` and is not delivered again.
+    DEC-0066 extends this past the ack, with a tombstone until the `ttl`, and adds `rate-limited` with `retryAfter`
+    and the advertised `welcome.limits`: iteration node D-2.
 - **`deliver`.** Every connection the recipient holds gets each unacknowledged message once, in `seq` order. A
   connection that opens later gets what waited for it. Where the transport reports a backlog (the portable build),
   delivery goes at the pace the machine reads (see Flow control); the Worker's hibernatable socket reports none, so
@@ -141,11 +183,13 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
   ended.
   - Frames move it at most once per 30 s (`TOUCH_INTERVAL_SECONDS`).
   - It never moves back.
-- **`presence-query {kids}`** gets one `presence` frame for each asked kid of the estate that the relay has seen, in
-  the order asked.
-  - A kid outside the set, or one the relay never saw, gets no frame. The relay invents no time.
-  - More than 256 kids, or `kids` that is not a list of kids, gets `unknown-type`.
-  - A node that sends `presence` itself gets `unknown-type`.
+- **`presence-query {kids}`** gets one `presence-result {replyTo, presences, unknown}` (DEC-0066). Every asked kid
+  appears exactly once, in the order first asked (a kid asked twice is answered once):
+  - in `presences` as `{kid, state, lastSeen}` when it is in the current admission set and the relay has seen it;
+  - in `unknown` otherwise. A kid outside the set (another owner's, a revoked one) and a kid never seen are alike, so
+    nothing leaks across owners. The relay invents no time.
+  - More than 256 kids, or `kids` that is not a list of kids, gets `malformed`.
+  - A node that sends `presence` or `presence-result` itself gets `unknown-type`.
 - **The offline rule (Fabric ADR-0088).** A sender learns that its message was queued (`accepted {msgId, seq}`), and
   nothing after that.
   - The relay never tells a sender that a message was delivered, acknowledged or done.
@@ -164,16 +208,26 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
 - **The wire form is the contract's.** `PUT`/`GET /v1/blobs/<digest>` carry `Fabric-Relay-Request`, whose wire form is
   annotated under DEC-0047 (fabric-agent-contract #60). The contract's `verifyBlobRequest` decides who may ask,
   against the same verified admission set as sessions, read on each request.
-- **Storing a blob.**
-  - The relay recomputes the digest on `PUT`: a mismatch gets 422 `digest-mismatch`.
-  - It keeps the blob's recipient list.
-  - It refuses a body over 32 MiB with 413.
+- **The order of checks** is DEC-0066's: authenticate, then authorize, then touch state, then answer
+  (`src/core/blobs.ts`).
+  1. The header's form, `alg`, the recipients and `iat` within 60 s (`verifyBlobRequest`): 400, 431, 401.
+  2. A `PUT` declares its `Content-Length`, at most 32 MiB (`MAX_BLOB_BYTES`): else 411 `malformed` or 413
+     `too-large`. This answer depends only on the request's own bytes, so it comes before the signer is proven; the
+     portable server leaves a blob `PUT`'s length to this step rather than refusing it first.
+  3. The signer's key in the current admission set and the signature under it (`verifyBlobRequest`): one answer, 401
+     `unauthenticated`, for an unknown kid, a revoked one, a relay holding no record and a bad or high-S signature.
+  4. A `PUT`: every recipient admitted (403 `unknown-recipient`); the body read through a counting reader, at most its
+     declared length (413, and the portable server closes the connection after any refused `PUT`); the bytes hash to
+     the digest (422 `digest-mismatch`, whatever the state).
+  5. The state (`decideBlobAccess`). A `PUT`: not held, expired or done is stored, 201; the same recipient list again is
+     200 and restores an object the store lost; another list is 409 `recipients-mismatch`, never merged. A `GET`: a
+     live record, its object present, the signer a recipient, the signed list equal to the stored one letter for
+     letter: 200. Anything else (not held, expired, not a recipient, another list, an object lost) is one 403
+     `not-admitted`, never 404. The relay does not say whether a blob exists.
   - A blob path that is not valid percent-encoding (`/v1/blobs/%`) is 400 `malformed`.
 - **Serving a blob.** It re-checks the digest on `GET` before serving.
 - **Deletion.** A blob is deleted once every stored recipient fetched it (counted per kid), or after 7 days, when it
   is next requested.
-  - A `GET` for a blob the relay does not hold gets 403 `not-admitted`, the same answer as a machine that may not
-    fetch it. The relay does not say whether a blob exists.
 - **Where blobs are kept.**
   - Hosted: R2, the blob under its digest and its index under `blobindex/<digest>`.
   - Portable: `RELAY_DATA_DIR/blobs/sha256/` and `blobs/index/`.
@@ -193,7 +247,9 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
     and only when `RELAY_HOST` is a loopback literal too; the name `localhost` is refused, since a name resolves where
     a literal cannot. Its host must mean what it says: an IPv4 address written as four decimal parts (a URL reads
     `127.010.0.1` as `127.8.0.1`, `0x7f.1` and `127.1` as `127.0.0.1`), no trailing dot, no empty label
-    (`.relay.test`), and no port 0.
+    (`.relay.test`), and no port 0. Last, the normalised origin must match the contract's `RELAY_ORIGIN_PATTERN`
+    (`isRelayOrigin`, DEC-0066), the rule a node applies to `hello.relay`: one the URL parser accepts and the contract
+    refuses (a name over 253 characters) refuses to start.
   - `RELAY_ORIGIN` unset: allowed only when `RELAY_HOST` is a loopback literal. The origin is then the URL parser's
     origin of `http://RELAY_HOST:<bound port>`, computed after listen, and logged as `origin-defaulted`; only a local
     machine can authenticate. It is canonical, not `RELAY_HOST` verbatim: `0:0:0:0:0:0:0:1` gives `http://[::1]:<port>`
@@ -231,9 +287,9 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
     - **Replies to a machine that never reads are capped.** A reply is small because what the relay echoes is held to
       the relay-frame schema: a frame's `id` (echoed as a `pong`'s id or an error's `replyTo`) and a `send`'s `msgId`
       (echoed in `accepted` and `deliver`) are 1 to 128 code points, a recipient 1 to 256, and a body base64url
-      characters only. A frame with a longer or empty `id` is refused like any frame that is not fabric-relay/0.1
-      (`error unknown-type` with no `replyTo`; before `auth`, `unauthenticated` and 4401); a `send` with a bad `msgId`,
-      recipient or body gets `error unknown-type`; neither echoes what it refused. So the largest frame the relay sends
+      characters only. A frame with a longer or empty `id` is refused like any text that is not a fabric-relay/0.1 frame
+      (`error malformed` with no `replyTo`; before `auth`, `unauthenticated` and 4401); a `send` with a bad `msgId`,
+      recipient or body gets `error malformed`; neither echoes what it refused. So the largest frame the relay sends
       is a `deliver` of the largest body, under `MAX_FRAME_BYTES`. The caps are checked before each write: a write
       that would take the socket's queue past 3 MiB (`SEND_CAP` = `SEND_HIGH` plus two 1 MiB frames, just above what
       deliveries can reach) or past 4096 frames not yet handed to the kernel (`SEND_FRAMES_CAP`: each queued write

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://fabric.passioncode.ai/agent-contract/0.1.0/schemas/estate-record.schema.json",
   "title": "Estate record (estate-record/1)",
-  "description": "DEC-0055: one revision of one person's estate — the passkeys that sign it, the machines with their device keys and a certificate of each hub key, the packages placed per machine, secret placements by reference, share grants and revocations. Each revision names its parent's digest and is signed by a passkey assertion (WebAuthn Level 3) over a challenge derived from its digest. The digest is SHA-256 over RFC 8785 of this document without digest and signature. docs/specification/estate-record.md.",
+  "description": "DEC-0055: one revision of one person's estate — the passkeys that sign it, the machines with their device keys and a certificate of each hub key, the packages placed per machine and context (DEC-0082), secret placements by reference, share grants and revocations. Each revision names its parent's digest and is signed by a passkey assertion (WebAuthn Level 3) over a challenge derived from its digest. The digest is SHA-256 over RFC 8785 of this document without digest and signature. docs/specification/estate-record.md.",
   "type": "object",
   "required": [
     "schema",
@@ -87,7 +87,7 @@
           }
         ]
       },
-      "description": "Share grants (DEC-0037, DEC-0039): standing grants to a person or organization outside the estate, each a delegation grant with an audience."
+      "description": "Share grants (DEC-0037, DEC-0039): standing grants to a person or organization outside the estate, each a delegation grant with an audience. A share grant into an organization carries its context, org:<orgId>, never personal (DEC-0082, FAC-SEM-110); an instance placed in that context names it (FAC-SEM-111)."
     },
     "revocations": {
       "type": "array",
@@ -218,8 +218,8 @@
         "rpId": {
           "type": "string",
           "maxLength": 253,
-          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$",
-          "description": "The RP ID of the dedicated signing credential (v4 §7: sign.<domain>, never the sign-in one)."
+          "pattern": "^sign(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?){2,}$",
+          "description": "The RP ID of the dedicated signing credential: sign.<domain>, never the sign-in one (DEC-0063, FAC-SEM-092); every pinned origin is on it or a host under it."
         },
         "origins": {
           "type": "array",
@@ -316,7 +316,7 @@
         },
         "hubKey": {
           "$ref": "#/$defs/edKey",
-          "description": "The certificate of the hub key on this machine: the passkey-signed record binds this kid and public key to this machine. A delegation verifier trusts a token's kid only when a current revision certifies it."
+          "description": "The certificate of the hub key on this machine: the passkey-signed record binds this kid and public key to this machine. A delegation verifier that reads the record trusts a token's kid only while the revision it reads certifies it: one it verified and the highest its machine applied (delegation.md DL-14, hubKeyCertified, DEC-0060)."
         },
         "packages": {
           "type": "array",
@@ -341,6 +341,14 @@
                 "minLength": 1,
                 "maxLength": 128,
                 "description": "The publisher key, in publisherKeys, its publisher signature verifies under."
+              },
+              "context": {
+                "$ref": "common.schema.json#/$defs/contextId",
+                "description": "DEC-0082: the context this instance runs in; absent means personal. An agent is placed once per machine and context (FAC-SEM-074), so one agent may run on one machine as a personal instance and as an instance in each organization it is shared into."
+              },
+              "grant": {
+                "$ref": "common.schema.json#/$defs/uri",
+                "description": "DEC-0082: the share grant this instance runs under, by its meta.id. Named exactly when the context is org:<orgId>: a grant of this record's shareGrants, matched by normal form (DEC-0076), whose context is the placement's, not revoked by the record (FAC-SEM-111). A personal placement names none."
               }
             },
             "additionalProperties": false
@@ -368,11 +376,15 @@
               "from": {
                 "$ref": "activity-common.schema.json#/$defs/opaqueId",
                 "description": "The machine, in this record, whose vault holds the slot; the value travels sealed to this machine's #kem key, never in the record."
+              },
+              "context": {
+                "$ref": "common.schema.json#/$defs/contextId",
+                "description": "DEC-0082: the context of the placed instance whose slot this fills; absent means personal. A slot is placed once per agent and context (FAC-SEM-075)."
               }
             },
             "additionalProperties": false
           },
-          "description": "Secret placements: where a slot of a package placed here is filled from. No member can hold a value."
+          "description": "Secret placements: where a slot of a package placed here is filled from, for the instance of that agent in a context (DEC-0082). No member can hold a value."
         }
       },
       "additionalProperties": false

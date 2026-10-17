@@ -16,13 +16,14 @@
 // next needs `tick()`, and the hub runs one timer for all of them.
 
 import type { AdmissionResult } from "../contract/relay.ts";
-import { relayRules } from "../contract/relay-rules.ts";
-import { MAX_BODY_BYTES } from "../contract/relay.ts";
+import { MAX_BODY_BYTES, closeCodeFor } from "../contract/relay.ts";
+import { deltaGenesis } from "../contract/revocation-delta.ts";
+import { classifyFrame, MAX_ID_LENGTH, type Frame } from "./frames.ts";
 import { errorFields } from "./log.ts";
 import type { MailboxStore } from "./mailbox.ts";
 import { TOUCH_INTERVAL_SECONDS, type PresenceRecord } from "./presence.ts";
 import {
-  AUTH_DEADLINE_SECONDS, CLOSE_CODES, FRAME_TYPES, IDLE_CLOSE_SECONDS, MAX_FRAME_BYTES, RELAY_PROTOCOL, admit,
+  AUTH_DEADLINE_SECONDS, CLOSE_CODES, IDLE_CLOSE_SECONDS, MAX_FRAME_BYTES, RELAY_PROTOCOL, admit,
   type AuthFrame, type RelayErrorCode,
 } from "../contract/relay.ts";
 
@@ -113,12 +114,25 @@ export const IDLE_OUTSTANDING_MS = 5 * 60 * 1000;
 export type SessionState = "awaiting-auth" | "admitted" | "closed";
 
 /**
- * Until RLY-07 carries DEC-0054's revocation delta, a relay has carried none: the head is sequence 0 over no bytes. It has
- * the check-in's `records.revocationDelta` shape, so a node can report it unchanged.
+ * The revocation delta's head before any entry (DEC-0054): sequence 0, `sha256` the estate's genesis hash
+ * (`deltaGenesis`). Until the relay carries the delta (wave 4, H-1 and H-2) every `welcome` names this head. It has the
+ * check-in's `records.revocationDelta` shape, so a node can report it unchanged.
  */
-export const EMPTY_DELTA_HEAD = { sequence: 0, sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" } as const;
+export const genesisDeltaHead = (estate: string) => ({ sequence: 0, sha256: deltaGenesis(estate) });
 
-const SERVED = ["hello", "auth", "welcome", "ping", "pong", "error"];
+/**
+ * The message of an `error` refusing `auth`: fixed per code. Why (no record, expired, another estate, an unknown kid)
+ * goes to the relay's log, never to the client (DEC-0066).
+ */
+const AUTH_REFUSAL_MESSAGES: Partial<Record<RelayErrorCode, string>> = {
+  "protocol-unsupported": "this relay speaks fabric-relay/0.1",
+  "unsupported-alg": "sign relay-auth/1 with ES256",
+  "not-yet-valid": "iat is ahead of the relay's clock",
+  replay: "this connection's nonce was already used",
+  unauthenticated: "authentication failed",
+};
+/** Frame types the relay knows and does not serve yet: the revocation delta and heartbeat (wave 4, H-1 and H-2). */
+const NOT_SERVED_YET = ["delta", "heartbeat", "delta-query"];
 /**
  * How many mailbox entries a flush reads at a time. Where the transport reports a backlog (the portable build) a page
  * is small, so a session holds little more than it can send: 4. Where it cannot (the Worker's hibernatable socket), a
@@ -130,18 +144,11 @@ export const FLUSH_PAGE_UNPACED = 64;
 /**
  * The longest frame `id` and `msgId` (the relay-frame schema's maxLength, counted in code points as JSON Schema counts
  * them): a longer one is refused and never echoed, so nothing the relay sends back is larger than a frame it would send
- * itself, and no `deliver` can exceed MAX_FRAME_BYTES.
+ * itself, and no `deliver` can exceed MAX_FRAME_BYTES. (Held in frames.ts; re-exported for the adapters' tests.)
  */
-export const MAX_ID_LENGTH = 128;
-/** A string's length in code points, as JSON Schema's maxLength counts it (an emoji is one, not two UTF-16 units). */
-const codePoints = (text: string) => { let n = 0; for (const _ of text) n += 1; return n; };
-const BASE64URL = /^[A-Za-z0-9_-]+$/;
+export { MAX_ID_LENGTH };
 /** Close code for a session refused because its machine holds as many as it may: "try again later" (RFC 6455 §7.4.1). */
 export const CLOSE_TRY_AGAIN_LATER = 1013;
-const MAIL = ["send", "ack"];
-/** The most kids one `presence-query` may name, and the longest kid (the relay-frame schema's limits). */
-const MAX_QUERY_KIDS = 256;
-const MAX_KID_LENGTH = 256;
 /**
  * Whether `text` takes more than `limit` bytes as UTF-8, counted without encoding it: a frame near 1 MiB is not copied
  * just to be measured.
@@ -164,8 +171,6 @@ function utf8Exceeds(text: string, limit: number): boolean {
 }
 /** The decoded length of a base64url string, without decoding it (the core uses web-standard APIs only). */
 const base64urlLength = (text: string) => Math.floor(text.replace(/=+$/, "").length * 3 / 4);
-const isFrame = (value: unknown): value is { v: unknown; type: unknown; id: unknown } & Record<string, unknown> =>
-  !!value && typeof value === "object" && !Array.isArray(value);
 
 export class RelaySession {
   state: SessionState = "awaiting-auth";
@@ -262,31 +267,47 @@ export class RelaySession {
       this.error("too-large", `frames are at most ${MAX_FRAME_BYTES} bytes`);
       return this.close(CLOSE_CODES.tooLarge, "frame too large");
     }
-    let frame: unknown;
+    let parsed: unknown;
     try {
-      frame = JSON.parse(data);
+      parsed = JSON.parse(data);
     } catch {
-      frame = undefined;
+      parsed = undefined;
     }
-    // An id the relay would echo (a pong's id, an error's replyTo) is held to the schema's length, so a reply is never
-    // larger than a frame the relay itself would send.
-    if (!isFrame(frame) || frame.v !== 1 || typeof frame.type !== "string" || typeof frame.id !== "string"
-      || frame.id.length < 1 || codePoints(frame.id) > MAX_ID_LENGTH) {
-      if (this.state === "awaiting-auth") return this.refuse("unauthenticated", "the first frame is a fabric-relay/0.1 auth frame");
-      return this.error("unknown-type", "not a fabric-relay/0.1 frame");
+    const classified = classifyFrame(parsed);
+    // Before `auth`, anything but an auth frame is `unauthenticated` and closes 4401.
+    if (this.state === "awaiting-auth") {
+      if (classified.kind === "frame" && classified.frame.type === "auth") return this.authenticate(classified.frame as unknown as AuthFrame);
+      return this.refuse("unauthenticated", "the first frame is a fabric-relay/0.1 auth frame");
     }
-    if (frame.type === "auth") return this.authenticate(frame as unknown as AuthFrame);
-    if (this.state === "awaiting-auth") return this.refuse("unauthenticated", "authenticate before any other frame");
+    // Text that is not a {v: 1, type, id} frame: malformed, with no replyTo, so a bad id is never echoed.
+    if (classified.kind === "not-frame") return this.error("malformed", "not a fabric-relay/0.1 frame");
+    const frame = classified.frame;
     await this.touch();
-    if (frame.type === "ping") return this.send({ type: "pong", id: frame.id });
-    if (frame.type === "pong") return;
-    if (MAIL.includes(frame.type) && this.env.mailbox) return frame.type === "send" ? this.send_(frame) : this.ack(frame);
-    if (frame.type === "presence-query" && this.env.hub?.presence) return this.presenceQuery(frame);
-    if (frame.type === "presence" && this.env.hub?.presence) return this.error("unknown-type", "presence is sent by the relay, not to it", frame.id);
-    if ((FRAME_TYPES as readonly string[]).includes(frame.type) && !SERVED.includes(frame.type)) {
-      return this.error("internal", `${frame.type} is not served by this relay version yet`, frame.id);
+    if (classified.kind === "unknown-type") {
+      return this.error("unknown-type", `a node does not send ${JSON.stringify(frame.type).slice(0, 64)}`, frame.id);
     }
-    return this.error("unknown-type", `unknown frame type ${JSON.stringify(frame.type).slice(0, 64)}`, frame.id);
+    // A send whose body is over the limit is too-large, whatever else the schema finds (FAC-SEM-071).
+    if (frame.type === "send" && typeof frame.body === "string" && base64urlLength(frame.body) > MAX_BODY_BYTES) {
+      return this.error("too-large", `a body is at most ${MAX_BODY_BYTES} bytes decoded`, frame.id);
+    }
+    if (classified.kind === "malformed") return this.error("malformed", `not a valid ${frame.type} frame (${classified.where})`, frame.id);
+    switch (frame.type) {
+      case "auth":
+        return this.authenticate(frame as unknown as AuthFrame); // a second auth: the nonce admits once (replay)
+      case "ping":
+        return this.send({ type: "pong", replyTo: frame.id });
+      case "pong":
+        return;
+      case "send":
+        return this.env.mailbox ? this.send_(frame as Frame & { to: string; msgId: string; body: string; ttl: number }) : this.error("internal", "send is not served by this relay version yet", frame.id);
+      case "ack":
+        return this.env.mailbox ? this.ack(frame) : this.error("internal", "ack is not served by this relay version yet", frame.id);
+      case "presence-query":
+        return this.env.hub?.presence ? this.presenceQuery(frame) : this.error("internal", "presence-query is not served by this relay version yet", frame.id);
+      default:
+        if (NOT_SERVED_YET.includes(frame.type)) return this.error("internal", `${frame.type} is not served by this relay version yet`, frame.id);
+        return this.error("unknown-type", `unknown frame type ${JSON.stringify(frame.type).slice(0, 64)}`, frame.id);
+    }
   }
 
   /** Called by the hub's one timer at `nextDeadline()`: the 10 s auth deadline and the 90 s idle close (DEC-0047 item 3). */
@@ -305,16 +326,19 @@ export class RelaySession {
 
   private async authenticate(frame: AuthFrame): Promise<void> {
     const admission = this.env.admission();
+    // The held record's estate: `admit` compares the signed estate with it and nowhere else (DEC-0066); it is never an
+    // identifier or a key a connection can see.
+    const estate = admission.ok && typeof admission.held.estate === "string" ? admission.held.estate : undefined;
     const result = admit(frame, {
-      relay: this.relay, nonce: this.nonce, nonceUsed: this.nonceUsed, now: this.env.now(),
+      relay: this.relay, estate, nonce: this.nonce, nonceUsed: this.nonceUsed, now: this.env.now(),
       admittedKey: (kid) => (admission.ok ? admission.set.get(kid) : undefined),
     });
     this.nonceUsed = true;
-    if (!result.ok) {
-      this.env.log?.({ event: "auth-refused", code: result.code, admission: admission.ok ? "held" : admission.refusal });
-      return this.refuse(result.code, admission.ok || result.code !== "not-admitted" ? result.code : `no verified estate record (${admission.refusal})`);
+    if (!result.ok || !admission.ok || estate === undefined) {
+      const code = result.ok ? "unauthenticated" : result.code;
+      this.env.log?.({ event: "auth-refused", code, admission: admission.ok ? "held" : admission.refusal });
+      return this.refuse(code, AUTH_REFUSAL_MESSAGES[code] ?? "authentication failed");
     }
-    if (!admission.ok) return this.refuse("not-admitted", `no verified estate record (${admission.refusal})`); // unreachable: admit found no key
     if (this.env.hub?.hasRoom && !this.env.hub.hasRoom(result.kid)) {
       try {
         this.error("rate-limited", "this machine already holds as many relay sessions as it may; close one and try again");
@@ -329,7 +353,7 @@ export class RelaySession {
     this.env.log?.({ event: "admitted", kid: result.kid, revision: admission.revision });
     this.connection = this.env.sessionId();
     this.lastTouch = this.env.now().getTime();
-    this.send({ type: "welcome", session: this.connection, estateRevision: admission.revision, deltaHead: EMPTY_DELTA_HEAD, heartbeat: null });
+    this.send({ type: "welcome", session: this.connection, estateRevision: admission.revision, deltaHead: genesisDeltaHead(estate), heartbeat: null });
     // In the hub's set first, then the first delivery: a message queued in between wakes this session (RLY-013).
     this.env.hub?.joined(this);
     if (this.env.mailbox) void this.wake();
@@ -362,50 +386,37 @@ export class RelaySession {
   }
 
   /**
-   * `presence-query {kids}`: one `presence` frame per kid of this estate's admitted set that the relay has seen. A kid
-   * outside the set, or never seen, gets no frame: the relay says nothing about machines of another owner and invents
-   * no time for one it never saw.
+   * `presence-query {kids}` (DEC-0066): one `presence-result {replyTo, presences, unknown}`. Every asked kid appears
+   * exactly once: in `presences` when it is of this estate's admitted set and the relay has seen it, else in `unknown`
+   * — a kid of another owner and a kid never seen alike, so nothing leaks across owners and no time is invented.
    */
-  private async presenceQuery(frame: Record<string, unknown>): Promise<void> {
-    const kids = frame.kids;
-    if (!Array.isArray(kids) || kids.length > MAX_QUERY_KIDS || !kids.every((kid) => typeof kid === "string" && kid.length >= 1 && kid.length <= MAX_KID_LENGTH)) {
-      return this.error("unknown-type", `not a valid presence-query frame (kids: 0 to ${MAX_QUERY_KIDS} kids)`, frame.id as string);
-    }
+  private async presenceQuery(frame: Frame): Promise<void> {
+    const kids = [...new Set(frame.kids as string[])];
     const admission = this.env.admission();
-    const asked = admission.ok ? (kids as string[]).filter((kid) => admission.set.has(kid)) : [];
-    for (const record of await this.env.hub!.presence!.query(asked)) {
-      if (this.state !== "admitted") return;
-      this.send({ type: "presence", kid: record.kid, state: record.state, lastSeen: record.lastSeen });
-    }
+    const asked = admission.ok ? kids.filter((kid) => admission.set.has(kid)) : [];
+    const records = await this.env.hub!.presence!.query(asked);
+    if (this.state !== "admitted") return;
+    const seen = new Map(records.map((record) => [record.kid, record]));
+    const presences = kids.filter((kid) => seen.has(kid)).map((kid) => {
+      const record = seen.get(kid)!;
+      return { kid, state: record.state, lastSeen: record.lastSeen };
+    });
+    const unknown = kids.filter((kid) => !seen.has(kid));
+    this.send({ type: "presence-result", replyTo: frame.id, presences, unknown });
   }
 
   /** `send`: FAC-SEM-071's limits, a recipient the relay admits, then the mailbox; `accepted` names the seq. */
-  private async send_(frame: Record<string, unknown>): Promise<void> {
-    const id = frame.id as string;
-    const findings = relayRules("relay-frame", frame) ?? [];
-    if (findings.some((f) => f.instancePath === "/body") && typeof frame.body === "string" && base64urlLength(frame.body) > MAX_BODY_BYTES) {
-      return this.error("too-large", `a body is at most ${MAX_BODY_BYTES} bytes decoded`, id);
-    }
-    if (findings.length > 0 || typeof frame.msgId !== "string" || typeof frame.to !== "string" || typeof frame.body !== "string") {
-      return this.error("unknown-type", `not a valid send frame (FAC-SEM-071 at ${findings.map((f) => f.instancePath).join(", ") || "msgId/to/body"})`, id);
-    }
-    // The schema's own limits on what the relay echoes or stores (relayRules checks FAC-SEM-071's, not these): a msgId
-    // of 1 to 128 characters, a recipient of 1 to 256, a body of base64url characters. Neither is ever echoed.
-    if (frame.msgId.length < 1 || codePoints(frame.msgId) > MAX_ID_LENGTH) {
-      return this.error("unknown-type", `not a valid send frame (msgId: 1 to ${MAX_ID_LENGTH} characters)`, id);
-    }
-    // A control character (NUL above all) does not survive every store: SQLite's text read-back ends at a NUL, so the
-    // deliver would name another msgId than the accepted did. Refused, never echoed.
-    // A lone surrogate is not text: stores collapse it (SQLite writes U+FFFD), so two msgIds that differ only there
-    // would be one dedup key and a second body silently dropped.
+  private async send_(frame: Frame & { to: string; msgId: string; body: string; ttl: number }): Promise<void> {
+    const id = frame.id;
+    // The schema and FAC-SEM-071 held already (frames.ts). The relay's own rules on what it echoes or stores: a msgId
+    // with a control character (SQLite's text read-back ends at a NUL, so deliver would name another msgId than
+    // accepted did) or a lone surrogate (stores collapse it, so two msgIds would be one dedup key) is malformed.
     if (/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(frame.msgId)) {
-      return this.error("unknown-type", "not a valid send frame (msgId: not well-formed text)", id);
+      return this.error("malformed", "not a valid send frame (msgId: not well-formed text)", id);
     }
     if (/[\u0000-\u001f\u007f]/.test(frame.msgId)) {
-      return this.error("unknown-type", "not a valid send frame (msgId: no control characters)", id);
+      return this.error("malformed", "not a valid send frame (msgId: no control characters)", id);
     }
-    if (frame.to.length < 1 || codePoints(frame.to) > 256) return this.error("unknown-type", "not a valid send frame (to: 1 to 256 characters)", id);
-    if (!BASE64URL.test(frame.body)) return this.error("unknown-type", "not a valid send frame (body: base64url characters only)", id);
     const admission = this.env.admission();
     if (!admission.ok || !admission.set.has(frame.to)) return this.error("unknown-recipient", "the recipient is not a machine this relay admits", id);
     const result = await this.env.mailbox!.append(frame.to, this.kid as string, frame.msgId, frame.body, frame.ttl as number, this.env.now());
@@ -415,7 +426,7 @@ export class RelaySession {
   }
 
   /** `ack {seq}`: the recipient's own message is deleted; anything else is ignored rather than answered. */
-  private async ack(frame: Record<string, unknown>): Promise<void> {
+  private async ack(frame: Frame): Promise<void> {
     if (Number.isSafeInteger(frame.seq)) await this.env.mailbox!.ack(this.kid as string, frame.seq as number);
   }
 
@@ -482,8 +493,8 @@ export class RelaySession {
     try {
       this.error(code, message);
     } finally {
-      // A transport that cannot take the error frame is still closed with the refusal's own code.
-      this.close(code === "not-admitted" ? CLOSE_CODES.notAdmitted : CLOSE_CODES.unauthenticated, code);
+      // A transport that cannot take the error frame is still closed with the refusal's own code (DEC-0066's table).
+      this.close(closeCodeFor(code) ?? CLOSE_CODES.unauthenticated, code);
     }
   }
 
