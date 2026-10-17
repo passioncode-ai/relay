@@ -28,8 +28,9 @@
   write (`send-overflow`, 1008); ids and msgIds are held to 128 code points, so no frame exceeds 1 MiB; at most 8
   sessions per machine (1013); the portable socket heartbeat (10 s, monotonic) terminates only a socket with nothing
   outstanding that stopped answering (30 to 40 s); a socket with bytes outstanding is left to the idle close, 5 minutes
-  while bytes are outstanding (90 s otherwise); the relay's own pings are never the peer's activity. Floor: about
-  5 KiB/s (8 KiB/s measured on Linux). The hosted build has no backlog signal (page of 64) and no
+  while bytes are outstanding (90 s otherwise). Progress is only what the peer confirms (a frame, or a pong matching
+  a sequenced heartbeat ping); the relay answers WebSocket pings itself under the send caps. Floor: about 4 KiB/s,
+  acks not required. The hosted build has no backlog signal (page of 64) and no
   heartbeat (90 s idle close). Bound: 8 x 3 MiB queued per machine; `Served.flow().peakBuffered` shows it.
 - Decision records: [ADR-0001](adr/0001-relay-repository.md) (with Amendment 1) and [ADR-0002](adr/0002-estate-hub.md).
 

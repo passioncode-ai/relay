@@ -215,14 +215,16 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
       (`FLUSH_PAGE`) and sends only while less than 1 MiB is queued on the socket (`SEND_HIGH`); when the socket
       drains it goes on. What is not sent yet stays in the mailbox, durable. Its acks are read meanwhile, and the
       heartbeat never terminates a socket with bytes outstanding (below). **The floor:** while bytes are outstanding, a
-      reader must show activity at least every 5 minutes (an ack or other frame, a drain, or the kernel taking more of
-      what the relay queued). Between two such signals it may have to read up to about 1.4 MiB: the larger of the
-      largest frame (1 MiB, one ack each) and the step after which Linux reports the socket writable again (about a
-      third of a send buffer of up to 4 MiB). So the slowest reader that keeps its session reads about 5 KiB/s; a
-      slower one is idle-closed (1001) and its mail stays queued. Measured on Linux (Node 22): a reader at 8 KiB/s
-      with 760 KiB deliveries got both in 270 s and kept its session.
+      reader must confirm progress at least every 5 minutes: a frame of its own (an ack, a ping) or a pong to one of
+      the relay's heartbeat pings, which it answers on its own (every client library does) once it has read every byte
+      written before that ping. Acks are not required. The relay pings every 10 s and also right behind every frame of
+      64 KiB or more (a delivery), so between two confirmations a reader reads at most one largest frame (1 MiB) plus
+      what it is sent meanwhile: the slowest reader that keeps its session reads about 4 KiB/s (1 MiB in 5 minutes); a
+      slower one is idle-closed (1001) and its mail stays queued. Measured on Linux (Node 22.23.3, default limits): a
+      reader at 5 KiB/s that never acks got two 760 KiB deliveries in 450 s and kept its session; without the marker
+      pings the same reader was idle-closed at 439 s.
     - **The socket is always read**, so acks and pings arrive whatever the relay has queued to send. A socket drain
-      counts as activity for the 90 s idle close: a slow reader that is draining is not idle.
+      resumes delivery but is not activity: it is the kernel taking the relay's writes, not the peer confirming them.
     - **Replies to a machine that never reads are capped.** A reply is small because what the relay echoes is held to
       the relay-frame schema: a frame's `id` (echoed as a `pong`'s id or an error's `replyTo`) and a `send`'s `msgId`
       (echoed in `accepted` and `deliver`) are 1 to 128 code points, a recipient 1 to 256, and a body base64url
@@ -232,26 +234,35 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
       is a `deliver` of the largest body, under `MAX_FRAME_BYTES`. The caps are checked before each write: a write
       that would take the socket's queue past 3 MiB (`SEND_CAP` = `SEND_HIGH` plus two 1 MiB frames, just above what
       deliveries can reach) or past 4096 frames not yet handed to the kernel (`SEND_FRAMES_CAP`: each queued write
-      costs a few hundred bytes beyond its payload) is not made; the session is logged `send-overflow`, closed 1008
+      costs a few hundred bytes beyond its payload) is not made — a pong to the peer's own WebSocket ping included —
+      and the session is logged `send-overflow`, closed 1008
       through its own close (its messages stay queued) and the socket terminated 1 s later unless it closes first.
     - **At most 8 sessions per machine** (`RELAY_MAX_SESSIONS_PER_MACHINE`, 1 to 1000): the next `auth` is answered
       `error` `rate-limited` and closed 1013 (logged `session-limit`); a session that ends makes room. Sessions a
       hosted hub restored after a hibernation wake count too.
-    - **Heartbeat** (portable). The relay pings every socket each 10 s (a WebSocket ping, which every client library
-      answers); a pong confirms every byte written before its ping. The heartbeat terminates a socket only when nothing
-      is outstanding to it: nothing left in the process (`bufferedAmount` 0) and at most 4 KiB written and not yet
-      confirmed by a pong (control traffic such as `welcome`). Such a socket, idle on the relay's side, with no life (a
-      pong, a frame, a drain) for 3 beats is terminated at the next beat (`heartbeat-timeout`): a peer that vanished
-      frees its slot within 30 to 40 s instead of the 90 s idle close. A socket with more outstanding is never
-      terminated by the heartbeat, however long the kernel holds bytes in front of its ping; it is governed by the
-      session's idle close, where its frames, its drains and the kernel taking more of what the relay queued count as
-      activity (the relay's own pings do not), with a limit of 5 minutes while bytes are outstanding
-      (`idleOutstandingMs`) and 90 s otherwise. A peer frozen with bytes outstanding is freed within the 5 minutes; a
-      client that answers pings but sends nothing is idle-closed at 90 s.
-      A second ping is never queued behind one not yet written. Time is monotonic: a wall clock stepped either way, or
-      a beat that fires late (a stalled loop), neither kills a healthy peer nor spares a dead idle one. The hub's own
-      timer runs its deadlines (`nextDeadline()`); the heartbeat is a separate interval timer, which also runs any
-      deadline that is due.
+    - **Heartbeat** (portable). One rule decides what counts: **progress is only what the peer confirms** — a frame
+      it sends, or a pong whose 8-byte payload is the sequence number of a heartbeat ping the relay sent and still
+      awaits (such a pong confirms every byte written before that ping). A write the relay makes is never progress,
+      whether or not the kernel took it; nor is a drain, nor an unsolicited or unknown pong, nor a WebSocket ping the
+      peer sends: the relay answers that ping itself (ws's automatic pong is off) under the same send caps as every
+      other frame, and it keeps no session open, which stays open by its frames.
+      - The relay pings every socket each 10 s, never a second ping behind one not yet written, and never more than
+        64 awaiting their pongs; and it sends a marker ping right behind each frame of 64 KiB or more, so a slow reader
+        confirms each delivery as soon as it has read it.
+      - It terminates a socket only when nothing is outstanding to it (`bufferedAmount` 0 and at most 4 KiB not yet
+        confirmed, the control traffic such as `welcome`) and it has shown no life (a matched pong or a frame) for 3
+        beats (`heartbeat-timeout`): a peer that vanished frees its slot within 30 to 40 s.
+      - A socket with more outstanding is never terminated by the heartbeat; it is governed by the session's idle
+        close, where its frames and the matched pongs that confirm new bytes are activity, with a limit of 5 minutes
+        while bytes are outstanding (`idleOutstandingMs`) and 90 s otherwise. A frozen peer is freed within the 5
+        minutes even while other machines keep sending to it; a client that answers pings but sends no frame, or that
+        only sends WebSocket pings, is idle-closed at 90 s.
+      - Clocks: the heartbeat runs on a monotonic clock, and a beat that fires late (a stalled loop) does not count its
+        lateness as silence. Session deadlines (the auth deadline and the idle close) use the wall clock the relay is
+        given (`ServeOptions.now`, the system's by default), so a wall clock stepped forward by 90 s or more closes the
+        sessions that were quiet; a step back delays their idle close by as much. The hub's own timer runs its
+        deadlines (`nextDeadline()`); the heartbeat is a separate interval timer, which also runs any deadline that is
+        due.
     - **The Worker has no socket heartbeat.** Its hibernatable sockets are not pinged by the relay (a timer per
       socket would keep the object awake), so a peer that vanishes without a close holds its slot until the 90 s idle
       close. The Worker also reports no backlog, so its flush reads the mailbox 64 messages a page (a 1000-message

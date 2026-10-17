@@ -223,20 +223,20 @@ export class EstateHub<C = unknown> implements SessionHub {
   }
 
   /**
-   * The transport of `conn` can take more (its socket drained): the machine is reading, which counts as activity for
-   * the idle close, and its session goes on delivering from the mailbox. Never rejects.
+   * The transport of `conn` can take more (its socket drained): its session goes on delivering from the mailbox. A
+   * drain is the kernel taking the relay's writes, not the peer confirming anything, so it is not activity for the idle
+   * close. Never rejects.
    */
   async drained(conn: C): Promise<void> {
     const session = this.#entries.get(conn);
     if (!session) return;
-    session.progressed();
     await session.wake();
     this.#arm();
   }
 
   /**
-   * The transport of `conn` made write progress (the kernel took more of what was queued): the machine is reading, which
-   * counts as activity for the idle close. Unlike `drained`, it does not resume a flush: the queue has not emptied.
+   * The machine of `conn` confirmed it read more of what the relay sent (a pong matching one of the relay's pings): that
+   * counts as activity for the idle close. Only what the peer confirms is progress; a write the relay makes never is.
    */
   progressed(conn: C): void {
     this.progressedAll([conn]);

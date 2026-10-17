@@ -37,13 +37,17 @@ release iteration 1's inventory findings (Project Observatory `docs/runs/2026-10
     one, a recipient over 256 code points and a body that is not base64url. No frame the relay sends exceeds 1 MiB.
   - **Portable: mail is delivered at the pace the machine reads**, the socket is always read, and a machine that never
     reads what the relay sends is closed **1008** past 3 MiB or 4096 frames queued (logged `send-overflow`).
-  - **Portable: a socket heartbeat.** The relay pings each socket every 10 s. A socket with nothing outstanding (no
-    bytes in the process, at most 4 KiB unconfirmed by a pong) and no pong, frame or drain for 30 s is terminated,
-    logged `heartbeat-timeout`. A socket with bytes outstanding is never terminated by the heartbeat; it is left to
-    the idle close, where drains and the kernel taking its bytes count (the relay's own pings do not), with a limit of
-    **5 minutes while bytes are outstanding** (90 s otherwise). The slowest reader that keeps its session reads about
-    5 KiB/s; 8 KiB/s was measured on Linux. The hosted build has no heartbeat: a vanished peer holds its slot until
-    the 90 s idle close.
+  - **Portable: a socket heartbeat.** Progress is only what the peer confirms: a frame it sends, or a pong whose
+    8-byte payload matches a heartbeat ping the relay sent (never a write the relay makes, a drain, an unknown pong or
+    a WebSocket ping from the peer). The relay pings each socket every 10 s (at most 64 awaiting pongs). A socket with
+    nothing outstanding (no bytes in the process, at most 4 KiB unconfirmed) and no matched pong or frame for 30 s is
+    terminated, logged `heartbeat-timeout`. A socket with bytes outstanding is left to the idle close, **5 minutes
+    while bytes are outstanding** (90 s otherwise); a frozen peer is freed within it even while mail keeps arriving.
+    The slowest reader that keeps its session reads about 4 KiB/s, acks or not. The hosted build has no heartbeat: a
+    vanished peer holds its slot until the 90 s idle close.
+  - **Portable: the relay answers a WebSocket ping itself, under the send caps** (ws's automatic pong is off): a
+    machine that floods pings and never reads is closed 1008 instead of growing the relay's buffer without bound. A
+    WebSocket ping is not activity: a session stays open by its frames.
   - **A `msgId` that is not well-formed text** (a lone surrogate) is refused `unknown-type`: stores collapsed it, so
     two msgIds became one dedup key and a body was silently dropped.
   - **A `msgId` with a control character** (NUL, a line break) is refused `unknown-type`: SQLite truncated it at a

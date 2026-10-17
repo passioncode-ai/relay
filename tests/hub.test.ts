@@ -409,18 +409,19 @@ test("a flush pages the mailbox: it never asks for more than one page at a time"
   assert.ok(limits.length >= 2 && limits.every((l) => l !== undefined && l <= 4), JSON.stringify(limits));
 });
 
-test("outbound progress is liveness: a session whose transport drains is not idle-closed, one that never drains is", async () => {
+test("only what the machine confirms is activity: a drain resumes delivery but keeps no session open; progressed does", async () => {
   const r = rig();
-  const a = r.open({ backlogged: () => true });
-  const silent = r.open({ backlogged: () => true });
-  await a.auth(A);
-  await silent.auth(B);
+  const drained = r.open({ backlogged: () => true });
+  const confirmed = r.open({ backlogged: () => true });
+  await drained.auth(A);
+  await confirmed.auth(B);
   r.at(80_000);
-  await r.hub.drained(a.conn); // the machine read what the relay sent: its socket drained
+  await r.hub.drained(drained.conn); // the kernel took the relay's writes: not the peer confirming anything
+  r.hub.progressed(confirmed.conn); // a pong matching one of the relay's pings: the peer read more
   r.at(90_001);
   await r.hub.onWake();
-  assert.deepEqual([a.closed, silent.closed], [[], [1001]]);
-  assert.equal(r.hub.session(a.conn)!.nextDeadline(), T0 + 80_000 + 90_001);
+  assert.deepEqual([drained.closed, confirmed.closed], [[1001], []]);
+  assert.equal(r.hub.session(confirmed.conn)!.nextDeadline(), T0 + 80_000 + 90_001);
 });
 
 test("one machine holds at most maxSessionsPerMachine sessions: the next is refused rate-limited and closed 1013", async () => {
@@ -588,17 +589,26 @@ test("a session with bytes outstanding to its machine is idle-closed after IDLE_
   assert.deepEqual(c.closed, [1001]);
 });
 
-test("progress for many sessions at once re-arms the hub's timer once", async () => {
+test("progressedAll re-arms the hub's timer exactly once for many sessions, and not at all for none or unknown ones", async () => {
   const r = rig();
-  const sessions = [r.open(), r.open(), r.open()];
-  await sessions[0]!.auth(A);
-  await sessions[1]!.auth(B);
-  await sessions[2]!.auth(A);
+  const [a, b, c] = [r.open(), r.open(), r.open()];
+  // Admitted at 0, 10 and 20 s: each one progressed in turn moves the earliest deadline, so arming per session would
+  // arm three times.
+  await a.auth(A);
   r.at(10_000);
+  await b.auth(B);
+  r.at(20_000);
+  await c.auth(A);
+  assert.equal(r.armed.at(-1), T0 + 90_001);
+  r.at(30_000);
   const before = r.armed.length;
-  r.hub.progressedAll(sessions.map((s) => s.conn));
-  assert.ok(r.armed.length - before <= 1, `${r.armed.length - before} re-arms`);
-  assert.equal(r.hub.session(sessions[2]!.conn)!.nextDeadline(), T0 + 10_000 + 90_001);
+  r.hub.progressedAll([a.conn, b.conn, c.conn]);
+  assert.equal(r.armed.length - before, 1, `${r.armed.length - before} arms`);
+  assert.equal(r.armed.at(-1), T0 + 30_000 + 90_001, "armed at the new earliest deadline");
+  const after = r.armed.length;
+  r.hub.progressedAll([]);
+  r.hub.progressedAll([{}, {}]);
+  assert.equal(r.armed.length, after, "nothing progressed: no arm");
 });
 
 test("a msgId that is not well-formed UTF-16 (a lone surrogate) is refused unknown-type", async () => {

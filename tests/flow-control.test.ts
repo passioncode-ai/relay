@@ -381,7 +381,7 @@ function clientFrame(opcode: number, payload: Buffer): Buffer {
  * stops reading the kernel once its own buffer holds 64 KiB, so the relay sees a reader at exactly that pace. It answers
  * the relay's pings, acks every delivery, and reports what it got.
  */
-async function slowReader(port: number, m: Estate["machine"], relay: string, bytesPerSecond: number, reading: () => boolean = () => true) {
+async function slowReader(port: number, m: Estate["machine"], relay: string, bytesPerSecond: number, reading: () => boolean = () => true, acks = true, pongs = true) {
   const socket = tcp(port, "127.0.0.1");
   socket.on("error", () => {});
   await new Promise<void>((resolve) => socket.on("connect", () => resolve()));
@@ -410,13 +410,13 @@ async function slowReader(port: number, m: Estate["machine"], relay: string, byt
       if (pending.length < offset + length) return;
       const payload = pending.subarray(offset, offset + length);
       pending = pending.subarray(offset + length);
-      if (opcode === 9) socket.write(clientFrame(10, Buffer.from(payload)));
+      if (opcode === 9 && pongs) socket.write(clientFrame(10, Buffer.from(payload)));
       else if (opcode === 8) closed = payload.length >= 2 ? payload.readUInt16BE(0) : 1005;
       else if (opcode === 1) {
         const frame = JSON.parse(payload.toString("utf8"));
         frames.push(frame);
         if (frame.type === "hello") socket.write(clientFrame(1, Buffer.from(authFrame(m, relay, frame.nonce))));
-        if (frame.type === "deliver") socket.write(clientFrame(1, Buffer.from(JSON.stringify({ v: 1, type: "ack", id: `k${frame.seq}`, seq: frame.seq }))));
+        if (frame.type === "deliver" && acks) socket.write(clientFrame(1, Buffer.from(JSON.stringify({ v: 1, type: "ack", id: `k${frame.seq}`, seq: frame.seq }))));
       }
     }
   };
@@ -664,6 +664,231 @@ test("round 12: a bursty slow reader (Linux-shaped: no progress for 120 s at a t
     assert.equal(a.frames.filter((f) => f.type === "deliver").length, 3, `closed ${a.closed()}; ${told}`);
     assert.equal(a.closed(), undefined, told);
     assert.ok(!r.events.some((ev) => ev.event === "idle-close" || ev.event === "heartbeat-timeout"), told);
+  } finally {
+    a.stop();
+    await within(r.stop({ graceMs: 200 }), 3000);
+  }
+});
+
+// Round 13: progress is only what the peer confirms (a matched pong or a frame); the relay answers WebSocket pings itself,
+// under the send caps.
+
+/** A raw machine that floods WebSocket pings (125-byte payloads) and never reads. */
+async function pingFlooder(port: number, m: Estate["machine"], relay: string) {
+  const socket = tcp(port, "127.0.0.1");
+  socket.on("error", () => {});
+  await new Promise<void>((resolve) => socket.on("connect", () => resolve()));
+  socket.write(["GET /v1/connect HTTP/1.1", "Host: 127.0.0.1", "Upgrade: websocket", "Connection: Upgrade", "Sec-WebSocket-Version: 13",
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Protocol: fabric-relay.v1", "", ""].join("\r\n"));
+  let got = "";
+  await new Promise<void>((resolve) => {
+    socket.on("data", (chunk: Buffer) => {
+      got += chunk.toString("latin1");
+      const nonce = /"nonce":"([^"]+)"/.exec(got)?.[1];
+      if (nonce && !got.includes("AUTHSENT")) { got += "AUTHSENT"; socket.write(clientFrame(1, Buffer.from(authFrame(m, relay, nonce)))); }
+      if (got.includes('"type":"welcome"')) resolve();
+    });
+  });
+  socket.pause(); // never read again
+  return socket;
+}
+
+test("round 13: a machine flooding WebSocket pings it never reads cannot queue pongs past the send cap: send-overflow, 1008", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const r = await relay(root, new SqliteMailbox(join(root, "mailbox.sqlite")));
+  const port = Number(new URL(r.url).port);
+  const socket = await pingFlooder(port, e.machine, r.origin);
+  try {
+    const ping = clientFrame(9, Buffer.alloc(125, 7));
+    // At most 64 MiB of pings (about 500 000): far past what fills any kernel's buffers and the 3 MiB cap, and a bound
+    // on what a broken relay (pongs outside the caps) is made to queue before the test fails.
+    const end = Date.now() + 20_000;
+    let sent = 0;
+    while (!r.events.some((ev) => ev.event === "send-overflow") && Date.now() < end && sent < 64 * 1024 * 1024) {
+      const batch = Buffer.concat(Array.from({ length: 2000 }, () => ping));
+      sent += batch.length;
+      if (!socket.write(batch)) await new Promise((resolve) => { socket.once("drain", resolve); setTimeout(resolve, 200); });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.ok(r.events.some((ev) => ev.event === "send-overflow"), `no overflow: ws's own autoPong would queue without bound (${JSON.stringify(r.events.map((ev) => ev.event))})`);
+    assert.ok(r.flow().peakBuffered <= 3 * 1024 * 1024, `peak queued ${r.flow().peakBuffered}`);
+  } finally {
+    socket.destroy();
+    await within(r.stop({ graceMs: 200 }), 3000);
+  }
+});
+
+test("round 13: a frozen peer that keeps receiving mail is still freed within 5 minutes: the relay's writes are not its progress", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const mailbox = new SqliteMailbox(join(root, "mailbox.sqlite"));
+  let skew = 0;
+  const r = await relay(root, mailbox, { heartbeatMs: 100, now: () => new Date(Date.now() + skew) });
+  const frozen = machine(r.url, e.machine, r.origin, (ws) => ws.pause()); // SIGSTOP after its welcome
+  const sender = machine(r.url, e.second, r.origin);
+  try {
+    assert.deepEqual(await frozen.outcome, { welcome: true });
+    assert.deepEqual(await sender.outcome, { welcome: true });
+    const body = Buffer.alloc(6 * 1024, 3).toString("base64url");
+    // One 6 KiB message every 60 s of the clock the sessions read (the sender stays inside its own 90 s), up to 420 s:
+    // the kernel takes each one, and the frozen peer confirms none.
+    for (let n = 1; n <= 7 && !r.events.some((ev) => ev.event === "idle-close" && ev.kid === e.machine.kid); n += 1) {
+      skew = n * 60_000;
+      sender.ws.send(JSON.stringify({ v: 1, type: "send", id: `s${n}`, to: e.machine.kid, msgId: `m-${n}`, body, ttl: 3600 }));
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    }
+    const close = r.events.find((ev) => ev.event === "idle-close" && ev.kid === e.machine.kid);
+    assert.ok(close, `the frozen peer was never freed: ${JSON.stringify(r.events)}`);
+    assert.ok(close.silentMs > 300_000 && close.silentMs <= 300_000 + 60_000 + 1000 && close.limitMs === 300_000, JSON.stringify(close));
+    assert.equal(sender.closed(), undefined, "the sender, which sends frames, stays");
+  } finally {
+    frozen.ws.terminate();
+    sender.ws.terminate();
+    await within(r.stop({ graceMs: 200 }), 3000);
+  }
+});
+
+test("round 13: a client that only sends WebSocket pings is idle-closed at 90 s: a transport ping is answered, never activity", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  let skew = 0;
+  const r = await relay(root, new SqliteMailbox(join(root, "mailbox.sqlite")), { heartbeatMs: 100, now: () => new Date(Date.now() + skew) });
+  const a = machine(r.url, e.machine, r.origin);
+  const pongs: number[] = [];
+  try {
+    assert.deepEqual(await a.outcome, { welcome: true });
+    a.ws.on("pong", () => pongs.push(Date.now()));
+    let sent = 0;
+    const pinger = setInterval(() => { a.ws.ping(Buffer.from("keepalive")); sent += 1; }, 50);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    assert.ok(pongs.length > 3, "the relay answers its pings");
+    assert.ok(pongs.length <= sent, `one pong per ping: ${pongs.length} pongs for ${sent} pings (ws's own autoPong would double them)`);
+    // The clock moves 30 s at a time while the pings go on, so pings that counted as activity would keep it open.
+    for (let step = 1; step <= 5 && a.closed() === undefined; step += 1) {
+      skew = step * 30_000;
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    const end = Date.now() + 2000;
+    while (a.closed() === undefined && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50));
+    clearInterval(pinger);
+    assert.equal(a.closed(), 1001, JSON.stringify(r.events));
+  } finally {
+    a.ws.terminate();
+    await within(r.stop({ graceMs: 200 }), 3000);
+  }
+});
+
+test("round 13: at most 64 heartbeat pings await their pongs: the 65th is not sent", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const mailbox = await prefill(root, e, 1, 15); // 20 KiB never confirmed: outstanding, so never the heartbeat's to end
+  const r = await relay(root, mailbox, { heartbeatMs: 20 });
+  // A client that reads everything but answers no ping (autoPong off): every ping is written and stays unanswered.
+  const ws = new WebSocket(r.url, "fabric-relay.v1", { autoPong: false });
+  ws.on("error", () => {});
+  const welcomed = new Promise<void>((resolve) => ws.on("message", (data) => {
+    const frame = JSON.parse(String(data));
+    if (frame.type === "hello") ws.send(authFrame(e.machine, r.origin, frame.nonce));
+    if (frame.type === "welcome") resolve();
+  }));
+  try {
+    await welcomed;
+    // Beats until 64 pings await their pongs (under load a beat can come late, so this waits for the count, not a time),
+    // then 50 more beats: not one more ping. Without the cap every beat sends one.
+    const end = Date.now() + 15_000;
+    while (r.flow().pingsSent < 64 && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50));
+    const at64 = r.flow();
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const flow = r.flow();
+    assert.equal(at64.pingsSent, 64, `${JSON.stringify(at64)} ${JSON.stringify(r.events)}`);
+    assert.equal(flow.pingsSent, 64, `a ping past 64 awaiting: ${JSON.stringify(flow)}`);
+    assert.ok(flow.pingsSkipped - at64.pingsSkipped >= 20, JSON.stringify(flow));
+    assert.ok(!r.events.some((ev) => ev.event === "heartbeat-timeout"), "bytes outstanding: not the heartbeat's to end");
+  } finally {
+    ws.terminate();
+    await within(r.stop({ graceMs: 200 }), 3000);
+  }
+});
+
+test("round 13: unsolicited or unknown pongs confirm nothing: an idle peer that sends them instead of answering is still freed", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const r = await relay(root, new SqliteMailbox(join(root, "mailbox.sqlite")), { heartbeatMs: 100 });
+  const ws = new WebSocket(r.url, "fabric-relay.v1", { autoPong: false }); // answers no ping
+  ws.on("error", () => {});
+  const frames: Array<Record<string, any>> = [];
+  const welcomed = new Promise<void>((resolve) => ws.on("message", (data) => {
+    const frame = JSON.parse(String(data));
+    frames.push(frame);
+    if (frame.type === "hello") ws.send(authFrame(e.machine, r.origin, frame.nonce));
+    if (frame.type === "welcome") resolve();
+  }));
+  try {
+    await welcomed;
+    const unknown = Buffer.alloc(8);
+    unknown.writeBigUInt64BE(2n ** 63n); // a sequence number the relay never sent
+    const spoofer = setInterval(() => { ws.pong(unknown); ws.pong(); ws.pong(Buffer.from("x")); }, 30);
+    const end = Date.now() + 3000;
+    while (!r.events.some((ev) => ev.event === "heartbeat-timeout") && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50));
+    clearInterval(spoofer);
+    assert.ok(r.events.some((ev) => ev.event === "heartbeat-timeout"), JSON.stringify(r.events.map((ev) => ev.event)));
+  } finally {
+    ws.terminate();
+    await within(r.stop({ graceMs: 200 }), 3000);
+  }
+});
+
+test("round 13: a slow reader that never acks keeps its session on matched pongs alone", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const mailbox = await prefill(root, e, 8, 760);
+  // A clock 20 times faster than real time and the default idle limit of 300 s on it (15 s real) while bytes are
+  // outstanding: the reader reads 1 s of every 3 s (about 340 KiB/s real) and sends no frame at all, so only the pongs to
+  // the relay's pings (every 10 s on the clock) show it alive; they come back about once per delivery read (1 MiB),
+  // every 3 to 6 s real (up to 10 s under load). The backlog takes about 24 s real, so with matched pongs not counted it
+  // is idle-closed.
+  const base = Date.now();
+  const r = await relay(root, mailbox, { heartbeatMs: 500, now: () => new Date(base + (Date.now() - base) * 20) });
+  const port = Number(new URL(r.url).port);
+  const started = Date.now();
+  const a = await slowReader(port, e.machine, r.origin, 1024 * 1024, () => (Date.now() - started) % 3000 < 1000, false);
+  try {
+    const end = Date.now() + 60_000;
+    while (Date.now() < end && a.frames.filter((f) => f.type === "deliver").length < 8 && a.closed() === undefined) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const told = JSON.stringify(r.events);
+    assert.equal(a.frames.filter((f) => f.type === "deliver").length, 8, `closed ${a.closed()}; ${told}`);
+    assert.equal(a.closed(), undefined, told);
+    // Each delivery is followed by a marker ping, so the reader confirms each one as soon as it has read it.
+    assert.ok(r.flow().marks >= 8, JSON.stringify(r.flow()));
+  } finally {
+    a.stop();
+    await within(r.stop({ graceMs: 200 }), 3000);
+  }
+});
+
+test("round 13: a reader that reads but never confirms (no pong, no frame) is freed within 5 minutes: drains are not its progress", async () => {
+  const e = estate(new Date(), "ES256");
+  const root = await dataDir(e);
+  const mailbox = await prefill(root, e, 8, 760);
+  let skew = 0;
+  const r = await relay(root, mailbox, { heartbeatMs: 200, now: () => new Date(Date.now() + skew) });
+  const port = Number(new URL(r.url).port);
+  // Reads 512 KiB/s, so the relay's writes back up and drain again and again, but answers no ping and acks nothing.
+  const a = await slowReader(port, e.machine, r.origin, 512 * 1024, () => true, false, false);
+  try {
+    const welcomed = Date.now() + 5000;
+    while (!a.frames.some((f) => f.type === "welcome") && Date.now() < welcomed) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(a.frames.some((f) => f.type === "welcome"), JSON.stringify(r.events));
+    for (let step = 1; step <= 7 && !r.events.some((ev) => ev.event === "idle-close"); step += 1) {
+      skew = step * 60_000;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    const close = r.events.find((ev) => ev.event === "idle-close");
+    assert.ok(close, `never freed: ${JSON.stringify(r.events.map((ev) => ev.event))}`);
+    assert.ok(close.limitMs === 300_000 && close.silentMs <= 300_000 + 60_000 + 1000, JSON.stringify(close));
   } finally {
     a.stop();
     await within(r.stop({ graceMs: 200 }), 3000);

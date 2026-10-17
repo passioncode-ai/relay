@@ -230,8 +230,8 @@ export class RelaySession {
 
   /**
    * The first instant (epoch ms) at which `tick()` has something to do: past the 10 s auth deadline while awaiting
-   * `auth`, past 90 s of silence once admitted (silence: no frame from the machine and no outbound progress, see
-   * `progressed`); undefined once closed.
+   * `auth`, past the idle limit once admitted (silence: no frame from the machine and nothing it confirmed, see
+   * `progressed`; 90 s, or IDLE_OUTSTANDING_MS while bytes are outstanding); undefined once closed.
    */
   nextDeadline(): number | undefined {
     if (this.state === "closed") return undefined;
@@ -468,8 +468,8 @@ export class RelaySession {
   }
 
   /**
-   * The transport took what the relay had queued for this connection (its socket drained): the machine is reading, so
-   * this counts as activity for the 90 s idle close, the same as a frame from it.
+   * The machine confirmed it read more of what the relay sent (the portable build: a pong matching one of the relay's
+   * pings): activity for the idle close, the same as a frame from it. A write the relay makes is never activity.
    */
   progressed(): void {
     if (this.state !== "admitted") return;
