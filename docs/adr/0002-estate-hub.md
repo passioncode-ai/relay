@@ -43,7 +43,8 @@ connections was a separate store reached by message:
      at most 4 KiB unconfirmed) after 3 quiet 10 s beats. One rule decides what counts: progress is only what the peer
      confirms, a frame it sends or a pong matching one of the relay's sequenced pings; a write the relay makes (and a
      drain, an unknown pong, a WebSocket ping from the peer) never is. A socket with bytes outstanding is left to the
-     idle close, 5 minutes while bytes are outstanding (90 s otherwise): a reader of about 4 KiB/s or faster keeps its
+     idle close, 5 minutes while bytes are outstanding (90 s otherwise): a reader of about 9 to 10 KiB/s or faster (Linux defaults; the floor is
+     (`SEND_HIGH` + `MAX_FRAME_BYTES` + kernel buffers) / 5 min) keeps its
      session, acks or not; a frozen peer is freed within the bound even while mail keeps arriving. The
      hosted build has no heartbeat (a timer per hibernatable socket would keep the object awake), so there a vanished
      peer holds its slot until the 90 s idle close; and since its socket reports no backlog, a flush there reads the

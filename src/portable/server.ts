@@ -69,7 +69,7 @@ const SEND_FRAMES_CAP = 4096;
  * confirms every byte written before its ping). A write the relay makes is never progress, whether or not the kernel
  * took it; nor is a drain, nor an unsolicited or unknown pong, nor a WebSocket ping the peer sends (answered, never
  * counted).
- * - Every HEARTBEAT_MS (10 s) each session's socket gets a ping carrying its sequence number, unless the previous one is
+ * - Every HEARTBEAT_MS (10 s) each session's socket gets a ping with a random 8-byte payload, unless an earlier one is
  *   still unwritten or HEARTBEAT_MAX_PINGS are awaiting their pongs. A frame of HEARTBEAT_MARK_BYTES or more (a
  *   delivery) is also followed by a marker ping, so a slow reader confirms each delivery as soon as it has read it.
  * - The heartbeat terminates a socket only when nothing is outstanding to it (`bufferedAmount` 0 and at most
@@ -286,22 +286,20 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
   const sendFramesCap = options.sendFramesCap ?? SEND_FRAMES_CAP;
   // The heartbeat (HEARTBEAT_MS; see the constant): per socket, when it last showed life (a matched pong or a frame),
   // how many data bytes the relay has written to it and how many a matched pong confirmed, the pings awaiting their pongs
-  // (sequence number and the data position they confirm, in order), and whether the last ping is still unwritten.
+  // (random payload and the data position they confirm, in order), and how many are still unwritten.
   const beatMs = options.heartbeatMs ?? HEARTBEAT_MS;
   const deadAfterMs = beatMs * HEARTBEAT_DEAD_BEATS;
   const clock = () => performance.now();
-  type Beat = { lastLife: number; written: number; confirmed: number; pings: Array<{ seq: bigint; at: number }>; nextSeq: bigint; pingUnwritten: boolean };
+  type Beat = { lastLife: number; written: number; confirmed: number; pings: Array<{ token: string; at: number }>; unwritten: number };
   const alive = new Map<WebSocket, Beat>();
-  // A sequenced ping marks a position in the stream: every data byte written before it.
+  // A ping marks a position in the stream: every data byte written before it. Its 8-byte payload is random, so a peer
+  // cannot answer a ping it has not read. `unwritten` counts pings handed to ws and not yet to the kernel.
   const sendPing = (ws: WebSocket, state: Beat) => {
     try {
-      const seq = state.nextSeq;
-      state.nextSeq += 1n;
-      const payload = Buffer.alloc(8);
-      payload.writeBigUInt64BE(seq);
-      state.pingUnwritten = true;
-      state.pings.push({ seq, at: state.written });
-      ws.ping(payload, undefined, () => { state.pingUnwritten = false; });
+      const payload = randomBytes(8);
+      state.unwritten += 1;
+      state.pings.push({ token: payload.toString("hex"), at: state.written });
+      ws.ping(payload, undefined, () => { state.unwritten -= 1; });
     } catch {
       // a socket already closing: its close event removes it
     }
@@ -312,7 +310,7 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
     // A beat that fires late (a stalled loop, a machine that slept) credits its lateness: it is not the peers' silence.
     const late = now - lastBeat - beatMs;
     lastBeat = now;
-    if (late > beatMs / 2) for (const state of alive.values()) state.lastLife += late;
+    if (late > beatMs / 2) for (const state of alive.values()) state.lastLife = Math.min(now, state.lastLife + late);
     for (const [ws, state] of alive) {
       const idle = ws.bufferedAmount === 0 && state.written - state.confirmed <= HEARTBEAT_IDLE_SLACK;
       if (idle && now - state.lastLife > deadAfterMs) {
@@ -322,7 +320,7 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
         continue;
       }
       // No second ping behind an unwritten one, and none past HEARTBEAT_MAX_PINGS awaiting their pongs.
-      if (state.pingUnwritten || state.pings.length >= HEARTBEAT_MAX_PINGS) {
+      if (state.unwritten > 0 || state.pings.length >= HEARTBEAT_MAX_PINGS) {
         flow.pingsSkipped += 1;
         continue;
       }
@@ -411,15 +409,15 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
       let unsent = 0; // frames handed to ws and not yet to the kernel
       let terminate: ReturnType<typeof setTimeout> | undefined;
       const lively = () => { const state = alive.get(ws); if (state) state.lastLife = clock(); };
-      alive.set(ws, { lastLife: clock(), written: 0, confirmed: 0, pings: [], nextSeq: 0n, pingUnwritten: false });
-      // A pong counts only when its payload is the sequence number of a ping the relay sent and still awaits: then the
-      // peer has read every byte written before that ping. Pongs come back in order, so earlier pings are settled too.
+      alive.set(ws, { lastLife: clock(), written: 0, confirmed: 0, pings: [], unwritten: 0 });
+      // A pong counts only when its payload is that of a ping the relay sent and still awaits. The payload is random, so
+      // the peer cannot answer a ping it has not read: it has read every byte written before that ping. Pongs come back in order, so earlier pings are settled too.
       // An unsolicited or unknown pong is ignored.
       ws.on("pong", (data: Buffer) => {
         const state = alive.get(ws);
         if (!state || data.length !== 8) return;
-        const seq = data.readBigUInt64BE(0);
-        const index = state.pings.findIndex((ping) => ping.seq === seq);
+        const token = data.toString("hex");
+        const index = state.pings.findIndex((ping) => ping.token === token);
         if (index < 0) return;
         const confirmed = state.pings[index]!.at;
         state.pings.splice(0, index + 1);

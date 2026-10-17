@@ -43,7 +43,8 @@ release iteration 1's inventory findings (Project Observatory `docs/runs/2026-10
     nothing outstanding (no bytes in the process, at most 4 KiB unconfirmed) and no matched pong or frame for 30 s is
     terminated, logged `heartbeat-timeout`. A socket with bytes outstanding is left to the idle close, **5 minutes
     while bytes are outstanding** (90 s otherwise); a frozen peer is freed within it even while mail keeps arriving.
-    The slowest reader that keeps its session reads about 4 KiB/s, acks or not. The hosted build has no heartbeat: a
+    The slowest reader that keeps its session reads about 9 to 10 KiB/s on Linux defaults (about 7 KiB/s on macOS),
+    acks or not; a slower one is closed 1001 and keeps its mail. The hosted build has no heartbeat: a
     vanished peer holds its slot until the 90 s idle close.
   - **Portable: the relay answers a WebSocket ping itself, under the send caps** (ws's automatic pong is off): a
     machine that floods pings and never reads is closed 1008 instead of growing the relay's buffer without bound. A

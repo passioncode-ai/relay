@@ -29,8 +29,9 @@
   sessions per machine (1013); the portable socket heartbeat (10 s, monotonic) terminates only a socket with nothing
   outstanding that stopped answering (30 to 40 s); a socket with bytes outstanding is left to the idle close, 5 minutes
   while bytes are outstanding (90 s otherwise). Progress is only what the peer confirms (a frame, or a pong matching
-  a sequenced heartbeat ping); the relay answers WebSocket pings itself under the send caps. Floor: about 4 KiB/s,
-  acks not required. The hosted build has no backlog signal (page of 64) and no
+  a heartbeat ping with a random payload); the relay answers WebSocket pings itself under the send caps. Floor: about
+  9 to 10 KiB/s on Linux defaults (about 7 KiB/s on macOS), acks not required; a slower reader is closed 1001 and keeps
+  its mail. The hosted build has no backlog signal (page of 64) and no
   heartbeat (90 s idle close). Bound: 8 x 3 MiB queued per machine; `Served.flow().peakBuffered` shows it.
 - Decision records: [ADR-0001](adr/0001-relay-repository.md) (with Amendment 1) and [ADR-0002](adr/0002-estate-hub.md).
 
@@ -50,6 +51,12 @@
   - D-1, D-2;
   - G-4.
 - RLY-07 (deltas and heartbeats) is unblocked and is wave 4 (H-1, H-2).
+- **Wave 2 backlog, from relay#10 review round 14: byte-based heartbeat markers.** Today a marker ping follows only a
+  frame of 64 KiB or more, no beat ping is sent while an earlier one is unwritten, `bufferedAmount` misses the kernel's
+  buffers, and markers stop at 64 awaiting pongs; round 14 measured gaps of 1.9 to 2.7 MiB between confirmable points
+  (its probes P2b, P2c and P3), hence a floor of about 9 to 10 KiB/s on Linux. Place a marker every 64 KiB written,
+  whatever the frame size, and allow markers past an unwritten ping; then re-measure the floor and restate it in
+  `docs/protocol/sessions.md` (Flow control).
 
 **RLY-05, the hosted deployment, is agent work** (iteration nodes F-6, F-7, F-8):
 - scoped tokens are issued through Observatory's Cloudflare door into vault slots;

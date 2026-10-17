@@ -216,13 +216,16 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
       drains it goes on. What is not sent yet stays in the mailbox, durable. Its acks are read meanwhile, and the
       heartbeat never terminates a socket with bytes outstanding (below). **The floor:** while bytes are outstanding, a
       reader must confirm progress at least every 5 minutes: a frame of its own (an ack, a ping) or a pong to one of
-      the relay's heartbeat pings, which it answers on its own (every client library does) once it has read every byte
-      written before that ping. Acks are not required. The relay pings every 10 s and also right behind every frame of
-      64 KiB or more (a delivery), so between two confirmations a reader reads at most one largest frame (1 MiB) plus
-      what it is sent meanwhile: the slowest reader that keeps its session reads about 4 KiB/s (1 MiB in 5 minutes); a
-      slower one is idle-closed (1001) and its mail stays queued. Measured on Linux (Node 22.23.3, default limits): a
-      reader at 5 KiB/s that never acks got two 760 KiB deliveries in 450 s and kept its session; without the marker
-      pings the same reader was idle-closed at 439 s.
+      the relay's heartbeat pings, which it answers on its own (every client library does) once it has read the ping.
+      Acks are not required. Between two points it can confirm, a reader may have to read up to `SEND_HIGH` (1 MiB)
+      plus one largest frame (1 MiB) plus what the kernel's send and receive buffers hold, so the floor is about
+      (`SEND_HIGH` + `MAX_FRAME_BYTES` + kernel buffers) / 5 min: about 9 to 10 KiB/s with Linux's default buffers
+      (round 14 measured gaps of 1.9 to 2.7 MiB; about 7 KiB/s on macOS), a few KiB/s more with a large `tcp_rmem`.
+      The gaps are that large for four reasons: a frame under 64 KiB gets no marker ping; a beat sends no ping while
+      an earlier one is unwritten; `bufferedAmount` does not see the kernel's buffers; and markers stop once 64 pings
+      await their pongs. A slower reader is idle-closed (1001) and its mail stays queued for its next session. Placing
+      markers by bytes written (one every 64 KiB, whatever the frame size) would lower the floor; it is a wave-2
+      backlog item (HANDOFF).
     - **The socket is always read**, so acks and pings arrive whatever the relay has queued to send. A socket drain
       resumes delivery but is not activity: it is the kernel taking the relay's writes, not the peer confirming them.
     - **Replies to a machine that never reads are capped.** A reply is small because what the relay echoes is held to
@@ -241,8 +244,9 @@ The upgrade is accepted only for `GET /v1/connect` with `Upgrade: websocket` and
       `error` `rate-limited` and closed 1013 (logged `session-limit`); a session that ends makes room. Sessions a
       hosted hub restored after a hibernation wake count too.
     - **Heartbeat** (portable). One rule decides what counts: **progress is only what the peer confirms** — a frame
-      it sends, or a pong whose 8-byte payload is the sequence number of a heartbeat ping the relay sent and still
-      awaits (such a pong confirms every byte written before that ping). A write the relay makes is never progress,
+      it sends, or a pong whose 8-byte payload is that of a heartbeat ping the relay sent and still awaits. A pong for
+      a ping confirms the bytes written before it only if the peer read them; payloads are random, so a peer cannot
+      answer a ping it has not read. A write the relay makes is never progress,
       whether or not the kernel took it; nor is a drain, nor an unsolicited or unknown pong, nor a WebSocket ping the
       peer sends: the relay answers that ping itself (ws's automatic pong is off) under the same send caps as every
       other frame, and it keeps no session open, which stays open by its frames.
