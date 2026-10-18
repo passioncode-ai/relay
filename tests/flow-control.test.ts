@@ -561,7 +561,10 @@ async function overflow(extra: Record<string, unknown>, idLength: number, char =
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     inspect?.(r);
-    return r.events.find((ev) => ev.event === "send-overflow");
+    const found = r.events.find((ev) => ev.event === "send-overflow");
+    // No overflow in 30 s: say what the relay did meanwhile, so a failure on a CI runner can be read from its log.
+    assert.ok(found, `no send-overflow after ${n} pings: client closed ${JSON.stringify(a.closed())}, client unsent ${a.ws.bufferedAmount}, peak queued ${r.flow().peakBuffered}, events ${JSON.stringify(r.events.slice(-12))}`);
+    return found;
   } finally {
     a.ws.terminate();
     await within(r.stop({ graceMs: 200 }), 3000);
