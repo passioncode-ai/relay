@@ -558,6 +558,12 @@ async function overflow(extra: Record<string, unknown>, idLength: number, char =
   try {
     assert.deepEqual(await a.outcome, { welcome: true });
     a.ws.pause();
+    // First about 9 MiB of mail to itself, as in round 6: deliveries fill the kernel's buffers in a few large writes, so
+    // the pongs that follow queue in the relay at once. With pongs alone, a client that never reads and keeps writing
+    // fills its own receive buffer first, and on CI's Linux runners its writes then stalled before the relay's queue
+    // reached a cap (the relay reading, nothing arriving: no overflow in 30 s).
+    const body = Buffer.alloc(760 * 1024, 7).toString("base64url");
+    for (let k = 0; k < 12; k += 1) a.ws.send(JSON.stringify({ v: 1, type: "send", id: `m${k}`, to: e.machine.kid, msgId: `self-${k}`, body, ttl: 600 }));
     const pad = char.repeat(Math.max(0, idLength - 8));
     let n = 0;
     const until = Date.now() + 30_000;
@@ -582,8 +588,9 @@ async function overflow(extra: Record<string, unknown>, idLength: number, char =
 
 test("round 8: the byte cap alone stops a non-reader at 3 MiB queued (the frame cap set aside)", async () => {
   let peak = 0;
-  // Ids of four-byte characters (still 128 code points): each pong is about 550 bytes, so 3 MiB is reached quickly.
-  const event = await overflow({ sendFramesCap: Infinity }, 128, "\u{1F600}", (r) => { peak = r.flow().peakBuffered; });
+  // Ids of 128 ASCII characters: each pong is about 190 bytes, so the 2 MiB or more of pongs that reach the cap behind
+  // the queued mail are well over 4096 frames, and the frame cap would have tripped first had it been in force.
+  const event = await overflow({ sendFramesCap: Infinity }, 128, "x", (r) => { peak = r.flow().peakBuffered; });
   assert.ok(event, "no send-overflow");
   // Checked before the write: what is queued stays within 3 MiB, and the frame that would have passed it is not written.
   // The peak is read after every write, so a check made after the write (which lets one frame through) is caught too.

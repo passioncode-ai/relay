@@ -20,11 +20,13 @@ branch `wave2/rp-dec0066`, carries:
   Node 24 run of this branch (the exit code was not seen within 3 s) and passed in isolation three times and on the
   next full run. It is a timing test of the portable process; if it fails again, widen its wait or measure the stop
   under load.
-- **A CI flake found and fixed in the tests:** on GitHub's Node 24 job the round-8 flood tests (`overflow()` in
-  `tests/flow-control.test.ts`) failed in 4 of 8 attempts on this branch's heads, none on `main`. The added diagnostic
-  showed the cause: the client had 1.08 GB of pings it could not send, and the relay, in the same process, had queued
-  no reply. An unbounded flood starves the relay it floods once the relay falls behind in its first second. The flood
-  is now held to what the relay reads (the client's unsent backlog under 8 MiB, `FLOOD_BACKLOG`), in both flood loops.
+- **A CI flake found and fixed in the tests:** on GitHub's runners the round-8 flood tests (`overflow()` in
+  `tests/flow-control.test.ts`) found no `send-overflow` in 30 s in about a third of runs on this branch's heads
+  (none on `main`, never locally). Diagnostics added to `Served.flow()` (frames read, paused sockets, each socket's
+  byte counts and read state) showed a TCP-level stall: the relay was reading and had nothing buffered, yet received
+  nothing after about 730 KB, while the client, which never reads and keeps writing, had a full receive buffer and
+  megabytes unsent. `overflow()` now fills the kernel's buffers with self-addressed mail first, as round 6 already did,
+  so the pongs queue in the relay at once; both flood loops also hold the client's own unsent backlog under 8 MiB.
 - **Exact next task:** A-3 (`EstateCache`), then A-6, A-4, A-5, A-7; then D-2; then G-4, in the order of the
   iteration's `workgraph.json`.
 
