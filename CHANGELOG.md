@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### Release iteration 1, wave 2: the contract at `bf3fd6b` (DEC-0066), nodes RP and D-1
+
+- **Contract re-pinned** from `51719e4` to fabric-agent-contract `bf3fd6b` (RP). The vendored closure gains
+  `rfc3339.ts`, `signing-challenges.ts`, `revocation-delta.ts`, `context-route.ts`, `context-rules.ts`,
+  `identifiers.ts` and the shared-vector runner `relay-vectors.ts`; the relay-frame schema is compiled ahead of time
+  (`src/contract/relay-frame.validate.js`) next to the estate-record validator, as one fail-fast validator per frame
+  type (the whole schema under `allErrors` cost about 200 µs a ping). Every case of the shared vectors runs
+  in `tests/contract.test.ts`, and the `admit` group runs again through `RelaySession`.
+- **Changed, visible to a client (DEC-0066):**
+  - **`presence-query` is answered by one `presence-result {replyTo, presences, unknown}`**, every asked kid exactly
+    once; a kid outside the estate and a kid never seen are both `unknown`. It used to be answered by one `presence`
+    frame per seen kid.
+  - **Every answer carries `replyTo`**: `pong` (it used to reuse the ping's `id`), `accepted`, `presence-result` and an
+    `error` answering a frame, each with its own fresh `id`.
+  - **`malformed`** for a known frame type that fails the schema or FAC-SEM-071 (a `send` with `ttl` 0, a bad `msgId`,
+    recipient or body, `kids` that is not a list) and for text after `auth` that is not a `{v: 1, type, id}` frame
+    (an empty or over-long `id` included). These used to be `unknown-type`, which now means an unknown type or one only
+    the relay sends (`hello`, `welcome`, `accepted`, `deliver`, `presence`, `presence-result`, `error`).
+  - **Auth refusals: one answer past the frame's own bytes.** An unknown kid, a revoked one, a relay holding no record
+    or an expired one, another estate, a bad or high-S signature: `unauthenticated`, close 4401, with a fixed message;
+    the reason goes to the log (`auth-refused`). These used to be `not-admitted`, 4403. Close codes come from the
+    contract's `closeCodeFor`.
+  - **The estate is bound into admission**: a proof signed for another estate than the held record's is refused.
+  - **`welcome.deltaHead`** is the revocation delta's genesis head, `{sequence: 0, sha256: deltaGenesis(estate)}` (it
+    was the SHA-256 of no bytes).
+  - **Blobs in DEC-0066's order of checks** (`verifyBlobRequest`, then `decideBlobAccess`): a `PUT` without
+    `Content-Length` is **411 `malformed`**; a body longer than declared is 413; another recipient list for held bytes
+    is 409 `recipients-mismatch` only after the bytes hash to the digest (wrong bytes are 422 whatever is stored); a
+    repeat `PUT` with the same list is 200 and restores an object the store lost; a `GET` whose signed list differs
+    from the stored one, or of a lost object, is 403 `not-admitted`. A recipient no longer admitted is 401
+    `unauthenticated` (its signer is not proven), where it was 403. The portable server closes the connection after a
+    refused `PUT`.
+  - **Portable: `RELAY_ORIGIN` must also match the contract's relay-origin pattern** (`isRelayOrigin`), or the relay
+    refuses to start.
+- **Tests sign with the contract's `signEs256`** (low-S) through `tests/test-signer.ts`; a raw `crypto.sign` was
+  high-S half the time, which the contract now refuses.
+- **Not yet applied, by node:** open-session revalidation (4403 `not-admitted`/`expired`, A-4); `welcome.limits`,
+  `rate-limited` with `retryAfter` and msgId tombstones after an ack (D-2); delta and heartbeat ingress and
+  `delta-query` (H-1, H-2: still `error internal`); the estate cache, health and the rest of the estate handling
+  (A-3, A-5, A-6, A-7).
+
+### Release iteration 1, wave 1
+
 Release iteration 1, wave 1 (relay#8 and #9). Ids: `RLY-0n` are this repository's backlog rows; `RLY-0nn` are
 release iteration 1's inventory findings (Project Observatory `docs/runs/2026-10-12-release-iteration-1/`).
 

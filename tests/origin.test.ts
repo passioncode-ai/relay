@@ -3,7 +3,7 @@
 // and [::1], never the name "localhost", which resolves where a literal cannot (the contract owner's answer to P9).
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { createHash, sign } from "node:crypto";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -14,6 +14,7 @@ import { isLocalOnly, isLoopbackLiteral, OriginRefused, relayOrigin } from "../s
 import { FsBlobIndex, FsBlobStore, FsEstateSource } from "../src/portable/fs-store.ts";
 import { serve } from "../src/portable/server.ts";
 import { estate } from "./estate-fixture.ts";
+import { signEs256 } from "../src/contract/p256.ts";
 
 const roots: string[] = [];
 after(async () => { for (const root of roots) await rm(root, { recursive: true, force: true }); });
@@ -100,7 +101,7 @@ test("RELAY_ORIGIN=https://Relay.Example/ admits a machine that signed https://r
     assert.equal(frames[0]!.relay, "https://relay.example");
     const iat = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
     const fields = { relay: "https://relay.example", nonce: frames[0]!.nonce, estate: "estate-5d0f1a", kid: r.e.machine.kid, iat };
-    const sig = sign("sha256", Buffer.from(relayAuthSigningInput(fields)), { key: r.e.machine.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
+    const sig = signEs256(r.e.machine.privateKey, relayAuthSigningInput(fields));
     ws.send(JSON.stringify({ v: 1, type: "auth", id: "a1", protocol: "fabric-relay/0.1", alg: "ES256", ...fields, sig }));
     await until(() => frames.some((f) => f.type === "welcome" || f.type === "error"));
     assert.equal(frames.at(-1)!.type, "welcome", JSON.stringify(frames.at(-1)));
@@ -118,7 +119,7 @@ test("port 0 without an origin: the blob route verifies against the same origin 
     const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
     const recipients = [r.e.second.kid];
     const iat = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-    const sig = sign("sha256", Buffer.from(relayBlobSigningInput({ relay: r.origin, method: "PUT", digest, recipients, iat })), { key: r.e.machine.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
+    const sig = signEs256(r.e.machine.privateKey, relayBlobSigningInput({ relay: r.origin, method: "PUT", digest, recipients, iat }));
     const put = await fetch(`http://127.0.0.1:${r.port}/v1/blobs/${digest}`, { method: "PUT", body: bytes, headers: { "Fabric-Relay-Request": relayRequestHeader({ alg: "ES256", kid: r.e.machine.kid, recipients, iat, sig }) } });
     assert.equal(put.status, 201, await put.text());
   } finally {
@@ -222,4 +223,13 @@ test("round 6: a RELAY_ORIGIN with an empty query or fragment (https://relay.tes
     assert.equal(rule.ok, false, raw);
     if (!rule.ok) assert.match(rule.reason, problem, raw);
   }
+});
+
+test("DEC-0066: an origin the URL parser accepts but the contract's relay-origin pattern refuses does not start (a name over 253 characters)", () => {
+  const long = `https://${Array.from({ length: 5 }, () => "a".repeat(60)).join(".")}.test`;
+  assert.equal(new URL(long).origin, long, "the URL parser accepts it as written");
+  const rule = relayOrigin(long, "0.0.0.0");
+  assert.equal(rule.ok, false);
+  if (!rule.ok) assert.match(rule.reason, /DEC-0066/);
+  assert.ok(relayOrigin("https://relay.example", "0.0.0.0").ok, "an ordinary origin still starts");
 });

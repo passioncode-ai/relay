@@ -160,6 +160,10 @@
         "protocol": {
           "$ref": "device-common.schema.json#/$defs/protocol"
         },
+        "protocols": {
+          "$ref": "common.schema.json#/$defs/protocols",
+          "description": "DEC-0067: the protocol revisions this receiver accepts from the device, N and N−1 per protocol."
+        },
         "kind": {
           "const": "enrollment-response"
         },

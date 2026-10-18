@@ -3,7 +3,6 @@
 // at the grace period; an upgrade that arrives while the relay stops is refused 503.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { sign } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { connect as tcp } from "node:net";
@@ -17,6 +16,7 @@ import { serve } from "../src/portable/server.ts";
 import { SqliteLastSeen } from "../src/portable/sqlite-last-seen.ts";
 import { SqliteMailbox } from "../src/portable/sqlite-mailbox.ts";
 import { estate, type Estate } from "./estate-fixture.ts";
+import { signEs256 } from "../src/contract/p256.ts";
 
 const roots: string[] = [];
 after(async () => { for (const root of roots) await rm(root, { recursive: true, force: true }); });
@@ -33,7 +33,7 @@ async function dataDir(e: Estate): Promise<string> {
 function authFrame(m: Estate["machine"], relay: string, nonce: string): string {
   const iat = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
   const fields = { relay, nonce, estate: "estate-5d0f1a", kid: m.kid, iat };
-  const sig = sign("sha256", Buffer.from(relayAuthSigningInput(fields)), { key: m.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
+  const sig = signEs256(m.privateKey, relayAuthSigningInput(fields));
   return JSON.stringify({ v: 1, type: "auth", id: "a1", protocol: "fabric-relay/0.1", alg: "ES256", ...fields, sig });
 }
 

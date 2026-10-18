@@ -218,6 +218,52 @@
         },
         "gpu": {
           "type": "boolean"
+        },
+        "mcp": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "description": "DEC-0071: the MCP servers the agent calls, by role: the server registered under that role name in the placement's configuration (in Claude Code's .mcp.json, the server key), and the tools it must expose. Never an address or a token; those come with the placement.",
+          "items": {
+            "type": "object",
+            "required": [
+              "role",
+              "tools"
+            ],
+            "properties": {
+              "role": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,63}$"
+              },
+              "contract": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,63}$",
+                "description": "An optional name of the tool set, for people (for example org-admin); never a host name."
+              },
+              "tools": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 128,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
+                }
+              },
+              "secrets": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+                },
+                "description": "DEC-0074: the secret slots (by name, from secrets[]) the placement uses to configure this role's server entry: its address and its token. Each named slot is declared in secrets[], and one slot feeds one role (FAC-SEM-102)."
+              }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false
@@ -443,7 +489,6 @@
   "then": {
     "required": [
       "agentRef",
-      "provider",
       "resultSignal",
       "evals"
     ],
@@ -460,7 +505,46 @@
           "receipt": true
         }
       }
-    }
+    },
+    "allOf": [
+      {
+        "if": {
+          "not": {
+            "required": [
+              "provider"
+            ],
+            "properties": {
+              "provider": true
+            }
+          }
+        },
+        "then": {
+          "description": "DEC-0071: an agent without a provider manifest is a consumer agent: it serves nothing and calls the MCP servers it requires by role, as the plugin it is.",
+          "required": [
+            "skills",
+            "requires"
+          ],
+          "properties": {
+            "service": false,
+            "skills": {
+              "type": "array",
+              "minItems": 1
+            },
+            "requires": {
+              "type": "object",
+              "required": [
+                "mcp"
+              ],
+              "properties": {
+                "mcp": true
+              }
+            },
+            "state": false,
+            "layer": false
+          }
+        }
+      }
+    ]
   },
   "else": {
     "required": [

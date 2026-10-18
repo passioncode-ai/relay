@@ -182,9 +182,12 @@ export interface Served {
    * write). It never exceeds the send cap (3 MiB); tests read it to show what is queued, which a process's footprint
    * (allocator retention) cannot. `pingsSent` and `pingsSkipped` count heartbeat pings, and the beats that sent none
    * (the previous ping to that socket still unwritten, or 64 awaiting pongs); `marks`, the marker pings sent behind
-   * large frames.
+   * large frames. `received` counts frames read from every socket; `pausedForInFlight` is how many sockets the relay
+   * has paused for in-flight frames right now, and `socketsPaused` how many sockets are not being read right now,
+   * whoever paused them, and `sockets` each socket's byte counts and read state: together they say whether a socket
+   * stopped being read.
    */
-  flow(): { peakBuffered: number; pingsSent: number; pingsSkipped: number; marks: number };
+  flow(): { peakBuffered: number; pingsSent: number; pingsSkipped: number; marks: number; received: number; pausedForInFlight: number; socketsPaused: number; sockets: Array<Record<string, unknown>> };
 }
 
 /**
@@ -211,7 +214,10 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
     const started = Date.now();
     if (stopping) reply.setHeader("connection", "close");
     const declared = Number(message.headers["content-length"] ?? 0);
-    if (declared > MAX_BODY_BYTES) {
+    // A blob PUT's length is checked by handleBlob, after the request's own header (DEC-0066's order of checks, step 5):
+    // an over-long PUT with a malformed header is 400, not 413. Every other body is refused here before it is read.
+    const blobPath = (message.url ?? "").startsWith("/v1/blobs/");
+    if (declared > MAX_BODY_BYTES && !blobPath) {
       reply.statusCode = 413;
       reply.setHeader("connection", "close");
       reply.setHeader("content-type", "application/json");
@@ -237,6 +243,8 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
     }
     try {
       const response = await handle(request, deps);
+      // A refused PUT may leave its body unread or half read (a 413 stops reading): the connection is not reused.
+      if (request.method === "PUT" && response.status >= 400) reply.setHeader("connection", "close");
       await send(response, reply);
       log({ event: "request", method: message.method, path: url.pathname, status: response.status, ms: Date.now() - started });
     } catch (error) {
@@ -282,7 +290,8 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
     socket.once("close", () => connections.delete(socket));
   });
   const sendCap = options.sendCap ?? SEND_CAP;
-  const flow = { peakBuffered: 0, pingsSent: 0, pingsSkipped: 0, marks: 0 };
+  const flow = { peakBuffered: 0, pingsSent: 0, pingsSkipped: 0, marks: 0, received: 0 };
+  const pausedForInFlight = new Set<WebSocket>();
   const sendFramesCap = options.sendFramesCap ?? SEND_FRAMES_CAP;
   // The heartbeat (HEARTBEAT_MS; see the constant): per socket, when it last showed life (a matched pong or a frame),
   // how many data bytes the relay has written to it and how many a matched pong confirmed, the pings awaiting their pongs
@@ -438,14 +447,16 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
       (socket as Socket).on("drain", () => void hub.drained(ws));
       ws.on("message", (data, isBinary) => {
         lively();
+        flow.received += 1;
         inFlight += 1;
-        if (inFlight >= IN_FLIGHT_HIGH && !ws.isPaused) ws.pause();
+        if (inFlight >= IN_FLIGHT_HIGH && !ws.isPaused) { ws.pause(); pausedForInFlight.add(ws); }
         void hub.receive(ws, isBinary ? new Uint8Array(data as Buffer) : (data as Buffer).toString("utf8")).finally(() => {
           inFlight -= 1;
-          if (inFlight <= IN_FLIGHT_LOW && ws.isPaused) ws.resume();
+          if (inFlight <= IN_FLIGHT_LOW && ws.isPaused) { ws.resume(); pausedForInFlight.delete(ws); }
         });
       });
       ws.on("close", () => {
+        pausedForInFlight.delete(ws);
         clearTimeout(terminate);
         alive.delete(ws);
         hub.closed(ws);
@@ -556,6 +567,14 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
     log({ event: "stopped", ...outcome, ms: Date.now() - started });
     return outcome;
   };
-  return { server, origin, stop: (stopOptions) => (stopping ??= stop(stopOptions)), flow: () => ({ ...flow }) };
+  return { server, origin, stop: (stopOptions) => (stopping ??= stop(stopOptions)), flow: () => ({
+    ...flow, pausedForInFlight: pausedForInFlight.size,
+    socketsPaused: [...sockets.clients].filter((ws) => (ws as unknown as { _socket?: Socket })._socket?.isPaused?.()).length,
+    sockets: [...sockets.clients].map((ws) => {
+      const socket = (ws as unknown as { _socket?: Socket & { _handle?: { reading?: boolean } } })._socket;
+      return { readyState: ws.readyState, bytesRead: socket?.bytesRead, bytesWritten: socket?.bytesWritten, writableLength: socket?.writableLength,
+        readableFlowing: socket?.readableFlowing, readableLength: socket?.readableLength, reading: socket?._handle?.reading, destroyed: socket?.destroyed };
+    }),
+  }) };
 }
 // #endregion portable-server

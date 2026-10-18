@@ -2,32 +2,22 @@
 // connection set, derives presence from it, keeps one scheduler for every session's deadline, wakes a machine's
 // sessions when a message is queued for it, and stops every session at once.
 import assert from "node:assert/strict";
-import { generateKeyPairSync, sign } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import path from "node:path";
 import { test } from "node:test";
-import { MAX_BODY_BYTES, MAX_FRAME_BYTES, relayAuthSigningInput, type AdmissionResult } from "../src/contract/relay.ts";
+import { frameValid } from "./frame-schema.ts";
+import { MAX_BODY_BYTES, MAX_FRAME_BYTES, type AdmissionResult } from "../src/contract/relay.ts";
 import { EstateHub, REFRESH_RETRY_MS, type HubDeps } from "../src/core/hub.ts";
 import { MemoryMailbox, type MailboxStore } from "../src/core/mailbox.ts";
 import { MemoryLastSeen } from "../src/core/presence.ts";
 import { IDLE_OUTSTANDING_MS, type SessionIo } from "../src/core/session.ts";
+import { admittedSet, authFrame, machine, type TestMachine } from "./test-signer.ts";
 
-const require = createRequire(import.meta.url);
-const ajv = new (require("ajv/dist/2020").default)({ allErrors: true, strict: false });
-require("ajv-formats").default(ajv);
-const frameValid = ajv.compile(JSON.parse(readFileSync(path.resolve(import.meta.dirname, "../src/contract/schemas/relay-frame.schema.json"), "utf8")));
 
 const T0 = Date.parse("2026-10-12T12:00:00.000Z");
 const NONCE = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
 const ORIGIN = "https://relay.example";
 
-function machine(kid: string) {
-  const pair = generateKeyPairSync("ec", { namedCurve: "P-256" });
-  return { kid, privateKey: pair.privateKey, jwk: pair.publicKey.export({ format: "jwk" }) as Record<string, string> };
-}
 const A = machine("urn:fabric:machine:a#sig"), B = machine("urn:fabric:machine:b#sig");
-const admission = (): AdmissionResult => ({ ok: true, held: {}, revision: 1, set: new Map([[A.kid, A.jwk], [B.kid, B.jwk]]) as unknown as Map<string, Uint8Array> });
+const admission = (): AdmissionResult => admittedSet([A, B]);
 
 function rig(options: { mailbox?: MailboxStore; refresh?: HubDeps["refresh"]; maxSessionsPerMachine?: number } = {}) {
   let now = T0;
@@ -57,11 +47,8 @@ function rig(options: { mailbox?: MailboxStore; refresh?: HubDeps["refresh"]; ma
     };
     hub.connect(conn, io, ORIGIN);
     const frame = (f: Record<string, unknown>) => hub.receive(conn, JSON.stringify({ v: 1, ...f }));
-    const auth = async (m: ReturnType<typeof machine>) => {
-      const iat = new Date(now).toISOString().replace(/\.\d{3}Z$/, "Z");
-      const fields = { relay: ORIGIN, nonce: NONCE, estate: "e", kid: m.kid, iat };
-      const sig = sign("sha256", Buffer.from(relayAuthSigningInput(fields)), { key: m.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
-      await hub.receive(conn, JSON.stringify({ v: 1, type: "auth", id: "a", protocol: "fabric-relay/0.1", alg: "ES256", ...fields, sig }));
+    const auth = async (m: TestMachine) => {
+      await hub.receive(conn, JSON.stringify(authFrame(m, { relay: ORIGIN, nonce: NONCE, at: now, id: "a" })));
       assert.ok(sent.some((f) => f.type === "welcome"), JSON.stringify(sent.at(-1)));
     };
     const presenceOf = () => sent.filter((f) => f.type === "presence").map((f) => [f.kid, f.state]);
@@ -429,10 +416,7 @@ test("one machine holds at most maxSessionsPerMachine sessions: the next is refu
   const a1 = r.open(), a2 = r.open(), a3 = r.open(), b = r.open();
   await a1.auth(A);
   await a2.auth(A);
-  const iat = new Date(T0).toISOString().replace(/\.\d{3}Z$/, "Z");
-  const fields = { relay: ORIGIN, nonce: NONCE, estate: "e", kid: A.kid, iat };
-  const sig = sign("sha256", Buffer.from(relayAuthSigningInput(fields)), { key: A.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
-  await r.hub.receive(a3.conn, JSON.stringify({ v: 1, type: "auth", id: "a", protocol: "fabric-relay/0.1", alg: "ES256", ...fields, sig }));
+  await r.hub.receive(a3.conn, JSON.stringify(authFrame(A, { relay: ORIGIN, nonce: NONCE, at: T0, id: "a" })));
   assert.deepEqual([a3.sent.at(-1)!.type, a3.sent.at(-1)!.code, a3.closed], ["error", "rate-limited", [1013]]);
   assert.ok(r.log.some((e) => e.event === "session-limit" && e.kid === A.kid && e.limit === 2));
   await b.auth(B); // another machine is not counted against A
@@ -444,7 +428,7 @@ test("one machine holds at most maxSessionsPerMachine sessions: the next is refu
 
 // Round 7: an id the relay would echo is held to the schema's 128 characters, and the flush page fits the transport.
 
-test("an id over 128 characters is refused like any frame that is not fabric-relay/0.1, and is never echoed", async () => {
+test("an id over 128 characters is refused malformed like any text that is not a fabric-relay/0.1 frame, and is never echoed", async () => {
   const r = rig();
   const a = r.open();
   await a.auth(A);
@@ -453,12 +437,12 @@ test("an id over 128 characters is refused like any frame that is not fabric-rel
     const before = a.sent.length;
     await a.frame(frame);
     const replies = a.sent.slice(before);
-    assert.deepEqual(replies.map((f) => [f.type, f.code, f.replyTo]), [["error", "unknown-type", undefined]], JSON.stringify(frame).slice(0, 80));
+    assert.deepEqual(replies.map((f) => [f.type, f.code, f.replyTo]), [["error", "malformed", undefined]], JSON.stringify(frame).slice(0, 80));
     assert.ok(!JSON.stringify(replies).includes(long), "the long id is not echoed");
   }
   assert.deepEqual(a.closed, [], "the session stays open, as for any frame that is not fabric-relay/0.1");
   await a.frame({ type: "ping", id: "i".repeat(128) });
-  assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.id.length], ["pong", 128], "128 characters is still an id");
+  assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.replyTo.length], ["pong", 128], "128 characters is still an id");
   // Before auth, an over-long id is a first frame that is not an auth frame: refused unauthenticated, 4401.
   const b = r.open();
   await b.frame({ type: "auth", id: long });
@@ -489,7 +473,7 @@ test("the flush page fits the transport: 4 where it reports a backlog, 64 where 
 
 // Round 8: msgId and body held to the schema, ids counted in code points, and no relay frame larger than a frame.
 
-test("a send whose msgId is empty or over 128 code points, or whose body is not base64url, is refused unknown-type and never echoed", async () => {
+test("a send whose msgId is empty or over 128 code points, or whose body is not base64url, is refused malformed and never echoed", async () => {
   const r = rig();
   const a = r.open();
   await a.auth(A);
@@ -502,7 +486,7 @@ test("a send whose msgId is empty or over 128 code points, or whose body is not 
     const before = a.sent.length;
     await a.frame(frame);
     const replies = a.sent.slice(before);
-    assert.deepEqual(replies.map((f) => [f.type, f.code, f.replyTo]), [["error", "unknown-type", frame.id]], JSON.stringify(frame).slice(0, 80));
+    assert.deepEqual(replies.map((f) => [f.type, f.code, f.replyTo]), [["error", "malformed", frame.id]], JSON.stringify(frame).slice(0, 80));
     assert.ok(!JSON.stringify(replies).includes(long), "the long msgId is not echoed");
   }
   // 128 code points of a four-byte character is a valid msgId (and id): JSON Schema counts code points, not UTF-16 units.
@@ -524,7 +508,7 @@ test("no frame the relay sends exceeds MAX_FRAME_BYTES: the largest send it acce
   const shell = { v: 1, type: "send", id: "big", to: B.kid, msgId: "", body, ttl: 60 };
   const msgId = "m".repeat(MAX_FRAME_BYTES - Buffer.byteLength(JSON.stringify(shell)) - 8);
   await a.frame({ type: "send", id: "big", to: B.kid, msgId, body, ttl: 60 });
-  assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.code], ["error", "unknown-type"]);
+  assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.code], ["error", "malformed"]);
   // The largest send the relay accepts: the largest body and a 128-code-point msgId of four-byte characters.
   const maxBody = "A".repeat(Math.floor((MAX_BODY_BYTES * 4) / 3));
   await a.frame({ type: "send", id: "max", to: B.kid, msgId: "\u{1F600}".repeat(128), body: maxBody, ttl: 60 });
@@ -536,7 +520,7 @@ test("no frame the relay sends exceeds MAX_FRAME_BYTES: the largest send it acce
   for (const f of [...a.sent, ...b.sent]) assert.ok(bytes(f) <= MAX_FRAME_BYTES, `${f.type} is ${bytes(f)} bytes`);
 });
 
-test("a send whose recipient is over 256 code points is refused unknown-type and never echoed", async () => {
+test("a send whose recipient is over 256 code points is refused malformed and never echoed", async () => {
   const r = rig();
   const a = r.open();
   await a.auth(A);
@@ -546,7 +530,7 @@ test("a send whose recipient is over 256 code points is refused unknown-type and
     const before = a.sent.length;
     await a.frame({ type: "send", id: "s1", to, msgId: "m-1", body: "AA", ttl: 60 });
     const replies = a.sent.slice(before);
-    assert.deepEqual(replies.map((f) => [f.type, f.code]), [["error", "unknown-type"]], `to of ${to.length}`);
+    assert.deepEqual(replies.map((f) => [f.type, f.code]), [["error", "malformed"]], `to of ${to.length}`);
     assert.ok(!JSON.stringify(replies).includes(long), "the long recipient is not echoed");
   }
   // 256 code points (four-byte characters included) is a valid recipient: it is refused only as one the relay does not admit.
@@ -554,13 +538,13 @@ test("a send whose recipient is over 256 code points is refused unknown-type and
   assert.equal(a.sent.at(-1)!.code, "unknown-recipient");
 });
 
-test("a send whose msgId holds a control character (NUL) is refused unknown-type: no store truncates what accepted named", async () => {
+test("a send whose msgId holds a control character (NUL) is refused malformed: no store truncates what accepted named", async () => {
   const r = rig();
   const a = r.open();
   await a.auth(A);
   for (const msgId of ["a\u0000b", "a\nb", "a\u007fb"]) {
     await a.frame({ type: "send", id: "s1", to: B.kid, msgId, body: "AA", ttl: 60 });
-    assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.code], ["error", "unknown-type"], JSON.stringify(msgId));
+    assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.code], ["error", "malformed"], JSON.stringify(msgId));
   }
 });
 
@@ -611,13 +595,13 @@ test("progressedAll re-arms the hub's timer exactly once for many sessions, and 
   assert.equal(r.armed.length, after, "nothing progressed: no arm");
 });
 
-test("a msgId that is not well-formed UTF-16 (a lone surrogate) is refused unknown-type", async () => {
+test("a msgId that is not well-formed UTF-16 (a lone surrogate) is refused malformed", async () => {
   const r = rig();
   const a = r.open();
   await a.auth(A);
   for (const msgId of ["a\uD800b", "\uDC00", "x\uD83D"]) {
     await a.frame({ type: "send", id: "s1", to: B.kid, msgId, body: "AA", ttl: 60 });
-    assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.code], ["error", "unknown-type"], JSON.stringify(msgId));
+    assert.deepEqual([a.sent.at(-1)!.type, a.sent.at(-1)!.code], ["error", "malformed"], JSON.stringify(msgId));
   }
   await a.frame({ type: "send", id: "s2", to: B.kid, msgId: "\u{1F600}", body: "AA", ttl: 60 });
   assert.equal(a.sent.at(-1)!.type, "accepted", "a well-formed pair is a msgId");

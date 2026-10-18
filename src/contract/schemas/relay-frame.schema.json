@@ -32,7 +32,8 @@
         },
         "relay": {
           "type": "string",
-          "pattern": "^https://"
+          "pattern": "^(?:https://(?:(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)(?:\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)){3}|\\[(?:(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){7}(?:0|[1-9a-f][0-9a-f]{0,3})|(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){1,7}:|(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){1,6}:(?:0|[1-9a-f][0-9a-f]{0,3})|(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){1,5}(?::(?:0|[1-9a-f][0-9a-f]{0,3})){1,2}|(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){1,4}(?::(?:0|[1-9a-f][0-9a-f]{0,3})){1,3}|(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){1,3}(?::(?:0|[1-9a-f][0-9a-f]{0,3})){1,4}|(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){1,2}(?::(?:0|[1-9a-f][0-9a-f]{0,3})){1,5}|(?:0|[1-9a-f][0-9a-f]{0,3}):(?::(?:0|[1-9a-f][0-9a-f]{0,3})){1,6}|:(?:(?::(?:0|[1-9a-f][0-9a-f]{0,3})){1,7}|:))\\]|(?=[a-z0-9.-]{1,253}(?::|$))(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)*(?![0-9]+(?::|$))(?!0x[0-9a-f]*(?::|$))[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?::(?!443$)(?:6553[0-5]|655[0-2]\\d|65[0-4]\\d{2}|6[0-4]\\d{3}|[1-5]\\d{4}|[1-9]\\d{0,3}))?|http://(?:127\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)|\\[::1\\])(?::(?!80$)(?:6553[0-5]|655[0-2]\\d|65[0-4]\\d{2}|6[0-4]\\d{3}|[1-5]\\d{4}|[1-9]\\d{0,3}))?)$",
+          "description": "the relay's origin, serialised: https on a lowercase host name (at most 253 characters, its last label not a number), a dotted IPv4 address or a bracketed lowercase IPv6 address; or http on a loopback literal (127.0.0.0/8 or [::1]) for a relay on the same machine; a port of 1 to 65535 that is not the scheme's default, and nothing after it (DEC-0066, isRelayOrigin)"
         },
         "nonce": {
           "type": "string",
@@ -130,30 +131,61 @@
           "description": "the revision (1 or more) of the verified estate record the relay admits from; a relay with none admits nobody, so a welcome always carries it"
         },
         "deltaHead": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "sequence",
-            "sha256"
-          ],
-          "properties": {
-            "sequence": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9007199254740991
-            },
-            "sha256": {
-              "type": "string",
-              "pattern": "^[a-f0-9]{64}$"
-            }
-          },
-          "description": "The head of the revocation delta: the same shape as device check-in records.revocationDelta."
+          "$ref": "revocation-delta.schema.json#/$defs/head",
+          "description": "The head of the revocation delta: the same shape as device check-in records.revocationDelta (DEC-0054)."
         },
         "heartbeat": {
-          "type": [
-            "object",
-            "null"
-          ]
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "heartbeat.schema.json"
+            }
+          ],
+          "description": "The relay's latest heartbeat (heartbeat/1, DEC-0054), unchanged, or null when it holds none."
+        },
+        "limits": {
+          "type": "object",
+          "description": "the limits this relay enforces, each optional and chosen by the relay; a frame over one is answered rate-limited or mailbox-full (DEC-0066)",
+          "properties": {
+            "sendPerMinute": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "send frames per minute per session"
+            },
+            "presenceQueryPerMinute": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "presence-query frames per minute per session"
+            },
+            "deltaQueryPerMinute": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "delta-query frames per minute per session"
+            },
+            "mailboxMessages": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "messages a recipient's mailbox holds"
+            },
+            "mailboxBytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "bytes a recipient's mailbox holds; omitted while the relay has no byte quota"
+            },
+            "blobBytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "the largest blob, in bytes (at most MAX_BLOB_BYTES)"
+            }
+          }
         }
       }
     },
@@ -228,6 +260,12 @@
         "seq": {
           "type": "integer",
           "minimum": 0
+        },
+        "replyTo": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "the id of the frame this answers (DEC-0066); unsolicited frames carry none"
         }
       }
     },
@@ -381,6 +419,77 @@
         "v",
         "type",
         "id",
+        "replyTo",
+        "presences",
+        "unknown"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "type": {
+          "const": "presence-result"
+        },
+        "replyTo": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "the id of the presence-query this answers"
+        },
+        "presences": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "required": [
+              "kid",
+              "state",
+              "lastSeen"
+            ],
+            "properties": {
+              "kid": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "state": {
+                "enum": [
+                  "online",
+                  "offline"
+                ]
+              },
+              "lastSeen": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+              }
+            }
+          },
+          "description": "each asked kid of the asker's own owner that the relay has seen"
+        },
+        "unknown": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "description": "each asked kid outside the asker's owner or never seen, alike, so nothing leaks across owners"
+        }
+      },
+      "description": "The one terminal answer to a presence-query (DEC-0066): every asked kid appears exactly once in presences or unknown."
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "id",
         "head",
         "entries"
       ],
@@ -397,27 +506,22 @@
           "const": "delta"
         },
         "head": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "sequence",
-            "sha256"
-          ],
-          "properties": {
-            "sequence": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9007199254740991
-            },
-            "sha256": {
-              "type": "string",
-              "pattern": "^[a-f0-9]{64}$"
-            }
-          },
-          "description": "The head of the revocation delta: the same shape as device check-in records.revocationDelta."
+          "$ref": "revocation-delta.schema.json#/$defs/head",
+          "description": "The head the entries lead to: a hint; only a signed heartbeat's head binds (DEC-0054)."
         },
         "entries": {
-          "type": "array"
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "$ref": "revocation-delta.schema.json#/$defs/entry"
+          },
+          "description": "Consecutive signed entries (revocation-delta/1, DEC-0054), carried unchanged."
+        },
+        "replyTo": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "the id of the frame this answers (DEC-0066); unsolicited frames carry none"
         }
       }
     },
@@ -442,7 +546,8 @@
           "const": "heartbeat"
         },
         "heartbeat": {
-          "type": "object"
+          "$ref": "heartbeat.schema.json",
+          "description": "A signed heartbeat (heartbeat/1, DEC-0054), carried unchanged."
         }
       }
     },
@@ -468,7 +573,8 @@
         },
         "fromSeq": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "The first entry the node lacks: its applied head's sequence plus one (DEC-0054)."
         }
       }
     },
@@ -511,6 +617,12 @@
         },
         "type": {
           "const": "pong"
+        },
+        "replyTo": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "the id of the frame this answers (DEC-0066); unsolicited frames carry none"
         }
       }
     },
@@ -554,12 +666,25 @@
             "internal",
             "malformed",
             "recipients-mismatch"
-          ]
+          ],
+          "description": "bad-key is reserved: since DEC-0066 no relay sends it (an unusable admitted key leaves the admission set and the request is unauthenticated); it stays so a frame from an older relay validates"
         },
         "message": {
           "type": "string",
           "maxLength": 240,
           "pattern": "^[^\\n]*$"
+        },
+        "replyTo": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "the id of the frame this answers (DEC-0066); unsolicited frames carry none"
+        },
+        "retryAfter": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "seconds before the node may send that frame type again, on rate-limited (DEC-0066)"
         }
       }
     }

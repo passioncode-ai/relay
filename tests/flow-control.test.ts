@@ -3,7 +3,6 @@
 // holds at most `maxSessionsPerMachine` sessions, and what the relay keeps in memory for a machine stays bounded.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { sign } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { connect as tcp, type AddressInfo, type Socket } from "node:net";
@@ -16,6 +15,7 @@ import { FsBlobStore, FsEstateSource } from "../src/portable/fs-store.ts";
 import { serve } from "../src/portable/server.ts";
 import { SqliteMailbox } from "../src/portable/sqlite-mailbox.ts";
 import { estate, type Estate } from "./estate-fixture.ts";
+import { signEs256 } from "../src/contract/p256.ts";
 
 const roots: string[] = [];
 after(async () => { for (const root of roots) await rm(root, { recursive: true, force: true }); });
@@ -42,7 +42,7 @@ async function prefill(root: string, e: Estate, count: number, kib: number) {
 function authFrame(m: Estate["machine"], relay: string, nonce: string): string {
   const iat = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
   const fields = { relay, nonce, estate: "estate-5d0f1a", kid: m.kid, iat };
-  const sig = sign("sha256", Buffer.from(relayAuthSigningInput(fields)), { key: m.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
+  const sig = signEs256(m.privateKey, relayAuthSigningInput(fields));
   return JSON.stringify({ v: 1, type: "auth", id: "a1", protocol: "fabric-relay/0.1", alg: "ES256", ...fields, sig });
 }
 
@@ -283,7 +283,9 @@ test("round 6: a machine flooding pings it never reads while the relay stops: th
     let n = 0;
     const until = Date.now() + 30_000;
     while (!r.events.some((ev) => ev.event === "send-overflow") && Date.now() < until) {
-      for (let k = 0; k < 2000; k += 1) a.ws.send(JSON.stringify({ v: 1, type: "ping", id: `${n++}`.padStart(8, "0") + id }));
+      if (a.ws.bufferedAmount < FLOOD_BACKLOG) {
+        for (let k = 0; k < 2000; k += 1) a.ws.send(JSON.stringify({ v: 1, type: "ping", id: `${n++}`.padStart(8, "0") + id }));
+      }
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
     assert.ok(r.events.some((ev) => ev.event === "send-overflow"), JSON.stringify(r.events.map((ev) => ev.event)));
@@ -545,6 +547,9 @@ test("round 10: the heartbeat runs on a monotonic clock: a wall clock stepped 30
 });
 
 /** A paused (never reading) session flooding pings with `idLength`-character ids until the relay logs send-overflow. */
+/** The most a flooding test client keeps unsent: enough to keep the relay reading, never enough to starve it. */
+const FLOOD_BACKLOG = 8 * 1024 * 1024;
+
 async function overflow(extra: Record<string, unknown>, idLength: number, char = "x", inspect?: (r: Awaited<ReturnType<typeof relay>>) => void) {
   const e = estate(new Date(), "ES256");
   const root = await dataDir(e);
@@ -553,15 +558,28 @@ async function overflow(extra: Record<string, unknown>, idLength: number, char =
   try {
     assert.deepEqual(await a.outcome, { welcome: true });
     a.ws.pause();
+    // First about 9 MiB of mail to itself, as in round 6: deliveries fill the kernel's buffers in a few large writes, so
+    // the pongs that follow queue in the relay at once. With pongs alone, a client that never reads and keeps writing
+    // fills its own receive buffer first, and on CI's Linux runners its writes then stalled before the relay's queue
+    // reached a cap (the relay reading, nothing arriving: no overflow in 30 s).
+    const body = Buffer.alloc(760 * 1024, 7).toString("base64url");
+    for (let k = 0; k < 12; k += 1) a.ws.send(JSON.stringify({ v: 1, type: "send", id: `m${k}`, to: e.machine.kid, msgId: `self-${k}`, body, ttl: 600 }));
     const pad = char.repeat(Math.max(0, idLength - 8));
     let n = 0;
     const until = Date.now() + 30_000;
     while (!r.events.some((ev) => ev.event === "send-overflow") && Date.now() < until) {
-      for (let k = 0; k < 2000; k += 1) a.ws.send(JSON.stringify({ v: 1, type: "ping", id: `${n++}`.padStart(8, "0") + pad }));
+      // The flood is held to what the relay reads (the client's own unsent backlog under FLOOD_BACKLOG): client and relay
+      // share this process, and an unbounded backlog (a CI run reached 1 GB) starves the relay it is meant to flood.
+      if (a.ws.bufferedAmount < FLOOD_BACKLOG) {
+        for (let k = 0; k < 2000; k += 1) a.ws.send(JSON.stringify({ v: 1, type: "ping", id: `${n++}`.padStart(8, "0") + pad }));
+      }
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     inspect?.(r);
-    return r.events.find((ev) => ev.event === "send-overflow");
+    const found = r.events.find((ev) => ev.event === "send-overflow");
+    // No overflow in 30 s: say what the relay did meanwhile, so a failure on a CI runner can be read from its log.
+    assert.ok(found, `no send-overflow after ${n} pings: client closed ${JSON.stringify(a.closed())}, client unsent ${a.ws.bufferedAmount}, client socket ${JSON.stringify((({ bytesRead, bytesWritten, writableLength, readableFlowing, destroyed }) => ({ bytesRead, bytesWritten, writableLength, readableFlowing, destroyed }))((a.ws as unknown as { _socket: import("node:net").Socket })._socket))}, relay flow ${JSON.stringify(r.flow())}, events ${JSON.stringify(r.events.slice(-12))}`);
+    return found;
   } finally {
     a.ws.terminate();
     await within(r.stop({ graceMs: 200 }), 3000);
@@ -570,8 +588,9 @@ async function overflow(extra: Record<string, unknown>, idLength: number, char =
 
 test("round 8: the byte cap alone stops a non-reader at 3 MiB queued (the frame cap set aside)", async () => {
   let peak = 0;
-  // Ids of four-byte characters (still 128 code points): each pong is about 550 bytes, so 3 MiB is reached quickly.
-  const event = await overflow({ sendFramesCap: Infinity }, 128, "\u{1F600}", (r) => { peak = r.flow().peakBuffered; });
+  // Ids of 128 ASCII characters: each pong is about 190 bytes, so the 2 MiB or more of pongs that reach the cap behind
+  // the queued mail are well over 4096 frames, and the frame cap would have tripped first had it been in force.
+  const event = await overflow({ sendFramesCap: Infinity }, 128, "x", (r) => { peak = r.flow().peakBuffered; });
   assert.ok(event, "no send-overflow");
   // Checked before the write: what is queued stays within 3 MiB, and the frame that would have passed it is not written.
   // The peak is read after every write, so a check made after the write (which lets one frame through) is caught too.
