@@ -184,9 +184,10 @@ export interface Served {
    * (the previous ping to that socket still unwritten, or 64 awaiting pongs); `marks`, the marker pings sent behind
    * large frames. `received` counts frames read from every socket; `pausedForInFlight` is how many sockets the relay
    * has paused for in-flight frames right now, and `socketsPaused` how many sockets are not being read right now,
-   * whoever paused them: together they say whether a socket stopped being read.
+   * whoever paused them, and `sockets` each socket's byte counts and read state: together they say whether a socket
+   * stopped being read.
    */
-  flow(): { peakBuffered: number; pingsSent: number; pingsSkipped: number; marks: number; received: number; pausedForInFlight: number; socketsPaused: number };
+  flow(): { peakBuffered: number; pingsSent: number; pingsSkipped: number; marks: number; received: number; pausedForInFlight: number; socketsPaused: number; sockets: Array<Record<string, unknown>> };
 }
 
 /**
@@ -569,6 +570,11 @@ export async function serve(deps: RelayDeps, options: ServeOptions): Promise<Ser
   return { server, origin, stop: (stopOptions) => (stopping ??= stop(stopOptions)), flow: () => ({
     ...flow, pausedForInFlight: pausedForInFlight.size,
     socketsPaused: [...sockets.clients].filter((ws) => (ws as unknown as { _socket?: Socket })._socket?.isPaused?.()).length,
+    sockets: [...sockets.clients].map((ws) => {
+      const socket = (ws as unknown as { _socket?: Socket & { _handle?: { reading?: boolean } } })._socket;
+      return { readyState: ws.readyState, bytesRead: socket?.bytesRead, bytesWritten: socket?.bytesWritten, writableLength: socket?.writableLength,
+        readableFlowing: socket?.readableFlowing, readableLength: socket?.readableLength, reading: socket?._handle?.reading, destroyed: socket?.destroyed };
+    }),
   }) };
 }
 // #endregion portable-server
