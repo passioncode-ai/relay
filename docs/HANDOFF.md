@@ -20,7 +20,7 @@ branch `wave2/rp-dec0066`, carries:
   Node 24 run of this branch (the exit code was not seen within 3 s) and passed in isolation three times and on the
   next full run. It is a timing test of the portable process; if it fails again, widen its wait or measure the stop
   under load.
-- **Exact next task:** A-3 (`EstateCache`), then A-6, A-4, A-5, A-7; then D-2; then G-4 — the order of the
+- **Exact next task:** A-3 (`EstateCache`), then A-6, A-4, A-5, A-7; then D-2; then G-4, in the order of the
   iteration's `workgraph.json`.
 
 **Where the work stood (2026-10-12, release iteration 1, wave 1).**
