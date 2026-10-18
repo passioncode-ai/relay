@@ -283,7 +283,9 @@ test("round 6: a machine flooding pings it never reads while the relay stops: th
     let n = 0;
     const until = Date.now() + 30_000;
     while (!r.events.some((ev) => ev.event === "send-overflow") && Date.now() < until) {
-      for (let k = 0; k < 2000; k += 1) a.ws.send(JSON.stringify({ v: 1, type: "ping", id: `${n++}`.padStart(8, "0") + id }));
+      if (a.ws.bufferedAmount < FLOOD_BACKLOG) {
+        for (let k = 0; k < 2000; k += 1) a.ws.send(JSON.stringify({ v: 1, type: "ping", id: `${n++}`.padStart(8, "0") + id }));
+      }
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
     assert.ok(r.events.some((ev) => ev.event === "send-overflow"), JSON.stringify(r.events.map((ev) => ev.event)));
@@ -545,6 +547,9 @@ test("round 10: the heartbeat runs on a monotonic clock: a wall clock stepped 30
 });
 
 /** A paused (never reading) session flooding pings with `idLength`-character ids until the relay logs send-overflow. */
+/** The most a flooding test client keeps unsent: enough to keep the relay reading, never enough to starve it. */
+const FLOOD_BACKLOG = 8 * 1024 * 1024;
+
 async function overflow(extra: Record<string, unknown>, idLength: number, char = "x", inspect?: (r: Awaited<ReturnType<typeof relay>>) => void) {
   const e = estate(new Date(), "ES256");
   const root = await dataDir(e);
@@ -557,7 +562,11 @@ async function overflow(extra: Record<string, unknown>, idLength: number, char =
     let n = 0;
     const until = Date.now() + 30_000;
     while (!r.events.some((ev) => ev.event === "send-overflow") && Date.now() < until) {
-      for (let k = 0; k < 2000; k += 1) a.ws.send(JSON.stringify({ v: 1, type: "ping", id: `${n++}`.padStart(8, "0") + pad }));
+      // The flood is held to what the relay reads (the client's own unsent backlog under FLOOD_BACKLOG): client and relay
+      // share this process, and an unbounded backlog (a CI run reached 1 GB) starves the relay it is meant to flood.
+      if (a.ws.bufferedAmount < FLOOD_BACKLOG) {
+        for (let k = 0; k < 2000; k += 1) a.ws.send(JSON.stringify({ v: 1, type: "ping", id: `${n++}`.padStart(8, "0") + pad }));
+      }
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     inspect?.(r);
