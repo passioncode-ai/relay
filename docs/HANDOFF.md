@@ -1,5 +1,22 @@
 # Handoff
 
+**RLY-05 dated (2026-11-08, board request `736b4049`, plan row 4.2 of the Studio-move plan, thread `d5abc880`).**
+No relay work landed between 2026-10-18 (`00937e0`) and this entry. The coordinator (fabric-workspace) asked for a
+date before 2026-11-10, or it picks Observatory's OBS-287 as the interim relay instead.
+- **Dates given:** first hosted deploy, scoped to stage S1 of RM-21 (one estate, the operator's machines), by
+  2026-11-20; the workgraph's full F-8 (with B-2, C-2, H-1/H-2 = RLY-07, F-3S, F-5 = RLY-04) by 2026-12-04.
+- **Why the split:** F-8 in project-observatory `docs/runs/2026-10-12-release-iteration-1/workgraph.json` depends on
+  about 17 open nodes; S1 needs admission that follows the estate record (A-3, A-4, A-6, A-7), limits on a public
+  endpoint (D-2) and the hosted half of the release workflow (F-6). Blob and mailbox durability (B-2, C-2), the delta
+  carry (H-1/H-2) and the portable executable (F-5) do not block one estate's first hosted use.
+- **Checkpoints the coordinator can watch:** RP merged by 2026-11-11 (the contract moved 1073 commits past
+  `bf3fd6b`); A-3, A-6, A-4, A-7 by 2026-11-15; D-2 by 2026-11-16; F-6 hosted half by 2026-11-18; F-8 by
+  2026-11-20. A missed checkpoint is reported in thread `d5abc880` with a new date the same day.
+- **Gates:** the hostname from the passioncode.ai zone owner (F-8 peer gate); enabling R2 on the account, a human
+  gate only if the Cloudflare door reports it. The deploy itself has no outside users, so the agent does it; a session
+  started by a board request alone stops before it and hands it on.
+- **Exact next task:** RP, re-pin fabric-agent-contract to its current `main` and make `npm run check` green, then A-3.
+
 **Wave 2 status (2026-10-17).** Wave 1 is merged (relay#8, relay#10 as `5fa0d881`). The first wave-2 pull request,
 branch `wave2/rp-dec0066`, carries:
 - **RP:** the contract pinned at fabric-agent-contract `bf3fd6b`; every shared-vector case runs here; tests sign
