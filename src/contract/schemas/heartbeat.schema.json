@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://fabric.passioncode.ai/agent-contract/0.1.0/schemas/heartbeat.schema.json",
   "title": "Timestamp heartbeat (heartbeat/1, DEC-0054)",
-  "description": "A signed timestamp that commits to the revocation delta's head and to the estate revision. A hub signs one at least every 24 hours while it runs (SHOULD hourly) and after every entry and every revision; a machine whose latest heartbeat is more than 72 hours old, or that has not applied up to its head and revision, refuses what arrives from other machines. A device check-in reports its sequence and at (records.heartbeat, DEC-0053). FAC-SEM-083 and the verifier acceptHeartbeat apply.",
+  "description": "A signed timestamp that commits to the revocation delta's head and to the estate revision. A hub signs one at least every 24 hours while it runs (SHOULD hourly) and after every entry and every revision; a machine whose latest heartbeat is more than 72 hours old, or that has not applied up to its head and revision, refuses what arrives from other machines. A machine reports its sequence and at (records.heartbeat, DEC-0053) to its hub over the relay, or through machine.report on the hub's own machine, never in a check-in to an organization server (DEC-0128, DEC-0132). FAC-SEM-083 and the verifier acceptHeartbeat apply.",
   "type": "object",
   "additionalProperties": false,
   "required": [

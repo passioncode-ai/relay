@@ -21,7 +21,7 @@ const estate = json("tests/vectors/estate-record.json");
 const T0 = Date.parse(relay.auth.context.now);
 const ESTATE = relay.auth.frame.estate as string;
 const admitted = (set: Map<string, unknown> = new Map([[relay.auth.frame.kid, relay.machineKey]]), estate = ESTATE): AdmissionResult =>
-  ({ ok: true, held: { estate }, revision: 3, set: set as Map<string, Uint8Array>, excluded: [] });
+  ({ ok: true, held: { estate }, revision: 3, set: set as Map<string, Uint8Array>, excluded: [], unread: [] });
 /** The vector signature in its high-S twin (r, n − s): plain ECDSA verifies it, a relay-family verifier refuses it. */
 const highS = (() => {
   const raw = Buffer.from(relay.auth.frame.sig, "base64url");

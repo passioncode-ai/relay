@@ -2,6 +2,7 @@ import { createHash, createPublicKey, verify } from "node:crypto";
 import { CLOCK_SKEW_SECONDS, strictTime } from "./rfc3339.js";
 import { rfc8785 } from "./canonical.js";
 import { isSmallOrderKey } from "./ed25519.js";
+import { KEY_REFERENCE, deltaAnchorOf } from "./estate-record-rules.js";
 import { type JsonObject, isObject, show } from "./findings.js";
 import { sameIdentifier } from "./identifiers.js";
 
@@ -9,7 +10,7 @@ import { sameIdentifier } from "./identifiers.js";
 /**
  * The revocation delta and the timestamp heartbeat (DEC-0054). The delta is an append-only chain of signed entries,
  * one revocation each; entry n names the hash of the head before it, so the head is `{sequence, sha256}` — the shape a
- * device check-in reports (`records.revocationDelta`, DEC-0053) and a relay's `welcome.deltaHead` carries (DEC-0047).
+ * machine reports to its hub (`records.revocationDelta`, DEC-0053; in the machines' report over the relay, or through `machine.report` on the hub's own machine, DEC-0132, never in a check-in to an organization server, DEC-0128) and an estate relay's `welcome.deltaHead` carries (DEC-0047).
  * The heartbeat is a signed timestamp that commits to the delta's head and to the estate revision. Both are signed by
  * an estate key: a hub key the highest estate-record revision the machine verified and applied certifies (DEC-0055
  * `hubKey`), not revoked there or by an entry applied before. A machine whose heartbeat is more than 72 hours old, or
@@ -67,9 +68,11 @@ export function deltaGenesis(estate: string): string {
   return sha256hex(Buffer.from(rfc8785({ type: DELTA_TYPE, estate, sequence: 0 }), "utf8"));
 }
 
-/** What a machine holds of one estate's delta. `entries[n - 1]` is entry n; `forked` keeps signed entries that conflict with the chain, for their revocations and as evidence. */
+/** What a machine holds of one estate's delta. `entries[i]` is entry `(anchor?.sequence ?? 0) + i + 1` (entry n is `entries[n - 1]` without an anchor); `forked` keeps signed entries that conflict with the chain, for their revocations and as evidence. */
 export interface DeltaState {
   estate: string;
+  /** DEC-0107: the head a revision vouched for, where the held chain starts; `entries` are the ones after it. */
+  anchor?: { sequence: number; sha256: string };
   entries: readonly JsonObject[];
   heartbeat?: JsonObject;
   broken?: boolean;
@@ -82,20 +85,27 @@ export const emptyDeltaState = (estate: string): DeltaState => ({ estate, entrie
 /** The hash of the head at `sequence` in the chain a state holds: the genesis at 0; "" (never a hash) for what the state does not hold. */
 const headAt = (state: DeltaState, sequence: number): string => {
   try {
+    const base = baseOf(state);
+    if (base > 0 && sequence === base) return (state.anchor as { sha256: string }).sha256;
+    // Every caller reads a sequence at or above the anchor; one below it indexes no held entry and reads "".
     if (sequence === 0) return deltaGenesis(state.estate);
-    const entry = state.entries[sequence - 1];
+    const entry = state.entries[sequence - base - 1];
     return isObject(entry) ? deltaEntryHash(entry) : "";
   } catch {
     return "";
   }
 };
 
-/** Whether a state is one this module could have produced: an estate id and a list of entries. */
-const usable = (state: unknown): state is DeltaState => isObject(state) && isString(state.estate) && Array.isArray(state.entries);
+/** The sequence the held chain starts after: the anchor's, or 0 (DEC-0107). */
+const baseOf = (state: DeltaState): number => (Number.isSafeInteger(state.anchor?.sequence) ? (state.anchor as { sequence: number }).sequence : 0);
 
-/** The head a machine has applied, in the check-in's `records.revocationDelta` shape. */
+/** Whether a state is one this module could have produced: an estate id, a list of entries and, if any, an anchor. */
+const usable = (state: unknown): state is DeltaState =>
+  isObject(state) && isString(state.estate) && Array.isArray(state.entries) && (state.anchor === undefined || deltaAnchorOf({ deltaAnchor: state.anchor }) !== undefined);
+
+/** The head a machine has applied, in the `records.revocationDelta` shape it reports to its hub. */
 export function deltaHead(state: DeltaState): { sequence: number; sha256: string } {
-  const sequence = state.entries.length;
+  const sequence = baseOf(state) + state.entries.length;
   return { sequence, sha256: headAt(state, sequence) };
 }
 
@@ -169,6 +179,9 @@ function entryShape(entry: unknown): string | undefined {
   if (!isString(entry.sig) || !SIG.test(entry.sig)) return "sig is 64 bytes in base64url";
   const revocation = entry.revocation;
   if (!isObject(revocation) || !isString(revocation.kind) || !isString(revocation.ref)) return "revocation names its kind and ref";
+  // A `device-key` ref is a kid or a key reference (DEC-0084): one with `@` that is neither is refused in every revision
+  // that lists it (estate-record-rules), while reconciliation requires the next revision to list it, so the chain would stop.
+  if (revocation.kind === "device-key" && revocation.ref.includes("@") && !KEY_REFERENCE.test(revocation.ref)) return "a device-key ref is a kid or a key reference <kid>@sha256:<64 lower-case hex digits>";
   const at = deltaTime(entry.at);
   const revokedAt = deltaTime(revocation.revokedAt);
   if (Number.isNaN(at) || Number.isNaN(revokedAt)) return "at and revokedAt are RFC 3339 date-times with an offset, on days that exist";
@@ -205,11 +218,47 @@ export interface DeltaTrust {
   at: Date;
 }
 
+export type AnchorProblem = "malformed" | "wrong-estate" | "fork" | "unreconciled";
+
+/**
+ * Apply a revision's delta anchor (DEC-0107) to what a machine holds, when the machine applies the revision. No anchor,
+ * or one at or below what the machine holds with the hash it holds there, changes nothing. An anchor past the held head
+ * becomes where the chain starts: the entries held before it are dropped, and the next entry is the anchor's sequence + 1.
+ * An entry is dropped only when the record lists its revocation (`isRevoked` on `record.revocations`), whatever its
+ * time, so an anchor never takes a revocation out of force: one the record does not list is `unreconciled`, naming
+ * the entries, and nothing changes. An anchor whose hash differs from the entry held at its sequence is a second
+ * history (`fork`); the state becomes `broken`.
+ */
+export function anchorDelta(state: DeltaState, record: unknown): { ok: true; state: DeltaState } | { ok: false; problem: AnchorProblem; state: DeltaState; missing?: number[] } {
+  if (!usable(state)) return { ok: false, problem: "malformed", state };
+  if (!isObject(record) || record.estate !== state.estate) return { ok: false, problem: "wrong-estate", state };
+  if (record.deltaAnchor === undefined) return { ok: true, state };
+  const anchor = deltaAnchorOf(record);
+  if (anchor === undefined) return { ok: false, problem: "malformed", state };
+  // A held entry that is no object, or names no sequence, cannot be checked against the anchor or the record: the state
+  // is malformed, whichever branch would read it.
+  if (!state.entries.every((entry) => isObject(entry) && Number.isSafeInteger(entry.sequence))) return { ok: false, problem: "malformed", state };
+  const base = baseOf(state);
+  const held = base + state.entries.length;
+  if (anchor.sequence > held) {
+    const listed = list(record.revocations);
+    const missing = state.entries.filter((entry) => {
+      const revocation = isObject(entry.revocation) ? entry.revocation : {};
+      return !(isString(revocation.kind) && isRevoked(listed, revocation.kind, revocation.ref));
+    }).map((entry) => entry.sequence as number);
+    if (missing.length > 0) return { ok: false, problem: "unreconciled", state, missing };
+    return { ok: true, state: { ...state, anchor, entries: [] } };
+  }
+  if (anchor.sequence < base || headAt(state, anchor.sequence) === anchor.sha256) return { ok: true, state };
+  return { ok: false, problem: "fork", state: { ...state, broken: true } };
+}
+
 /**
  * Apply a page of entries (`{head, entries}`, the relay's `delta` frame and the check-in response's
- * `records.revocationDelta`) to what a machine holds, in order. Each entry is checked — shape, estate, `EdDSA`, an
- * admitted kind, not more than 60 s ahead, an estate key the record certifies and nothing revokes, the signature —
- * and only then placed: an entry already held is skipped; one past the next sequence is a `gap` (ask with
+ * `records.revocationDelta`) to what a machine holds, in order. An entry below the anchor, the anchor's own entry and
+ * one identical to an entry held are skipped first, before the signer is looked up (DEC-0107). Every other entry is
+ * checked — shape, estate, `EdDSA`, an admitted kind, not more than 60 s ahead, an estate key the record certifies and
+ * nothing revokes, the signature — and only then placed; one past the next sequence is a `gap` (ask with
  * `delta-query`); a signed entry whose `prev` is not the held head, or that differs from the entry held at its
  * sequence, is a second signed history (`broken-chain`, `fork`), and the state becomes `broken`, keeping that entry's
  * revocation in force. The page's `head` is the relay's hint and binds nothing; a heartbeat's head does. On a refusal,
@@ -236,13 +285,16 @@ export function applyDelta(state: DeltaState, page: unknown, trust: DeltaTrust):
     if (e.alg !== DELTA_ALG) return fail("unsupported-alg", index, current, `an estate key signs with ${DELTA_ALG}`);
     if (!DELTA_KINDS.includes(revocation.kind as string)) return fail("not-revocable", index, current, `the delta does not carry a ${show(revocation.kind)} revocation: a passkey is revoked only by a revision`);
     if (deltaTime(e.at) > now + MAX_FUTURE_SECONDS * 1000) return fail("not-yet-valid", index, current, "the entry is dated more than 60 s ahead of the verifier's clock");
+    // What the machine already holds, or what an anchor vouched for, is skipped before the signer is looked up: an entry
+    // an estate key signed that a later revision no longer certifies stays the chain's (DEC-0107).
+    const at = e.sequence as number;
+    if (at < baseOf(current) || (at <= baseOf(current) + current.entries.length && headAt(current, at) === deltaEntryHash(e))) continue;
     const signer = estateSigner(record, e.kid, effectiveRevocations(record, current));
     if ("problem" in signer) return fail(signer.problem, index, current, `no estate key the trusted revision certifies signs as ${show(e.kid)}`);
     if (!verifies(signingInput(e), e.sig as string, signer.key)) return fail("bad-signature", index, current, "the signature does not verify");
     const sequence = e.sequence as number;
-    const held = current.entries.length;
+    const held = baseOf(current) + current.entries.length;
     if (sequence <= held) {
-      if (headAt(current, sequence) === deltaEntryHash(e)) continue;
       return fail("fork", index, { ...current, broken: true, forked: [...(current.forked ?? []), e] }, `two signed entries carry sequence ${sequence}`);
     }
     if (sequence > held + 1) return fail("gap", index, current, `the next entry is ${held + 1}; ask from it with delta-query`);
@@ -333,7 +385,8 @@ export function acceptHeartbeat(state: DeltaState, heartbeat: unknown, trust: De
     }
   }
   const sequence = head.sequence as number;
-  if (sequence <= state.entries.length && headAt(state, sequence) !== head.sha256) return broken(`the heartbeat's head at ${sequence} is not the entry this machine holds there`);
+  // A head inside what an anchor vouched for (below it) is compared with nothing: the machine holds no entry there.
+  if (sequence >= baseOf(state) && sequence <= baseOf(state) + state.entries.length && headAt(state, sequence) !== head.sha256) return broken(`the heartbeat's head at ${sequence} is not the entry this machine holds there`);
   if (revision.revision === record.revision && revision.digest !== record.digest) return broken(`the heartbeat names another revision ${show(revision.revision)} than the one this machine applied`);
   return { ok: true, state: { ...state, heartbeat: h }, newer: true };
 }
@@ -379,7 +432,7 @@ export function deltaFreshness(state: DeltaState, trust: DeltaTrust): { answer: 
   const ok = usable(state);
   const verdict = freshnessAnswer({
     at: clock(trust),
-    applied: { sequence: ok ? state.entries.length : undefined, revision: record.revision },
+    applied: { sequence: ok ? baseOf(state) + state.entries.length : undefined, revision: record.revision },
     heartbeat: ok ? state.heartbeat : undefined,
     broken: ok && state.broken === true
   });
@@ -408,7 +461,12 @@ export function unreconciled(revision: unknown, entries: readonly unknown[]): { 
   return { missing, unreadable };
 }
 
-/** Whether a machine holding `state` may apply `revision` (already schema-valid and accepted by `verifyEstateRecord`). */
+/**
+ * Whether a machine holding `state` may apply `revision` (already schema-valid and accepted by `verifyEstateRecord`).
+ * A missing entry's `index` is into `state.entries`, so its sequence is `(state.anchor?.sequence ?? 0) + index + 1`. A
+ * machine then applies the revision's anchor (`anchorDelta`); a refusal by either refuses the revision, and the machine
+ * keeps the one it holds (DEC-0107).
+ */
 export function reconcileRevision(state: DeltaState, revision: unknown): { ok: true } | { ok: false; problem: "malformed" | "unreconciled"; missing: Array<{ index: number; kind: string; ref: string }> } {
   if (!usable(state)) return { ok: false, problem: "malformed", missing: [] };
   const result = unreconciled(revision, state.entries);

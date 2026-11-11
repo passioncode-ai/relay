@@ -1,5 +1,6 @@
 import { type Finding, type JsonObject, isObject } from "./findings.js";
 import { PERSONAL_CONTEXT } from "./context-route.js";
+import { shareGrantIdFindings } from "./share-registration.js";
 
 // #region context-rules — docs: docs/specification/contexts.md#semantic-rules
 /**
@@ -14,7 +15,8 @@ export function grantContextFindings(grant: unknown, at: string): Finding[] {
 }
 
 export function contextRules(kind: string, value: JsonObject): Finding[] | undefined {
-  if (kind === "grant") return grantContextFindings(value, "");
+  // A grant into an organization is also named by a share grant id (DEC-0086, src/share-registration.ts).
+  if (kind === "grant") return [...grantContextFindings(value, ""), ...shareGrantIdFindings(value, "")];
   return undefined;
 }
 // #endregion context-rules

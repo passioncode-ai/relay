@@ -60,7 +60,7 @@ for (const c of (relay.admit.cases as Case[])) {
     const ctx = c.context;
     const set = new Map(Object.entries(ctx.admitted ?? {}).map(([kid, key]) => [kid, vectorKey(key)]));
     const admission = (): AdmissionResult => (typeof ctx.estate === "string"
-      ? { ok: true, held: { estate: ctx.estate }, revision: 1, set: set as unknown as Map<string, Uint8Array>, excluded: [] }
+      ? { ok: true, held: { estate: ctx.estate }, revision: 1, set: set as unknown as Map<string, Uint8Array>, excluded: [], unread: [] }
       : { ok: false, refusal: "no-record" });
     const sent: Array<Record<string, any>> = [];
     const closed: number[] = [];

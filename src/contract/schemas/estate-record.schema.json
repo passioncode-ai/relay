@@ -27,7 +27,7 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 9007199254740991,
-      "description": "1 for the first revision; each later one is its parent's plus one (FAC-SEM-072). The device check-in's records.estateRecord.revision names it (DEC-0053)."
+      "description": "1 for the first revision; each later one is its parent's plus one (FAC-SEM-072). A machine's report to its hub names it in records.estateRecord.revision (DEC-0053, DEC-0128)."
     },
     "parent": {
       "$ref": "common.schema.json#/$defs/sha256",
@@ -64,6 +64,14 @@
       },
       "description": "The publisher keys the estate's machines pin, by kid: a placement names one, and verifyPackage verifies the placed package's publisher signature under it (DEC-0051)."
     },
+    "publisherScopes": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/publisherScope"
+      },
+      "description": "DEC-0090: the publisher keys that are a partner's, each trusted only for placements in the organization contexts it names (FAC-SEM-122). A key not named here keeps DEC-0051's meaning."
+    },
     "shareGrants": {
       "type": "array",
       "maxItems": 256,
@@ -88,6 +96,34 @@
         ]
       },
       "description": "Share grants (DEC-0037, DEC-0039): standing grants to a person or organization outside the estate, each a delegation grant with an audience. A share grant into an organization carries its context, org:<orgId>, never personal (DEC-0082, FAC-SEM-110); an instance placed in that context names it (FAC-SEM-111)."
+    },
+    "organizations": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/organizationPin"
+      },
+      "description": "The organizations the person admitted into their estate (DEC-0127 OM-2), each by its context, its server and the root key that signs its org-key-set/1: the estate's half of the organization-to-estate mapping. The passkey's signature over the revision is the person's admission (R1-D12); no administrator signs it. Each org once (FAC-SEM-147). A reader pinned before DEC-0127 refuses the member, so Fabric writes it only once every reader of the record is pinned at or after."
+    },
+    "deltaAnchor": {
+      "type": "object",
+      "required": [
+        "sequence",
+        "sha256"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "description": "DEC-0107: the revocation delta's head this revision vouches for, in the shape a machine reports it (records.revocationDelta). Every revocation of the entries up to it is in this record (reconciliation, DEC-0054), so a machine that does not hold those entries starts its chain here (anchorDelta) instead of verifying entries an estate key the record no longer certifies signed. Never moves back (FAC-SEM-137)."
     },
     "revocations": {
       "type": "array",
@@ -303,7 +339,7 @@
       "properties": {
         "id": {
           "$ref": "activity-common.schema.json#/$defs/opaqueId",
-          "description": "The device id it enrolled with (DEC-0031); no human name."
+          "description": "The machine's own opaque id in the estate, never an organization enrollment's device.id (DEC-0128 UE-1); no human name."
         },
         "deviceKeys": {
           "type": "array",
@@ -317,6 +353,14 @@
         "hubKey": {
           "$ref": "#/$defs/edKey",
           "description": "The certificate of the hub key on this machine: the passkey-signed record binds this kid and public key to this machine. A delegation verifier that reads the record trusts a token's kid only while the revision it reads certifies it: one it verified and the highest its machine applied (delegation.md DL-14, hubKeyCertified, DEC-0060)."
+        },
+        "contextHubKeys": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/contextHubKey"
+          },
+          "description": "The hub keys of this machine per organization context (DEC-0128): each signs the delegation tokens of its context under that context's iss, and nothing of the estate's (heartbeats, delta entries, leases stay the personal hubKey's). Each context once, every kid and key unique across all hub keys of the record, the context pinned in organizations, only on a full machine that holds the personal hubKey (FAC-SEM-073, FAC-SEM-134). A reader pinned before DEC-0128 refuses the member, so Fabric writes it only once every reader of the record is pinned at or after."
         },
         "packages": {
           "type": "array",
@@ -385,6 +429,14 @@
             "additionalProperties": false
           },
           "description": "Secret placements: where a slot of a package placed here is filled from, for the instance of that agent in a context (DEC-0082). No member can hold a value."
+        },
+        "profile": {
+          "enum": [
+            "full",
+            "member",
+            "view"
+          ],
+          "description": "DEC-0106: what this machine may be. Absent means full, and a writer omits full. member: takes T1 calls, carries no hubKey, holds a placed package's secrets only in the slots the record places on it, every placement by a revision, and the credentials a credential envelope delivers to it (DEC-0111, credentials.md). view: no hubKey, no placement, no secret placement and the source of none; a call it makes or receives only reads. Changed only by a revision the passkey signs (FAC-SEM-134)."
         }
       },
       "additionalProperties": false
@@ -412,7 +464,7 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 1366,
-          "description": "What is revoked, in its kind's own form: a credential id, a machine id, a kid, a package digest or a grant's meta.id."
+          "description": "What is revoked, in its kind's own form: a credential id, a machine id, a kid, a package digest or a grant's meta.id. A device-key revocation names a kid (every key ever listed under it) or one key's reference <kid>@sha256:<hex of its octets> (DEC-0084, FAC-SEM-076)."
         },
         "revokedAt": {
           "$ref": "common.schema.json#/$defs/timestamp"
@@ -465,6 +517,101 @@
       },
       "additionalProperties": false,
       "description": "A WebAuthn Level 3 assertion response, without the user handle: the passkey signed authenticatorData ‖ SHA-256(clientDataJSON), and clientDataJSON's challenge is derived from the record's digest (estateChallenge)."
+    },
+    "publisherScope": {
+      "type": "object",
+      "required": [
+        "kid",
+        "partner",
+        "contexts"
+      ],
+      "properties": {
+        "kid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "A kid of publisherKeys."
+        },
+        "partner": {
+          "$ref": "common.schema.json#/$defs/orgContextId",
+          "description": "The partner organization that holds the key, org:<partnerOrgId>, an ordinary organization id (the first organization server's PA-01)."
+        },
+        "contexts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/orgContextId"
+          },
+          "description": "The organization contexts a placement under this key may be in; never personal."
+        }
+      },
+      "additionalProperties": false
+    },
+    "organizationPin": {
+      "type": "object",
+      "required": [
+        "org",
+        "issuer",
+        "iss",
+        "root",
+        "pinnedAt"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "org": {
+          "$ref": "org-membership.schema.json#/$defs/org"
+        },
+        "issuer": {
+          "$ref": "entitlement.schema.json#/$defs/issuer",
+          "description": "The organization server's origin, as its attestations name it."
+        },
+        "iss": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^urn:fabric:context:[A-Za-z0-9][A-Za-z0-9._~-]{15,127}$",
+          "description": "The delegation issuer of this organization's context (DEC-0128): an opaque id per (estate, organization), stable across key rotation and hub moves, never containing the estate id, so a token in this context names no estate. Each pin's own (FAC-SEM-147)."
+        },
+        "root": {
+          "type": "object",
+          "required": [
+            "kid",
+            "x"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kid": {
+              "$ref": "activity-common.schema.json#/$defs/opaqueId"
+            },
+            "x": {
+              "$ref": "common.schema.json#/$defs/ed25519PublicKeyBase64url"
+            }
+          },
+          "description": "The organization's root (Ed25519): it signs org-key-set/1 documents only. Never of small order (FAC-SEM-147, DEC-0045)."
+        },
+        "pinnedAt": {
+          "$ref": "common.schema.json#/$defs/timestamp",
+          "description": "When the person admitted the organization."
+        }
+      }
+    },
+    "contextHubKey": {
+      "type": "object",
+      "required": [
+        "context",
+        "key"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "context": {
+          "$ref": "org-membership.schema.json#/$defs/org"
+        },
+        "key": {
+          "$ref": "#/$defs/edKey"
+        }
+      },
+      "description": "One organization context's hub key on a machine (DEC-0128)."
     }
   }
 }

@@ -8,7 +8,7 @@
  * A key in a case is a JWK object or a string of base64 SEC 1 octets; a time is RFC 3339.
  */
 import {
-  admit, checkReplay, decideBlobAccess, instant, isRelayOrigin, relayAdmissionSet, verifyBlobRequest, verifyMessageBody,
+  admit, checkReplay, decideBlobAccess, instant, isRelayOrigin, relayAdmissionSet, sessionStands, verifyBlobRequest, verifyMessageBody,
   type AuthFrame, type RelayMessagePayload
 } from "./relay.js";
 import type { JsonObject } from "./findings.js";
@@ -44,8 +44,17 @@ export function relayVectorResults(vectors: Json): VectorResult[] {
       ...(c.held ? { held: c.held as JsonObject } : {}), pinned: [], at: new Date(c.at as string), schemaValid: () => false,
       extraRevocations: (c.extraRevocations ?? []) as JsonObject[]
     });
-    const actual = result.ok ? { ok: true, revision: result.revision, kids: [...result.set.keys()].sort(), excluded: result.excluded } : result;
+    const actual = result.ok ? { ok: true, revision: result.revision, kids: [...result.set.keys()].sort(), excluded: result.excluded, ...(result.unread.length > 0 ? { unread: result.unread } : {}) } : result;
     out.push({ group: "admissionSet", name: c.name as string, actual, expected: c.expect });
+  }
+  for (const c of cases(vectors.session)) {
+    // A session proven under a key, against the set the relay holds now (DEC-0084).
+    const set = relayAdmissionSet({
+      ...(c.held ? { held: c.held as JsonObject } : {}), pinned: [], at: new Date(c.at as string), schemaValid: () => false,
+      extraRevocations: (c.extraRevocations ?? []) as JsonObject[]
+    });
+    const session = c.session as { kid: string; key: string };
+    out.push({ group: "session", name: c.name as string, actual: sessionStands({ kid: session.kid, key: new Uint8Array(Buffer.from(session.key, "base64")) }, set), expected: c.expect });
   }
   for (const c of cases(vectors.admit)) {
     const ctx = c.context as Json;
@@ -114,14 +123,15 @@ export function envelopeVectorResults(vectors: Json): VectorResult[] {
 }
 
 /**
- * Every case of `secret-envelope.json`'s `placement` group (DEC-0082), run through `estateEnvelopeContext`: whether each
- * sender kid may hold the slot, and the revision its placement run starts at (null for none).
+ * Every case of `secret-envelope.json`'s `placement` group (DEC-0082), run through `estateEnvelopeContext` with the case's
+ * `extraRevocations` (DEC-0084): whether each sender kid may hold the slot and whether `senderKey` knows its key, and the
+ * revision its placement run starts at (null for none).
  */
 export function placementVectorResults(vectors: Json): VectorResult[] {
   return cases(vectors.placement).map((c) => {
-    const ctx = estateEnvelopeContext(c.applied as JsonObject[], c.machine as string);
+    const ctx = estateEnvelopeContext(c.applied as JsonObject[], c.machine as string, (c.extraRevocations ?? []) as JsonObject[]);
     const agentRef = c.agentRef as string, slot = c.slot as string;
-    const holds = ((c.expect as Json).holds as Array<{ sender: string }>).map((h) => ({ sender: h.sender, mayHold: ctx.mayHold(h.sender, agentRef, slot) }));
+    const holds = ((c.expect as Json).holds as Array<{ sender: string }>).map((h) => ({ sender: h.sender, mayHold: ctx.mayHold(h.sender, agentRef, slot), senderKnown: ctx.senderKey(h.sender) !== undefined }));
     const actual = { holds, currentPlacement: ctx.currentPlacement(agentRef, slot) ?? null };
     return { group: "placement", name: c.name as string, actual, expected: c.expect };
   });

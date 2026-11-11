@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Contract re-pinned to `c14db0e9` (RP checkpoint of RLY-05, 2026-11-11)
+
+- **Contract re-pinned** from fabric-agent-contract `bf3fd6b` to `c14db0e9` (its `main` on 2026-11-11, seven commits
+  after `v0.1.0+2026-11-08.1`; 1078 commits). The vendored closure gains `share-registration.ts` and
+  `protocol-revisions.ts`, and the schemas `entitlement.schema.json` and `org-membership.schema.json`; every vendored
+  file is byte-equal to the pin (`src/contract/VENDORED.json`, 46 files).
+- **`scripts/vendor-contract.ts`:** the relay-frame schema now has two `welcome` branches (an estate's and, since
+  DEC-0134, an organization's), so a frame type with several branches gets one validator over just those branches;
+  Ajv's `strictRequired` is off because the schema's root `not: { required: ["estateRevision"] }` names a member only
+  its branches declare.
+- **Behaviour the relay inherits from the contract's code:** admission now follows FAC-SEM-114 (DEC-0084): a revision
+  that drops a machine without revoking it is refused (`rule-violation`), and `relayAdmissionSet` reports delta entries
+  it cannot read as `unread`. The test fixture `revise({dropKids})` now revokes what it drops.
+- **Not adopted by this change:** the organization relay's handshake (DEC-0134, OR-1 to OR-5) and the other relay
+  deltas past `bf3fd6b`; they are backlog row RLY-09.
+
 ### Release iteration 1, wave 2: the contract at `bf3fd6b` (DEC-0066), nodes RP and D-1
 
 - **Contract re-pinned** from `51719e4` to fabric-agent-contract `bf3fd6b` (RP). The vendored closure gains

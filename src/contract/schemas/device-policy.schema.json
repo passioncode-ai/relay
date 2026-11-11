@@ -300,7 +300,7 @@
               "items": {
                 "type": "string",
                 "maxLength": 256,
-                "pattern": "^(?![/\\\\~])(?![A-Za-z]:)(?!(?:.*[/\\\\])?\\.\\.(?:[/\\\\]|$))[A-Za-z0-9._*/\\\\-]+$"
+                "pattern": "^(?![/\\\\~])(?![A-Za-z]:)(?!(?:[\\s\\S]*[/\\\\])?\\.\\.(?:[/\\\\]|$))[A-Za-z0-9._*/\\\\-]+$"
               },
               "description": "The organization's work folders, relative to the person's home directory, so a value never names a user; `*` matches one path segment."
             },
@@ -328,6 +328,182 @@
             }
           },
           "additionalProperties": false
+        },
+        "harness.baseline": {
+          "type": "object",
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "type": "object",
+              "required": [
+                "items"
+              ],
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "maxItems": 1024,
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "name"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "coding-agent",
+                          "mcp-server",
+                          "skill",
+                          "plugin",
+                          "service"
+                        ]
+                      },
+                      "name": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}(?:@[A-Za-z0-9_:+-]{1,64})?$",
+                        "description": "The same name shape as a node summary's harness names (DEC-0102)."
+                      },
+                      "minVersion": {
+                        "type": "string",
+                        "pattern": "^[0-9]+(?:\\.[0-9]+){0,3}$",
+                        "description": "The lowest version that is not outdated (dotted numbers, compared number by number)."
+                      },
+                      "digest": {
+                        "$ref": "common.schema.json#/$defs/sha256",
+                        "description": "A skill's or plugin's expected digest; another digest is changed."
+                      }
+                    },
+                    "additionalProperties": false,
+                    "allOf": [
+                      {
+                        "if": {
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "skill",
+                                "mcp-server",
+                                "service"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind"
+                          ]
+                        },
+                        "then": {
+                          "properties": {
+                            "minVersion": false
+                          }
+                        }
+                      },
+                      {
+                        "if": {
+                          "properties": {
+                            "kind": {
+                              "enum": [
+                                "coding-agent",
+                                "mcp-server",
+                                "service"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind"
+                          ]
+                        },
+                        "then": {
+                          "properties": {
+                            "digest": false
+                          }
+                        }
+                      },
+                      {
+                        "if": {
+                          "properties": {
+                            "kind": {
+                              "const": "coding-agent"
+                            }
+                          },
+                          "required": [
+                            "kind"
+                          ]
+                        },
+                        "then": {
+                          "properties": {
+                            "name": {
+                              "$ref": "common.schema.json#/$defs/slug"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "if": {
+                          "properties": {
+                            "kind": {
+                              "const": "service"
+                            }
+                          },
+                          "required": [
+                            "kind"
+                          ]
+                        },
+                        "then": {
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9-]{1,62}\\.[a-z0-9][a-z0-9-]{0,62}$"
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    "description": "DEC-0102: minVersion only for a coding agent or a plugin, digest only for a skill or a plugin, the kinds whose summary rows carry them; a coding agent's name is a summary's agent id and a service's its id.instance key."
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "locked": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "description": "DEC-0101: the organization's baseline of the harness: what every enrolled machine is expected to run. A node compares its harness against it and reports the drift in node-summary/1 (harnessDrift, FAC-SEM-128). A service in it is expected running."
+        },
+        "repair.packages": {
+          "type": "object",
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "type": "array",
+              "maxItems": 256,
+              "items": {
+                "type": "object",
+                "required": [
+                  "agentRef",
+                  "digest"
+                ],
+                "properties": {
+                  "agentRef": {
+                    "$ref": "fabric-package.schema.json#/$defs/agentRef"
+                  },
+                  "digest": {
+                    "$ref": "common.schema.json#/$defs/sha256"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "locked": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "description": "DEC-0101: the packages a repair-request/1 may name, by agentRef and digest; absent, the node runs no repair (FAC-SEM-129)."
         }
       },
       "additionalProperties": {

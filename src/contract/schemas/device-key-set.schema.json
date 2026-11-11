@@ -98,26 +98,7 @@
   "additionalProperties": false,
   "$defs": {
     "rawKey": {
-      "type": "string",
-      "pattern": "^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$",
-      "not": {
-        "enum": [
-          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA=",
-          "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-          "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA=",
-          "JuiVj8KyJ7BFw/SJ8u+Y8NXfrAXTxjM5sTgCiG1T/AU=",
-          "JuiVj8KyJ7BFw/SJ8u+Y8NXfrAXTxjM5sTgCiG1T/IU=",
-          "xxdqcD1N2E+6PAt2DRBnDyogU/osOczGTsf9d5KsA3o=",
-          "xxdqcD1N2E+6PAt2DRBnDyogU/osOczGTsf9d5KsA/o=",
-          "7P///////////////////////////////////////38=",
-          "7P////////////////////////////////////////8=",
-          "7f///////////////////////////////////////38=",
-          "7f////////////////////////////////////////8=",
-          "7v///////////////////////////////////////38=",
-          "7v////////////////////////////////////////8="
-        ]
-      },
+      "$ref": "common.schema.json#/$defs/ed25519PublicKeyBase64",
       "description": "A raw 32-byte Ed25519 public key, base64, canonical (the last character's two spare bits zero). Never a key of small order (DEC-0045, CT-29): the enum lists libsodium's seven encodings with the sign bit clear and set."
     },
     "publicKey": {

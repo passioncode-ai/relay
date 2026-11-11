@@ -10,9 +10,11 @@
   ],
   "properties": {
     "contractVersion": {
+      "description": "The contract version this manifest is written against, exactly 0.1.0 (docs/specification/versioning.md#one-contract-pin).",
       "const": "0.1.0"
     },
     "provider": {
+      "description": "Who provides the capabilities: identity, revision and the contract versions it speaks (docs/specification/overview.md#common-identity-and-references).",
       "type": "object",
       "required": [
         "id",
@@ -26,31 +28,39 @@
       ],
       "properties": {
         "id": {
+          "description": "The provider's stable URI, which a provider entry's providerId names (docs/specification/provider.md#what-the-schema-adds-to-the-table).",
           "$ref": "common.schema.json#/$defs/uri"
         },
         "revision": {
+          "description": "This manifest's revision, an integer from 1 that grows with each published change (docs/specification/versioning.md#revision-shape).",
           "type": "integer",
           "minimum": 1
         },
         "contentHash": {
+          "description": "The sha256 of this manifest revision's content (docs/specification/overview.md#common-identity-and-references).",
           "$ref": "common.schema.json#/$defs/sha256"
         },
         "createdAt": {
+          "description": "When this revision was written, an RFC 3339 UTC instant (docs/specification/overview.md#common-identity-and-references).",
           "$ref": "common.schema.json#/$defs/timestamp"
         },
         "createdBy": {
+          "description": "A URI naming who or what wrote this revision (docs/specification/overview.md#common-identity-and-references).",
           "$ref": "common.schema.json#/$defs/uri"
         },
         "name": {
+          "description": "The provider's name as a person reads it, 1 to 120 characters.",
           "type": "string",
           "minLength": 1,
           "maxLength": 120
         },
         "description": {
+          "description": "What the provider does, in up to 1000 characters.",
           "type": "string",
           "maxLength": 1000
         },
         "identity": {
+          "description": "How the host verifies who the provider is: a subject URI and a method (docs/specification/registry.md#identity-and-trust).",
           "type": "object",
           "required": [
             "subject",
@@ -58,9 +68,11 @@
           ],
           "properties": {
             "subject": {
+              "description": "The URI the identity proof is about (docs/specification/registry.md#identity-and-trust).",
               "$ref": "common.schema.json#/$defs/uri"
             },
             "method": {
+              "description": "How the identity is proven: tls, oauth2, signed-manifest or local-install (docs/specification/registry.md#identity-and-trust).",
               "enum": [
                 "tls",
                 "oauth2",
@@ -69,12 +81,14 @@
               ]
             },
             "proofUri": {
+              "description": "Where the proof can be read, when the method has one (docs/specification/registry.md#identity-and-trust).",
               "$ref": "common.schema.json#/$defs/uri"
             }
           },
           "additionalProperties": false
         },
         "supportedContractVersions": {
+          "description": "Every contract version the provider implements, as semantic versions (docs/specification/versioning.md#one-contract-pin).",
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
@@ -83,6 +97,7 @@
           }
         },
         "extensions": {
+          "description": "Vendor data, keyed by an absolute URI; the service extension names the descriptor this manifest belongs to (docs/specification/overview.md#extension-rule).",
           "allOf": [
             {
               "$ref": "common.schema.json#/$defs/extensions"
@@ -91,12 +106,14 @@
               "type": "object",
               "properties": {
                 "https://fabric.passioncode.ai/agent-contract/extensions/service/0.1": {
+                  "description": "The service extension: this manifest is a Fabric service's (docs/specification/service.md).",
                   "type": "object",
                   "required": [
                     "descriptor"
                   ],
                   "properties": {
                     "descriptor": {
+                      "description": "The service key <id>.<instance> of the descriptor this manifest belongs to (docs/specification/service.md).",
                       "type": "string",
                       "pattern": "^[a-z][a-z0-9-]{1,62}\\.[a-z][a-z0-9-]{0,31}$"
                     }
@@ -111,6 +128,7 @@
       "additionalProperties": false
     },
     "capabilities": {
+      "description": "What the provider offers, one entry per capability, each with its compatibility profile (docs/specification/profiles.md#common-declaration).",
       "type": "array",
       "minItems": 1,
       "items": {
@@ -127,25 +145,32 @@
         ],
         "properties": {
           "id": {
+            "description": "The capability's stable URI (docs/specification/profiles.md#common-declaration).",
             "$ref": "common.schema.json#/$defs/uri"
           },
           "name": {
+            "description": "The capability's name; for an MCP capability with the interop extension, its tool's name (docs/specification/interop.md).",
             "$ref": "common.schema.json#/$defs/capabilityName"
           },
           "description": {
+            "description": "What the capability does, in up to 1000 characters.",
             "type": "string",
             "maxLength": 1000
           },
           "inputSchema": {
+            "description": "The URI of the JSON Schema its input follows (docs/specification/profiles.md#common-declaration).",
             "$ref": "common.schema.json#/$defs/uri"
           },
           "outputSchema": {
+            "description": "The URI of the JSON Schema its output follows (docs/specification/profiles.md#common-declaration).",
             "$ref": "common.schema.json#/$defs/uri"
           },
           "effect": {
+            "description": "The strongest external effect the capability can have (docs/specification/governance-and-roles.md#external-effects).",
             "$ref": "common.schema.json#/$defs/effectClass"
           },
           "idempotency": {
+            "description": "Whether a call takes an idempotency key: required, supported or none (docs/specification/profiles.md#common-declaration).",
             "enum": [
               "required",
               "supported",
@@ -153,6 +178,7 @@
             ]
           },
           "dataClasses": {
+            "description": "The data classes the capability reads or writes (docs/specification/governance-and-roles.md#data-classification).",
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,
@@ -161,9 +187,11 @@
             }
           },
           "profile": {
+            "description": "How the host reaches the capability: an mcp, a2a or local-runner profile, chosen by kind (docs/specification/profiles.md).",
             "$ref": "#/$defs/profile"
           },
           "extensions": {
+            "description": "Vendor data, keyed by an absolute URI; the interop extension describes the MCP tool (docs/specification/overview.md#extension-rule).",
             "allOf": [
               {
                 "$ref": "common.schema.json#/$defs/extensions"
@@ -172,6 +200,7 @@
                 "type": "object",
                 "properties": {
                   "https://fabric.passioncode.ai/agent-contract/extensions/interop/0.1": {
+                    "description": "The interop extension: how the capability is served as an MCP tool (docs/specification/interop.md).",
                     "$ref": "interop-capability.schema.json"
                   }
                 }
@@ -183,6 +212,7 @@
       }
     },
     "extensions": {
+      "description": "Vendor data for the whole manifest, keyed by an absolute URI (docs/specification/overview.md#extension-rule).",
       "$ref": "common.schema.json#/$defs/extensions"
     },
     "costPresets": {
@@ -198,29 +228,36 @@
         ],
         "properties": {
           "id": {
+            "description": "The preset's id, a slug of up to 40 characters (docs/specification/package.md#cost-presets).",
             "type": "string",
             "pattern": "^[a-z][a-z0-9-]{0,39}$"
           },
           "capability": {
+            "description": "The capability the preset is for, by name (docs/specification/package.md#cost-presets).",
             "$ref": "common.schema.json#/$defs/capabilityName"
           },
           "label": {
+            "description": "The option's label as a launcher shows it.",
             "type": "string",
             "minLength": 1
           },
           "maxUsd": {
+            "description": "The most one task under this preset may spend, in USD (docs/specification/package.md#cost-presets).",
             "type": "number",
             "minimum": 0
           },
           "paidTools": {
+            "description": "How many paid tool calls the preset allows.",
             "type": "integer",
             "minimum": 0
           },
           "depth": {
+            "description": "How deep the task goes, in the provider's own words.",
             "type": "string",
             "minLength": 1
           },
           "default": {
+            "description": "Whether the launcher offers this preset first.",
             "type": "boolean"
           }
         },
@@ -242,27 +279,33 @@
       ],
       "properties": {
         "id": {
+          "description": "The probe's id (docs/specification/registry.md#semantic-probes).",
           "type": "string",
           "pattern": "^[a-z][a-z0-9.-]+$"
         },
         "inputFixture": {
+          "description": "The URI of the bounded input the probe sends (docs/specification/registry.md#semantic-probes).",
           "$ref": "common.schema.json#/$defs/uri"
         },
         "outputSchema": {
+          "description": "The URI of the schema the probe's result follows (docs/specification/registry.md#semantic-probes).",
           "$ref": "common.schema.json#/$defs/uri"
         },
         "timeoutMs": {
+          "description": "How long the probe may take, 1 to 300000 milliseconds (docs/specification/registry.md#semantic-probes).",
           "type": "integer",
           "minimum": 1,
           "maximum": 300000
         },
         "sideEffectCeiling": {
+          "description": "The most the probe may do: none, or a draft (docs/specification/registry.md#semantic-probes).",
           "enum": [
             "none",
             "draft"
           ]
         },
         "assertions": {
+          "description": "What the result must show, one assertion per item (docs/specification/registry.md#semantic-probes).",
           "type": "array",
           "minItems": 1,
           "items": {
@@ -274,213 +317,346 @@
       "additionalProperties": false
     },
     "profile": {
-      "oneOf": [
+      "description": "A capability profile, checked on the branch its kind selects, so a mistake reports that branch's errors only (docs/specification/profiles.md).",
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "description": "Which profile this is.",
+          "enum": [
+            "mcp",
+            "a2a",
+            "local-runner"
+          ]
+        }
+      },
+      "allOf": [
         {
-          "type": "object",
-          "required": [
-            "kind",
-            "protocolRevision",
-            "connection",
-            "requiredFeatures",
-            "probes"
-          ],
-          "properties": {
-            "kind": {
-              "const": "mcp"
-            },
-            "protocolRevision": {
-              "const": "2026-07-28"
-            },
-            "connection": {
-              "oneOf": [
-                {
-                  "type": "object",
-                  "required": [
-                    "mode",
-                    "url"
-                  ],
-                  "properties": {
-                    "mode": {
-                      "const": "streamable-http"
-                    },
-                    "url": {
-                      "$ref": "common.schema.json#/$defs/uri"
-                    }
-                  },
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "required": [
-                    "mode",
-                    "executableRef",
-                    "args"
-                  ],
-                  "properties": {
-                    "mode": {
-                      "const": "stdio"
-                    },
-                    "executableRef": {
-                      "$ref": "common.schema.json#/$defs/uri"
-                    },
-                    "args": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    },
-                    "scope": {
-                      "description": "DEC-0044, LC-19. Where a host starts this stdio server. project: for the sessions of a project that binds it, from that project's MCP configuration. on-demand (the default when absent): for the run that binds it, stopped when that run ends. session: in every session; spelled so that FAC-SEM-056 refuses it by name.",
-                      "enum": [
-                        "project",
-                        "on-demand",
-                        "session"
-                      ]
-                    }
-                  },
-                  "additionalProperties": false
-                }
-              ]
-            },
-            "requiredFeatures": {
-              "type": "array",
-              "minItems": 1,
-              "uniqueItems": true,
-              "items": {
-                "type": "string",
-                "pattern": "^(tool|resource|prompt):[^:]+$"
-              }
-            },
-            "probes": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "$ref": "#/$defs/probe"
+          "if": {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "mcp"
               }
             }
           },
-          "additionalProperties": false
+          "then": {
+            "$ref": "#/$defs/mcpProfile"
+          }
         },
         {
-          "type": "object",
-          "required": [
-            "kind",
-            "protocolVersion",
-            "agentCardUrl",
-            "skillIds",
-            "binding",
-            "probes"
-          ],
-          "properties": {
-            "kind": {
-              "const": "a2a"
-            },
-            "protocolVersion": {
-              "const": "1.0"
-            },
-            "agentCardUrl": {
-              "type": "string",
-              "format": "uri",
-              "pattern": "^https://"
-            },
-            "skillIds": {
-              "type": "array",
-              "minItems": 1,
-              "uniqueItems": true,
-              "items": {
-                "type": "string",
-                "minLength": 1
-              }
-            },
-            "binding": {
-              "enum": [
-                "REST",
-                "JSON-RPC",
-                "gRPC"
-              ]
-            },
-            "streaming": {
-              "type": "boolean"
-            },
-            "pushNotifications": {
-              "type": "boolean"
-            },
-            "probes": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "$ref": "#/$defs/probe"
+          "if": {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "a2a"
               }
             }
           },
-          "additionalProperties": false
+          "then": {
+            "$ref": "#/$defs/a2aProfile"
+          }
         },
         {
-          "type": "object",
-          "required": [
-            "kind",
-            "profileVersion",
-            "runnerKind",
-            "executableRef",
-            "args",
-            "inputMode",
-            "resultUriTemplate",
-            "probes"
-          ],
-          "properties": {
-            "kind": {
-              "const": "local-runner"
-            },
-            "profileVersion": {
-              "const": "fabric-local-runner/0.1"
-            },
-            "runnerKind": {
-              "type": "string",
-              "pattern": "^[a-z][a-z0-9./-]+$"
-            },
-            "executableRef": {
-              "$ref": "common.schema.json#/$defs/uri"
-            },
-            "args": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "inputMode": {
-              "enum": [
-                "stdin-json",
-                "file-json",
-                "argument-file"
-              ]
-            },
-            "resultUriTemplate": {
-              "type": "string",
-              "minLength": 1
-            },
-            "cancellation": {
-              "enum": [
-                "signal",
-                "command",
-                "unsupported"
-              ]
-            },
-            "heartbeatSeconds": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 300
-            },
-            "probes": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "$ref": "#/$defs/probe"
+          "if": {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "local-runner"
               }
             }
           },
-          "additionalProperties": false
+          "then": {
+            "$ref": "#/$defs/localRunnerProfile"
+          }
         }
       ]
+    },
+    "mcpProfile": {
+      "description": "The mcp profile; its version member is protocolRevision (docs/specification/profiles.md#mcp-capability-profile).",
+      "type": "object",
+      "required": [
+        "kind",
+        "protocolRevision",
+        "connection",
+        "requiredFeatures",
+        "probes"
+      ],
+      "properties": {
+        "kind": {
+          "description": "Always mcp.",
+          "const": "mcp"
+        },
+        "protocolRevision": {
+          "description": "The mcp profile's version member; only this profile carries protocolRevision (docs/specification/profiles.md#mcp-capability-profile).",
+          "const": "2026-07-28"
+        },
+        "connection": {
+          "description": "How the host connects: streamable-http with a url, or stdio with an executable and its arguments (docs/specification/profiles.md#mcp-capability-profile).",
+          "type": "object",
+          "required": [
+            "mode"
+          ],
+          "properties": {
+            "mode": {
+              "description": "How the host reaches the server; the branch it selects is checked alone, so one mistake reports that branch's errors.",
+              "enum": [
+                "streamable-http",
+                "stdio"
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "type": "object",
+                "required": [
+                  "mode"
+                ],
+                "properties": {
+                  "mode": {
+                    "const": "streamable-http"
+                  }
+                }
+              },
+              "then": {
+                "type": "object",
+                "required": [
+                  "mode",
+                  "url"
+                ],
+                "properties": {
+                  "mode": {
+                    "description": "Always streamable-http.",
+                    "const": "streamable-http"
+                  },
+                  "url": {
+                    "description": "The server's Streamable HTTP endpoint (docs/specification/profiles.md#mcp-capability-profile).",
+                    "$ref": "common.schema.json#/$defs/uri"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            {
+              "if": {
+                "type": "object",
+                "required": [
+                  "mode"
+                ],
+                "properties": {
+                  "mode": {
+                    "const": "stdio"
+                  }
+                }
+              },
+              "then": {
+                "type": "object",
+                "required": [
+                  "mode",
+                  "executableRef",
+                  "args"
+                ],
+                "properties": {
+                  "mode": {
+                    "description": "Always stdio.",
+                    "const": "stdio"
+                  },
+                  "executableRef": {
+                    "description": "The URI of the executable the host starts (docs/specification/profiles.md#mcp-capability-profile).",
+                    "$ref": "common.schema.json#/$defs/uri"
+                  },
+                  "args": {
+                    "description": "The executable's arguments, an array of strings, never a shell string and never a credential (docs/specification/profiles.md#no-secret-in-a-command-line).",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "scope": {
+                    "description": "DEC-0044, LC-19. Where a host starts this stdio server. project: for the sessions of a project that binds it, from that project's MCP configuration. on-demand (the default when absent): for the run that binds it, stopped when that run ends. session: in every session; spelled so that FAC-SEM-056 refuses it by name.",
+                    "enum": [
+                      "project",
+                      "on-demand",
+                      "session"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          ]
+        },
+        "requiredFeatures": {
+          "description": "The MCP tools, resources and prompts the capability needs, by exact name, as tool:NAME, resource:NAME or prompt:NAME (docs/specification/profiles.md#mcp-capability-profile).",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(tool|resource|prompt):[^:]+$"
+          }
+        },
+        "probes": {
+          "description": "The semantic probes the host runs before admission (docs/specification/registry.md#semantic-probes).",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/probe"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "a2aProfile": {
+      "description": "The a2a profile; its version member is protocolVersion (docs/specification/profiles.md#a2a-peer-profile).",
+      "type": "object",
+      "required": [
+        "kind",
+        "protocolVersion",
+        "agentCardUrl",
+        "skillIds",
+        "binding",
+        "probes"
+      ],
+      "properties": {
+        "kind": {
+          "description": "Always a2a.",
+          "const": "a2a"
+        },
+        "protocolVersion": {
+          "description": "The a2a profile's version member; only this profile carries protocolVersion (docs/specification/profiles.md#a2a-peer-profile).",
+          "const": "1.0"
+        },
+        "agentCardUrl": {
+          "description": "The https URL of the peer's Agent Card (docs/specification/profiles.md#a2a-peer-profile).",
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        },
+        "skillIds": {
+          "description": "The Agent Card skill ids that serve this capability (docs/specification/profiles.md#a2a-peer-profile).",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "binding": {
+          "description": "The A2A binding: REST, JSON-RPC or gRPC (docs/specification/profiles.md#a2a-peer-profile).",
+          "enum": [
+            "REST",
+            "JSON-RPC",
+            "gRPC"
+          ]
+        },
+        "streaming": {
+          "description": "Whether the peer streams task updates.",
+          "type": "boolean"
+        },
+        "pushNotifications": {
+          "description": "Whether the peer sends push notifications.",
+          "type": "boolean"
+        },
+        "probes": {
+          "description": "The semantic probes the host runs before admission (docs/specification/registry.md#semantic-probes).",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/probe"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "localRunnerProfile": {
+      "description": "The local-runner profile; its version member is profileVersion (docs/specification/profiles.md#local-runner-profile).",
+      "type": "object",
+      "required": [
+        "kind",
+        "profileVersion",
+        "runnerKind",
+        "executableRef",
+        "args",
+        "inputMode",
+        "resultUriTemplate",
+        "probes"
+      ],
+      "properties": {
+        "kind": {
+          "description": "Always local-runner.",
+          "const": "local-runner"
+        },
+        "profileVersion": {
+          "description": "The local-runner profile's version member; only this profile carries profileVersion (docs/specification/profiles.md#local-runner-profile).",
+          "const": "fabric-local-runner/0.1"
+        },
+        "runnerKind": {
+          "description": "The runner kind, such as claude-code or codex, or a namespaced extension (docs/specification/profiles.md#local-runner-profile).",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9./-]+$"
+        },
+        "executableRef": {
+          "description": "The URI of the executable the host starts (docs/specification/profiles.md#local-runner-profile).",
+          "$ref": "common.schema.json#/$defs/uri"
+        },
+        "args": {
+          "description": "The argument template, an array of strings with typed placeholders, never a shell string (docs/specification/profiles.md#local-runner-profile).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "inputMode": {
+          "description": "How the runner receives its input: stdin-json, file-json or argument-file (docs/specification/profiles.md#local-runner-profile).",
+          "enum": [
+            "stdin-json",
+            "file-json",
+            "argument-file"
+          ]
+        },
+        "resultUriTemplate": {
+          "description": "Where the runner writes its result envelope (docs/specification/profiles.md#local-runner-profile).",
+          "type": "string",
+          "minLength": 1
+        },
+        "cancellation": {
+          "description": "How a run is cancelled: signal, command or unsupported (docs/specification/profiles.md#local-runner-profile).",
+          "enum": [
+            "signal",
+            "command",
+            "unsupported"
+          ]
+        },
+        "heartbeatSeconds": {
+          "description": "How often the runner reports it is alive, 1 to 300 seconds (docs/specification/profiles.md#local-runner-profile).",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300
+        },
+        "probes": {
+          "description": "The semantic probes the host runs before admission (docs/specification/registry.md#semantic-probes).",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/probe"
+          }
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

@@ -581,7 +581,7 @@
     },
     "path": {
       "type": "string",
-      "pattern": "^(?![/~])(?!.*\\\\)(?!.*//)(?!(?:.*/)?\\.{1,2}(?:/|$))[^\\u0000-\\u001f:]{1,256}(?<!/)$",
+      "pattern": "^(?![/~])(?![\\s\\S]*\\\\)(?![\\s\\S]*//)(?!(?:[\\s\\S]*/)?\\.{1,2}(?:/|$))[^\\u0000-\\u001f:]{1,256}(?<!/)$",
       "description": "A path inside the package folder: relative, forward slashes, no . or .. segment, no drive, no control character."
     }
   }

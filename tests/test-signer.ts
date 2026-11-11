@@ -34,6 +34,7 @@ export function admittedSet(machines: readonly TestMachine[], options: { revisio
     revision: options.revision ?? 1,
     set: new Map(machines.map((m) => [m.kid, m.octets])),
     excluded: [],
+    unread: [],
   };
 }
 

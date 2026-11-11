@@ -1,13 +1,32 @@
-/** A semantic-rule finding. `severity: "accepted"` marks a rule that classifies rather than rejects. */
+/**
+ * A semantic-rule finding. `severity: "accepted"` marks a rule that classifies rather than rejects. `help` links the
+ * row that defines the rule (`docs/specification/<page>.md#fac-sem-nnn`, REQ-05); rules leave it out and the checker
+ * adds it with `withHelp`.
+ */
 export interface Finding {
   code: string;
   instancePath: string;
   message: string;
   severity?: "rejected" | "accepted";
+  help?: string;
 }
+
+/** The findings with each one's `help` link from `help` (code to link, as `ruleHelp` builds it); a code it lacks keeps none. */
+export const withHelp = (findings: readonly Finding[], help: ReadonlyMap<string, string>): Finding[] =>
+  findings.map((finding) => {
+    const link = help.get(finding.code);
+    return link === undefined ? { ...finding } : { ...finding, help: link };
+  });
 
 export type JsonObject = Record<string, unknown>;
 export const isObject = (value: unknown): value is JsonObject => typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * The object items of an array with their index in the array as written, so an instancePath names the item it flags
+ * even when a non-object precedes it (DEC-0082; shared by every rule module since DEC-0083).
+ */
+export const indexed = (value: unknown): Array<[JsonObject, number]> =>
+  Array.isArray(value) ? value.flatMap((item, index): Array<[JsonObject, number]> => (isObject(item) ? [[item, index]] : [])) : [];
 
 /**
  * A value as text for a finding's message or a key, as `String()` writes it, without its throw on an object whose

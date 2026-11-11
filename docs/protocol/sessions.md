@@ -7,8 +7,9 @@ letter-number ids such as A-4 are that iteration's nodes.
 How this relay runs a `fabric-relay/0.1` session. The protocol is fabric-agent-contract's DEC-0047 (merged at
 `8060254`) as amended by DEC-0066, on top of DEC-0055's estate record. This page says how the code applies it; the
 contract's
-[relay specification at the pinned commit `bf3fd6b`](https://github.com/passioncode-ai/fabric-agent-contract/blob/bf3fd6b2a9387ee501ef635de4e26524c3ea2b4f/docs/specification/relay.md)
-is the authority on every rule (iteration node RP moved the pin from `51719e4`). Where a DEC-0066 rule is not applied
+[relay specification at the pinned commit `c14db0e9`](https://github.com/passioncode-ai/fabric-agent-contract/blob/c14db0e9b8014416196e82419fa64270d3361db1/docs/specification/relay.md)
+is the authority on every rule (iteration node RP moved the pin from `51719e4` to `bf3fd6b`, and on 2026-11-11 to
+`c14db0e9`, the contract's `main` after `v0.1.0+2026-11-08.1`). Where a DEC-0066 rule is not applied
 yet, this page names the iteration node that owns it.
 
 ## The contract, vendored
