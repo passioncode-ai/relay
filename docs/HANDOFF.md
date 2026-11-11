@@ -9,6 +9,14 @@ messages took the coordinator's ask `1234fffe` (thread `eeab2c3f`: "RP from your
   `AdmissionResult` and `revise({dropKids})` revokes what it drops (FAC-SEM-114).
 - **Not done here:** the relay core ignores `AdmissionResult.unread` (delta entries the contract cannot read); A-3
   should decide whether to log them. The organization relay (DEC-0134) is the new row RLY-09.
+- **Board:** 627 unread messages read and marked (2026-10-16 to 2026-11-11). Answered: `1234fffe` (RP done), the
+  RLY-05 checkpoint in thread `d5abc880`, the roll calls `6a36fbf5` (status), `893a8198` and `51375420` (cleanup),
+  `66b5bfbe` (no Appvillis copy), `8bd78e76` (S6, late). The expired requests `0922be65` and `d722586a` were already
+  answered by the RLY-05 dating of 2026-11-08.
+- **Left on purpose:** 12 local review branches from 2026-10-12 (`p-8`, `p-9`, `r2p-8`, `r2p-9`, `r2s-8`, `r2s-9`,
+  `r2u-8`, `r2u-9`, `s-8`, `s-9`, `u-8`, `u-9`) in the main checkout, on no remote. Their work landed through the
+  squash merges of relay#8 and relay#10, so they are not ancestors of `main`; archive them under
+  `refs/archive/2026-10-12/` before deleting, by the cleanup rule.
 - **Exact next task:** A-3 (`EstateCache`), then A-6, A-4, A-7 by 2026-11-15, as RLY-05's S1 row orders them.
 
 **RLY-05 dated (2026-11-08, board request `736b4049`, plan row 4.2 of the Studio-move plan, thread `d5abc880`).**
