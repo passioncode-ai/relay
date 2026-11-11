@@ -22,8 +22,9 @@
       "description": "A ULID for an event the collector originates and persists once, or sha256: of the canonical {source, key} for an event read from a source that can be read again; a derived id comes with its sourceKey (FAC-SEM-039)."
     },
     "sourceKey": {
+      "$comment": "The lookahead repeats HOME_PATH's dash clause (src/activity-rules.ts) over this key's alphabet; test/activity-rules.test.ts pins that the two refuse the same keys (CT-109).",
       "type": "string",
-      "pattern": "^(hmac-sha256:[a-f0-9]{64}|(?!.*[-:]-(?:[Uu]sers|home)-[A-Za-z0-9])[A-Za-z0-9][A-Za-z0-9._:~#-]{0,255})$",
+      "pattern": "^(hmac-sha256:[a-f0-9]{64}|(?![\\s\\S]*[._:~#-]-(?:[Uu]sers|home)-[A-Za-z0-9])[A-Za-z0-9][A-Za-z0-9._:~#-]{0,255})$",
       "description": "The source's own id of a record (a request id, a line uuid), or hmac-sha256: of a path-derived key under the device's telemetry key. Never a path: no slash, no percent-encoding, and no dash-encoded home directory such as -Users-<name> (FAC-SEM-037)."
     },
     "seq": {
@@ -43,7 +44,7 @@
     },
     "day": {
       "type": "string",
-      "pattern": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$"
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
     },
     "user": {
       "type": "object",
@@ -301,7 +302,7 @@
         {
           "type": "string",
           "maxLength": 64,
-          "pattern": "^(?![/~\\\\])(?![A-Za-z]:[\\\\/])(?!.*(/Users/|/home/|\\\\Users\\\\))[^\\s]*$"
+          "pattern": "^(?![/~\\\\])(?![A-Za-z]:[\\\\/])(?![\\s\\S]*(/Users/|/home/|\\\\Users\\\\))[^\\s]*$"
         },
         {
           "type": "number"

@@ -14,6 +14,7 @@ import { rfc8785 } from "./canonical.js";
 import { isEd25519Key, p256KeyRefusal, p256Point, signEs256, type P256Key } from "./p256.js";
 import { CLOCK_SKEW_SECONDS, RELAY_ALG, instant, verifyEs256 } from "./relay.js";
 import { isObject, type JsonObject } from "./findings.js";
+import { deviceKeyRef } from "./estate-record-rules.js";
 
 export const ENVELOPE_TYPE = "fabric-secret-envelope/1";
 export const ENVELOPE_SUITE = [16, 1, 1] as const; // kem_id, kdf_id, aead_id
@@ -252,8 +253,9 @@ export function openEnvelope(value: unknown, ctx: OpenContext): { ok: true; secr
 // ---- The open context from the estate record (DEC-0055) -------------------------------------------------------------
 
 const list = (value: unknown): JsonObject[] => (Array.isArray(value) ? value.filter(isObject) : []);
-const revokedRefs = (record: JsonObject, kind: string) =>
-  new Set(list(record.revocations).filter((entry) => entry.kind === kind).map((entry) => entry.ref));
+/** The refs of `kind` the record revokes, with those of the delta entries the machine applied (DEC-0084). */
+const revokedRefs = (record: JsonObject, kind: string, extra: readonly unknown[] = []) =>
+  new Set([...list(record.revocations), ...list(extra)].filter((entry) => entry.kind === kind).map((entry) => entry.ref));
 
 /**
  * The `from` of a machine's personal placement of (agentRef, slot) in one revision, or undefined. Only a personal
@@ -266,12 +268,16 @@ function placedFrom(record: JsonObject, machineId: string, agentRef: string, slo
   return list(machine?.secrets).find((secret) => secret.agentRef === agentRef && secret.slot === slot && (secret.context === undefined || secret.context === PERSONAL_CONTEXT))?.from;
 }
 
-/** A machine's `#sig` key in one revision, as its kid and SEC 1 octets; none when the machine or the key is revoked. */
-function signingKey(record: JsonObject, machineId: unknown): { kid: string; key: Uint8Array } | undefined {
-  if (revokedRefs(record, "machine").has(machineId)) return undefined;
+/**
+ * A machine's `#sig` key in one revision, as its kid and SEC 1 octets; none when the machine or the key is revoked, by
+ * the record or by an applied delta entry, a key by its kid or by its key reference (`deviceKeyRef`, DEC-0084).
+ */
+function signingKey(record: JsonObject, machineId: unknown, extra: readonly unknown[] = []): { kid: string; key: Uint8Array } | undefined {
+  if (revokedRefs(record, "machine", extra).has(machineId)) return undefined;
   const machine = list(record.machines).find((entry) => entry.id === machineId);
   const key = list(machine?.deviceKeys).find((entry) => entry.use === "sig" && typeof entry.kid === "string" && entry.kid.endsWith("#sig"));
-  if (!key || typeof key.publicKey !== "string" || revokedRefs(record, "device-key").has(key.kid)) return undefined;
+  const keys = revokedRefs(record, "device-key", extra);
+  if (!key || typeof key.publicKey !== "string" || keys.has(key.kid) || keys.has(deviceKeyRef(key) ?? key.kid)) return undefined;
   return { kid: key.kid as string, key: Buffer.from(key.publicKey, "base64") };
 }
 
@@ -280,16 +286,18 @@ function signingKey(record: JsonObject, machineId: unknown): { kid: string; key:
  * verified (`verifyEstateRecord`) and applied, oldest first. The latest revision decides who may hold an agent's slot
  * and under which `#sig` key; the current placement is the earliest revision of the unbroken run, ending at the latest,
  * in which the placement names the same `from` — so an envelope sealed after the placement was made opens, and one
- * sealed under a placement since replaced is `placement-stale`.
+ * sealed under a placement since replaced is `placement-stale`. `extraRevocations` are the revocations of the verified
+ * delta entries the machine applied (`deltaRevocations`, DEC-0054), read like the record's own (DEC-0084): an envelope
+ * whose sender's key or machine a delta revoked is refused before the next revision arrives.
  */
-export function estateEnvelopeContext(applied: readonly JsonObject[], machineId: string): Pick<OpenContext, "mayHold" | "currentPlacement" | "senderKey" | "appliedRevision"> {
+export function estateEnvelopeContext(applied: readonly JsonObject[], machineId: string, extraRevocations: readonly unknown[] = []): Pick<OpenContext, "mayHold" | "currentPlacement" | "senderKey" | "appliedRevision"> {
   const latest = applied[applied.length - 1];
   return {
     appliedRevision: () => (latest ? Number(latest.revision) : undefined),
     mayHold: (senderKid, agentRef, slot) => {
       if (!latest) return false;
       const from = placedFrom(latest, machineId, agentRef, slot);
-      return from !== undefined && signingKey(latest, from)?.kid === senderKid;
+      return from !== undefined && signingKey(latest, from, extraRevocations)?.kid === senderKid;
     },
     currentPlacement: (agentRef, slot) => {
       if (!latest) return undefined;
@@ -302,7 +310,7 @@ export function estateEnvelopeContext(applied: readonly JsonObject[], machineId:
     senderKey: (kid) => {
       if (!latest) return undefined;
       for (const machine of list(latest.machines)) {
-        const key = signingKey(latest, machine.id);
+        const key = signingKey(latest, machine.id, extraRevocations);
         if (key?.kid === kid) return key.key;
       }
       return undefined;

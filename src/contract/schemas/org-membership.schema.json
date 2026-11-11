@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fabric.passioncode.ai/agent-contract/0.1.0/schemas/org-membership.schema.json",
+  "title": "Membership attestation, org-membership/1 (DEC-0127)",
+  "description": "What an organization server states about one person's membership of one organization, for one reader, for at most 24 hours: the organization, the reader (audience), a subject pairwise to that pair, a role, whether the membership is active or ended, and its revision. A key the organization's org-key-set/1 lists signs it over the RFC 8785 form of the document without sig (the register's org-membership/1, DEC-0063). Any organization server issues it (MD-9 path (a)). It names no person: no name, address or email.",
+  "type": "object",
+  "required": [
+    "type",
+    "issuer",
+    "org",
+    "audience",
+    "subject",
+    "role",
+    "external",
+    "status",
+    "revision",
+    "membershipEndsAt",
+    "issuedAt",
+    "notBefore",
+    "expiresAt",
+    "extensions",
+    "alg",
+    "kid",
+    "sig"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "type": {
+      "const": "org-membership/1"
+    },
+    "issuer": {
+      "$ref": "entitlement.schema.json#/$defs/issuer",
+      "description": "The organization server's https:// origin in lower case, as the organization's key set and the estate's pin name it."
+    },
+    "org": {
+      "$ref": "#/$defs/org"
+    },
+    "audience": {
+      "$ref": "activity-common.schema.json#/$defs/opaqueId",
+      "description": "The reader this attestation is for, as the issuer registered it (a person's Fabric, a product's client). A verifier refuses one for another audience."
+    },
+    "subject": {
+      "$ref": "activity-common.schema.json#/$defs/opaqueId",
+      "description": "The member, pairwise: one opaque id per (org, audience, person), so two readers cannot join their records by it. Never an email, a name, the estate id or a device id."
+    },
+    "role": {
+      "enum": [
+        "owner",
+        "admin",
+        "member"
+      ],
+      "description": "The role in the organization. An issuer maps its own roles onto these three; a finer one travels in extensions and grants nothing by itself."
+    },
+    "external": {
+      "type": "boolean",
+      "description": "True for a guest of the organization: a person whose own estate is not the organization's (a contractor, a partner's person)."
+    },
+    "status": {
+      "enum": [
+        "active",
+        "ended"
+      ],
+      "description": "ended: the membership is over; the issuer states it with a higher revision rather than going silent, so the reader ends it at once (OM-5)."
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "description": "Rises with every attestation the issuer states for this (org, audience, subject); a verifier refuses a lower one and the same one with other bytes."
+    },
+    "membershipEndsAt": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "entitlement.schema.json#/$defs/instant"
+        }
+      ],
+      "description": "When the membership itself ends (a fixed term, a guest's end), or null. Past it the verifier reads the attestation as ended."
+    },
+    "issuedAt": {
+      "$ref": "entitlement.schema.json#/$defs/instant"
+    },
+    "notBefore": {
+      "$ref": "entitlement.schema.json#/$defs/instant"
+    },
+    "expiresAt": {
+      "$ref": "entitlement.schema.json#/$defs/instant",
+      "description": "After notBefore and at most 24 hours after issuedAt (FAC-SEM-145)."
+    },
+    "extensions": {
+      "type": "object",
+      "maxProperties": 16,
+      "propertyNames": {
+        "maxLength": 320,
+        "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?/[a-z][a-z0-9._-]{0,63}$"
+      },
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string",
+            "maxLength": 256
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        ]
+      },
+      "description": "The issuer's own statements, each named by a domain it controls, a slash and a name; {} when none. A reader ignores one it does not know, and none grants authority (OM-1)."
+    },
+    "alg": {
+      "enum": [
+        "EdDSA"
+      ],
+      "description": "Ed25519 only; ES256 may join additively by a later decision."
+    },
+    "kid": {
+      "$ref": "activity-common.schema.json#/$defs/opaqueId",
+      "description": "The signing key's kid, as the organization's current org-key-set/1 lists it."
+    },
+    "sig": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{85}[AQgw]$",
+      "description": "The Ed25519 signature (64 bytes, base64url without padding) over the UTF-8 RFC 8785 form of the document without sig."
+    }
+  },
+  "$defs": {
+    "org": {
+      "type": "string",
+      "maxLength": 132,
+      "pattern": "^org:[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+      "description": "An organization's context id, org:<orgId> (DEC-0082), compared as written."
+    }
+  }
+}

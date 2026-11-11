@@ -10,7 +10,8 @@ import { type AssertionVerdict, type PasskeyCredential, verifyAssertion } from "
  * (DEC-0043) of `{type, ...fields}`, with `type` one of the names below and the other members exactly that type's
  * fields. A passkey signs the SHA-256 of those bytes as its WebAuthn challenge; a key signs the bytes themselves. The
  * type inside keeps one signature from standing for another over the same digest. A changed field list is a new type
- * (`/2`), never a new reading of an old one.
+ * (`/2`), never a new reading of an old one, except DEC-0119's: a type no party adopted, as the backlog records, may
+ * change its list by a decision that names the narrowing (DEC-0129, `org-key-set/1`).
  */
 export type Signer = "passkey" | "key";
 
@@ -34,6 +35,10 @@ const GRANT_REF = /^[^\s#]{1,200}#[1-9][0-9]{0,15}$/;
 const JKT = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
 /** Whose limits a `limits/1` statement approves: an estate's or an organization's. */
 const LIMITS_SCOPE = /^(estate|organization):[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$/;
+/** Whose machines an `enroll-token/1` lets join: an estate's (DEC-0084). */
+const ESTATE_SCOPE = /^estate:[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$/;
+/** 32 random bytes as unpadded base64url, the same 43-character form as `jkt`. */
+const NONCE32 = JKT;
 const isString = (value: unknown): value is string => typeof value === "string";
 const positive = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 1;
 const matches = (pattern: RegExp, value: unknown) => isString(value) && pattern.test(value);
@@ -42,6 +47,25 @@ const matches = (pattern: RegExp, value: unknown) => isString(value) && pattern.
 export const WINDOW_LEASE_FIELDS = [
   "leaseId", "sequence", "estate", "estateRevision", "machine", "scope", "window", "period", "amount", "unit", "issuedAt", "expiresAt", "alg", "kid"
 ] as const;
+
+/** The enroll token's members beside `type` (DEC-0084), one list for good. */
+export const ENROLL_TOKEN_FIELDS = ["scope", "genesis", "purpose", "ceiling", "notBefore", "expiresAt", "nonce", "uses"] as const;
+
+/** The entitlement's members beside `type`: the document without `sig` (DEC-0085). */
+export const ENTITLEMENT_FIELDS = [
+  "issuer", "subject", "estate", "order", "issuedAt", "notBefore", "expiresAt", "licence", "hosting", "support", "agents", "alg", "kid"
+] as const;
+
+/** The entitlement key set's members beside `type`: the set without `sig` (DEC-0085). */
+export const ENTITLEMENT_KEY_SET_FIELDS = ["issuer", "revision", "issuedAt", "keys", "revoked", "alg", "kid"] as const;
+
+/** The membership attestation's members beside `type`: the document without `sig` (DEC-0127). */
+export const ORG_MEMBERSHIP_FIELDS = [
+  "issuer", "org", "audience", "subject", "role", "external", "status", "revision", "membershipEndsAt", "issuedAt", "notBefore", "expiresAt", "extensions", "alg", "kid"
+] as const;
+
+/** An organization key set's members beside `type`: the set without `sig` (DEC-0127; `administrators`, DEC-0129). */
+export const ORG_KEY_SET_FIELDS = ["issuer", "org", "revision", "issuedAt", "keys", "revoked", "administrators", "alg", "kid"] as const;
 
 /** A Map, so a type named like an Object.prototype member reads nothing. */
 export const SIGNING_STATEMENTS: ReadonlyMap<string, StatementSpec> = new Map<string, StatementSpec>([
@@ -66,12 +90,31 @@ export const SIGNING_STATEMENTS: ReadonlyMap<string, StatementSpec> = new Map<st
   ],
   ["limits/1", { signer: "passkey", fields: ["scope", "digest"], decision: "DEC-0063", check: (f) => matches(LIMITS_SCOPE, f.scope) && matches(SHA256, f.digest) }],
   [
+    "enroll-token/1",
+    {
+      signer: "passkey",
+      fields: ENROLL_TOKEN_FIELDS,
+      decision: "DEC-0084",
+      // The values only; the window's length (at most 900 s) is FAC-SEM-113's and the verifier's (src/enroll-token.ts).
+      check: (f) =>
+        matches(ESTATE_SCOPE, f.scope) && matches(SHA256, f.genesis) && f.purpose === "agent-host" && (f.ceiling === null || matches(SHA256, f.ceiling)) &&
+        Number.isFinite(strictTime(f.notBefore)) && Number.isFinite(strictTime(f.expiresAt)) && matches(NONCE32, f.nonce) && f.uses === 1
+    }
+  ],
+  [
     "fabric-package-signature/1",
     { signer: "key", fields: ["role", "digest"], decision: "DEC-0051", check: (f) => (f.role === "publisher" || f.role === "organization") && matches(SHA256, f.digest) }
   ],
+  ["enroll-join/1", { signer: "key", fields: ["digest", "nonce"], decision: "DEC-0084", check: (f) => matches(SHA256, f.digest) && matches(NONCE32, f.nonce) }],
   ["window-lease/1", { signer: "key", fields: WINDOW_LEASE_FIELDS, decision: "DEC-0062" }],
   ["relay-auth/1", { signer: "key", fields: ["alg", "relay", "nonce", "estate", "kid", "iat"], decision: "DEC-0047" }],
-  ["relay-blob/1", { signer: "key", fields: ["alg", "relay", "method", "digest", "recipients", "iat"], decision: "DEC-0047" }]
+  ["relay-blob/1", { signer: "key", fields: ["alg", "relay", "method", "digest", "recipients", "iat"], decision: "DEC-0047" }],
+  ["entitlement/1", { signer: "key", fields: ENTITLEMENT_FIELDS, decision: "DEC-0085" }],
+  ["entitlement-key-set/1", { signer: "key", fields: ENTITLEMENT_KEY_SET_FIELDS, decision: "DEC-0085" }],
+  ["org-membership/1", { signer: "key", fields: ORG_MEMBERSHIP_FIELDS, decision: "DEC-0127" }],
+  ["org-key-set/1", { signer: "key", fields: ORG_KEY_SET_FIELDS, decision: "DEC-0127" }],
+  // DEC-0129: an administrator's passkey signs the organization's member list by its digest, as estate-revision/1 does a record.
+  ["org-authority/1", { signer: "passkey", fields: ["digest"], decision: "DEC-0129", check: (f) => matches(SHA256, f.digest) }]
 ]);
 
 /**

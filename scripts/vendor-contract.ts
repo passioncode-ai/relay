@@ -24,6 +24,8 @@ export const SOURCES = [
   "relay.ts", "relay-rules.ts", "secret-envelope.ts", "secret-shape.ts", "webauthn.ts",
   // Reached by the closure since bf3fd6b (DEC-0066): strict RFC 3339 times, contexts, identifiers, signing challenges.
   "rfc3339.ts", "context-route.ts", "context-rules.ts", "identifiers.ts", "signing-challenges.ts", "revocation-delta.ts",
+  // Reached since the re-pin past DEC-0134: share registrations (context rules) and protocol revisions.
+  "share-registration.ts", "protocol-revisions.ts",
   // The runner of the shared vectors (DEC-0066 "Shared vectors"): a port runs every case the contract runs.
   "relay-vectors.ts",
 ] as const;
@@ -73,23 +75,34 @@ const vendorSchemas = (rootName: string): Record<string, unknown> => {
 };
 // `byType`: the root is a `oneOf` of one branch per frame `type` (each with its own `type` const), and the module's
 // default export is then an object of one validator per type plus `frame`, the whole schema. A relay validates a frame
-// against its own type's branch only, failing fast: under `allErrors` a whole-schema `oneOf` runs all sixteen branches
+// against its own type's branch only (or its type's branches, where a type has several), failing fast: under `allErrors` a whole-schema `oneOf` runs every branch
 // to the end, about 200 µs for a ping with a 128-code-point id, which a flood of pings turns into the relay's bottleneck.
 // With distinct `type` consts a frame can pass no branch but its own type's, so the answer is the same.
 const compile = (rootName: string, out: string, options: { byType?: boolean } = {}) => {
   const schemas = vendorSchemas(rootName);
-  const ajv = new Ajv2020({ allErrors: !options.byType, strict: true, code: { source: true } });
+  // strictRequired off: since DEC-0134 the frame schema says "an organization's welcome carries no estateRevision" as a
+  // root `not: { required }`, which names a property the root itself does not declare; the branches declare it.
+  const ajv = new Ajv2020({ allErrors: !options.byType, strict: true, strictRequired: false, code: { source: true } });
   addFormats(ajv);
   for (const schema of Object.values(schemas)) ajv.addSchema(schema as object);
   const top = schemas[rootName] as { $id: string; oneOf?: Array<{ properties?: { type?: { const?: unknown } } }> };
   const rootId = top.$id;
   let source: string;
   if (options.byType) {
-    const refs: Record<string, string> = { frame: rootId };
+    const branches: Record<string, number[]> = {};
     for (const [i, branch] of (top.oneOf ?? []).entries()) {
       const type = branch.properties?.type?.const;
-      if (typeof type !== "string" || type in refs) throw new Error(`${rootName}: oneOf/${i} has no distinct type const`);
-      refs[type] = `${rootId}#/oneOf/${i}`;
+      if (typeof type !== "string" || type === "frame") throw new Error(`${rootName}: oneOf/${i} has no type const`);
+      (branches[type] ??= []).push(i);
+    }
+    // A type with several branches (DEC-0134: an estate's `welcome` and an organization's) gets one validator over just
+    // those branches; the branches of one type exclude each other by their required members, as the whole `oneOf` says.
+    const refs: Record<string, string> = { frame: rootId };
+    for (const [type, indices] of Object.entries(branches)) {
+      if (indices.length === 1) { refs[type] = `${rootId}#/oneOf/${indices[0]}`; continue; }
+      const id = `${rootId.replace(/\.schema\.json$/, "")}.by-type.${type}.schema.json`;
+      ajv.addSchema({ $id: id, oneOf: indices.map((i) => ({ $ref: `${rootId}#/oneOf/${i}` })) });
+      refs[type] = id;
     }
     source = standaloneCode(ajv, refs);
   } else {

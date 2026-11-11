@@ -1,5 +1,16 @@
 # Handoff
 
+**RP done (2026-11-11, the RLY-05 checkpoint of this date).** A session Fabric started for the board's unread
+messages took the coordinator's ask `1234fffe` (thread `eeab2c3f`: "RP from your `docs/handoff.md:18`, then A-3").
+- **Pin:** fabric-agent-contract `c14db0e9` (its `main`, 7 commits after `v0.1.0+2026-11-08.1`), 46 vendored files
+  byte-equal (`src/contract/VENDORED.json`); `npm run check` exit 0, 245 of 245 tests.
+- **What had to change:** `scripts/vendor-contract.ts` (two `welcome` branches since DEC-0134; `strictRequired` off; the
+  closure gains `share-registration.ts`, `protocol-revisions.ts`); test fixtures add `unread: []` to an
+  `AdmissionResult` and `revise({dropKids})` revokes what it drops (FAC-SEM-114).
+- **Not done here:** the relay core ignores `AdmissionResult.unread` (delta entries the contract cannot read); A-3
+  should decide whether to log them. The organization relay (DEC-0134) is the new row RLY-09.
+- **Exact next task:** A-3 (`EstateCache`), then A-6, A-4, A-7 by 2026-11-15, as RLY-05's S1 row orders them.
+
 **RLY-05 dated (2026-11-08, board request `736b4049`, plan row 4.2 of the Studio-move plan, thread `d5abc880`).**
 No relay work landed between 2026-10-18 (`00937e0`) and this entry. The coordinator (fabric-workspace) asked for a
 date before 2026-11-10, or it picks Observatory's OBS-287 as the interim relay instead.

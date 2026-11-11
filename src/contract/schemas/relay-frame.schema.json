@@ -32,7 +32,7 @@
         },
         "relay": {
           "type": "string",
-          "pattern": "^(?:https://(?:(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)(?:\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)){3}|\\[(?:(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){7}(?:0|[1-9a-f][0-9a-f]{0,3})|(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){1,7}:|(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){1,6}:(?:0|[1-9a-f][0-9a-f]{0,3})|(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){1,5}(?::(?:0|[1-9a-f][0-9a-f]{0,3})){1,2}|(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){1,4}(?::(?:0|[1-9a-f][0-9a-f]{0,3})){1,3}|(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){1,3}(?::(?:0|[1-9a-f][0-9a-f]{0,3})){1,4}|(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){1,2}(?::(?:0|[1-9a-f][0-9a-f]{0,3})){1,5}|(?:0|[1-9a-f][0-9a-f]{0,3}):(?::(?:0|[1-9a-f][0-9a-f]{0,3})){1,6}|:(?:(?::(?:0|[1-9a-f][0-9a-f]{0,3})){1,7}|:))\\]|(?=[a-z0-9.-]{1,253}(?::|$))(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)*(?![0-9]+(?::|$))(?!0x[0-9a-f]*(?::|$))[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?::(?!443$)(?:6553[0-5]|655[0-2]\\d|65[0-4]\\d{2}|6[0-4]\\d{3}|[1-5]\\d{4}|[1-9]\\d{0,3}))?|http://(?:127\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)|\\[::1\\])(?::(?!80$)(?:6553[0-5]|655[0-2]\\d|65[0-4]\\d{2}|6[0-4]\\d{3}|[1-5]\\d{4}|[1-9]\\d{0,3}))?)$",
+          "pattern": "^(?:https://(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(?:\\.(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}|\\[(?:(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){7}(?:0|[1-9a-f][0-9a-f]{0,3})|(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){1,7}:|(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){1,6}:(?:0|[1-9a-f][0-9a-f]{0,3})|(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){1,5}(?::(?:0|[1-9a-f][0-9a-f]{0,3})){1,2}|(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){1,4}(?::(?:0|[1-9a-f][0-9a-f]{0,3})){1,3}|(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){1,3}(?::(?:0|[1-9a-f][0-9a-f]{0,3})){1,4}|(?:(?:0|[1-9a-f][0-9a-f]{0,3}):){1,2}(?::(?:0|[1-9a-f][0-9a-f]{0,3})){1,5}|(?:0|[1-9a-f][0-9a-f]{0,3}):(?::(?:0|[1-9a-f][0-9a-f]{0,3})){1,6}|:(?:(?::(?:0|[1-9a-f][0-9a-f]{0,3})){1,7}|:))\\]|(?=[a-z0-9.-]{1,253}(?::|$))(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)*(?![0-9]+(?::|$))(?!0x[0-9a-f]*(?::|$))[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?::(?!443$)(?:6553[0-5]|655[0-2][0-9]|65[0-4][0-9]{2}|6[0-4][0-9]{3}|[1-5][0-9]{4}|[1-9][0-9]{0,3}))?|http://(?:127\\.(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])|\\[::1\\])(?::(?!80$)(?:6553[0-5]|655[0-2][0-9]|65[0-4][0-9]{2}|6[0-4][0-9]{3}|[1-5][0-9]{4}|[1-9][0-9]{0,3}))?)$",
           "description": "the relay's origin, serialised: https on a lowercase host name (at most 253 characters, its last label not a number), a dotted IPv4 address or a bracketed lowercase IPv6 address; or http on a loopback literal (127.0.0.0/8 or [::1]) for a relay on the same machine; a port of 1 to 65535 that is not the scheme's default, and nothing after it (DEC-0066, isRelayOrigin)"
         },
         "nonce": {
@@ -41,7 +41,7 @@
         },
         "time": {
           "type": "string",
-          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
         }
       }
     },
@@ -85,7 +85,7 @@
         },
         "iat": {
           "type": "string",
-          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
         },
         "sig": {
           "type": "string",
@@ -128,7 +128,7 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 9007199254740991,
-          "description": "the revision (1 or more) of the verified estate record the relay admits from; a relay with none admits nobody, so a welcome always carries it"
+          "description": "the revision (1 or more) of the verified estate record the relay admits from; a relay with none admits nobody, so an estate's welcome always carries it"
         },
         "deltaHead": {
           "$ref": "revocation-delta.schema.json#/$defs/head",
@@ -187,6 +187,104 @@
             }
           }
         }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "type",
+        "id",
+        "session",
+        "list"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "type": {
+          "const": "welcome"
+        },
+        "session": {
+          "type": "string",
+          "minLength": 1
+        },
+        "list": {
+          "type": "object",
+          "required": [
+            "org",
+            "revision",
+            "digest"
+          ],
+          "properties": {
+            "org": {
+              "$ref": "org-membership.schema.json#/$defs/org"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "digest": {
+              "$ref": "common.schema.json#/$defs/sha256"
+            }
+          },
+          "additionalProperties": false,
+          "description": "DEC-0134: on an organization's relay, the member list (org-authority/1) the relay admits from: its organization, revision and digest. An organization has no heartbeat or revocation delta in this release, so this welcome carries none."
+        },
+        "limits": {
+          "type": "object",
+          "description": "the limits this relay enforces, each optional and chosen by the relay; a frame over one is answered rate-limited or mailbox-full (DEC-0066)",
+          "properties": {
+            "sendPerMinute": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "send frames per minute per session"
+            },
+            "presenceQueryPerMinute": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "presence-query frames per minute per session"
+            },
+            "deltaQueryPerMinute": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "delta-query frames per minute per session"
+            },
+            "mailboxMessages": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "messages a recipient's mailbox holds"
+            },
+            "mailboxBytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "bytes a recipient's mailbox holds; omitted while the relay has no byte quota"
+            },
+            "blobBytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "the largest blob, in bytes (at most MAX_BLOB_BYTES)"
+            }
+          }
+        }
+      },
+      "description": "The welcome of an organization's relay (DEC-0134): the session and the member list it admits from, in place of an estate's revision, delta head and heartbeat. It never carries estateRevision, which keeps it apart from an estate's welcome; other unknown members are ignored, as every frame's.",
+      "not": {
+        "required": [
+          "estateRevision"
+        ]
       }
     },
     {
@@ -313,7 +411,7 @@
         },
         "sentAt": {
           "type": "string",
-          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
         }
       }
     },
@@ -378,7 +476,7 @@
         },
         "lastSeen": {
           "type": "string",
-          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
         }
       }
     },
@@ -465,7 +563,7 @@
               },
               "lastSeen": {
                 "type": "string",
-                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
               }
             }
           },

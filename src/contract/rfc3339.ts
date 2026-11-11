@@ -23,4 +23,17 @@ export function strictTime(value: unknown): number {
   if (date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day || hour > 23 || minute > 59 || second > 59) return Number.NaN;
   return Date.parse(value as string);
 }
+const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.(\d{1,9}))?Z$/;
+
+/**
+ * The relay's time (relay.md Times: `Z`, an upper-case `T`, at most nine fraction digits, a day that exists) as a key
+ * that orders to the nanosecond, or undefined. The key is the time with its fraction padded to nine digits, so two keys
+ * compare as strings in time order; `strictTime` reads only milliseconds, so two times that differ below one would
+ * read as equal (DEC-0146).
+ */
+export function instantKey(value: unknown): string | undefined {
+  const match = typeof value === "string" ? INSTANT.exec(value) : null;
+  if (!match || Number.isNaN(strictTime(value))) return undefined;
+  return `${(value as string).slice(0, 19)}.${(match[1] ?? "").padEnd(9, "0")}Z`;
+}
 // #endregion rfc3339

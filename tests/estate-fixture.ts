@@ -66,8 +66,16 @@ export function revise(prev: Estate, options: Revision = {}): Estate {
   const drop = new Set(options.dropKids ?? []);
   if (drop.size > 0) {
     // A machine has exactly one #sig key (FAC-SEM-073), so dropping it drops the machine, and what names it as a source.
-    const gone = new Set(body.machines.filter((m: any) => m.deviceKeys.some((k: { kid: string }) => drop.has(k.kid))).map((m: any) => m.id));
+    const dropped = body.machines.filter((m: any) => m.deviceKeys.some((k: { kid: string }) => drop.has(k.kid)));
+    const gone = new Set(dropped.map((m: any) => m.id));
     body.machines = body.machines.filter((m: any) => !gone.has(m.id));
+    // What a revision drops it revokes (FAC-SEM-114, DEC-0084): the machine, its hub key and its contexts' hub keys.
+    const revocations = Array.isArray(body.revocations) ? body.revocations : (body.revocations = []);
+    for (const m of dropped) {
+      revocations.push({ kind: "machine", ref: m.id, revokedAt: body.issuedAt });
+      const hubKids = [m.hubKey?.kid, ...(Array.isArray(m.contextHubKeys) ? m.contextHubKeys.map((c: any) => c?.key?.kid) : [])];
+      for (const kid of hubKids) if (typeof kid === "string") revocations.push({ kind: "hub-key", ref: kid, revokedAt: body.issuedAt });
+    }
     for (const m of body.machines) if (Array.isArray(m.secrets)) m.secrets = m.secrets.filter((secret: { from?: string }) => !gone.has(secret.from));
   }
   return { ...prev, record: seal(body, options.signer ?? "EdDSA") };

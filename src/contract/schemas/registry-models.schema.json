@@ -24,8 +24,15 @@
       "pattern": "^[a-z0-9][a-z0-9._-]{0,63}/[a-z0-9][a-z0-9._:-]{0,127}$"
     },
     "modelClass": {
-      "description": "The closed vocabulary of model classes (DEC-0046). A new class takes a decision; a reader refuses an unknown one.",
-      "enum": ["frontier", "strong", "cheap", "code", "vision", "chinese-vendor"]
+      "description": "The closed vocabulary of model classes (DEC-0046). A new class takes a decision; a reader refuses an unknown one. `open-vendor` (DEC-0083): the model's vendor publishes its weights openly, which the catalogue's writer states; it is independent of `chinese-vendor`, which says where the vendor is.",
+      "enum": ["frontier", "strong", "cheap", "code", "vision", "chinese-vendor", "open-vendor"]
+    },
+    "admissionClass": {
+      "description": "A model class a spend policy or a grant may name (DEC-0083): every class but the descriptive `open-vendor`, which admits and excludes nothing (a deliberate exception to DEC-0046's every-class rule).",
+      "allOf": [
+        { "$ref": "#/$defs/modelClass" },
+        { "not": { "const": "open-vendor" } }
+      ]
     },
     "providerSlug": {
       "type": "string",
@@ -98,7 +105,9 @@
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "items": { "$ref": "#/$defs/modelClass" }
+          "items": { "$ref": "#/$defs/modelClass" },
+          "contains": { "$ref": "#/$defs/admissionClass" },
+          "description": "At least one admission class (DEC-0083): the descriptive `open-vendor` alone gives a policy nothing to admit the model by."
         },
         "endpoints": {
           "type": "array",

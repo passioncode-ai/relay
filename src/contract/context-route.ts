@@ -3,9 +3,11 @@ import { isObject } from "./findings.js";
 // #region context-route — docs: docs/specification/contexts.md#routing
 /**
  * Contexts (DEC-0082, the RM-28 pilot slice of N20): a context is `personal` or `org:<orgId>`, where `orgId` is the
- * organization server's opaque id of the organization. The context travels on no telemetry or check-in document: an
- * organization server knows the organization from the device certificate (DEC-0031's attribution), and a field would
- * add nothing while it could leak `personal` or another organization's id (unlinkability). Instead a collector routes:
+ * organization server's opaque id of the organization. No event carries its session's context and no check-in carries
+ * a context, except a node summary's own `org:<org.id>` (DEC-0102): an organization server knows the organization from the device certificate (DEC-0031's attribution), and a
+ * field would add nothing while it could leak `personal` or another organization's id (unlinkability). Only a
+ * `grant.usage` and a share registration carry their grant's own `org:<orgId>`, which the receiver checks against the
+ * certificate (DEC-0086). Instead a collector routes:
  * `routeTarget` answers where an event of a session in a given context may be sent, `routeGrantUsage` where a
  * `grant.usage` goes, and the shared vectors
  * `fixtures/vectors/context-route.json` are what a port runs.

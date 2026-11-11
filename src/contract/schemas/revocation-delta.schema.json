@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://fabric.passioncode.ai/agent-contract/0.1.0/schemas/revocation-delta.schema.json",
   "title": "Revocation delta page (revocation-delta/1, DEC-0054)",
-  "description": "A page of the revocation delta: consecutive signed entries of one estate's append-only chain and the head they lead to. A relay's delta frame and a check-in response's records.revocationDelta carry it unchanged. The page's head is the carrier's hint; only a signed heartbeat's head binds. FAC-SEM-082 and the verifier applyDelta apply.",
+  "description": "A page of the revocation delta: consecutive signed entries of one estate's append-only chain and the head they lead to. A relay's delta frame carries it unchanged, and a check-in response's records.revocationDelta only from an organization server that has not adopted DEC-0128's UE-2 (FAC-SEM-149). The page's head is the carrier's hint; only a signed heartbeat's head binds. FAC-SEM-082 and the verifier applyDelta apply.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -37,11 +37,10 @@
           "maximum": 9007199254740991
         },
         "sha256": {
-          "type": "string",
-          "pattern": "^[a-f0-9]{64}$"
+          "$ref": "common.schema.json#/$defs/sha256Hex"
         }
       },
-      "description": "A head of the revocation delta: the sequence of its last entry (0 before any) and the hex SHA-256 of that entry's RFC 8785 form without sig (the estate's genesis at 0). The shape of a device check-in's records.revocationDelta (DEC-0053) and a relay's welcome.deltaHead (DEC-0047)."
+      "description": "A head of the revocation delta: the sequence of its last entry (0 before any) and the hex SHA-256 of that entry's RFC 8785 form without sig (the estate's genesis at 0), or a delta anchor's sequence and hash when no entry is held after it (deltaHead, DEC-0107). The shape of a device check-in's records.revocationDelta (DEC-0053) and an estate relay's welcome.deltaHead (DEC-0047)."
     },
     "entry": {
       "type": "object",
@@ -76,8 +75,7 @@
           "description": "1 for the estate's first entry, then the previous entry's plus one: never skipped, never repeated."
         },
         "prev": {
-          "type": "string",
-          "pattern": "^[a-f0-9]{64}$",
+          "$ref": "common.schema.json#/$defs/sha256Hex",
           "description": "The head hash before this entry: the previous entry's hash, or for entry 1 the estate's genesis, SHA-256 of the RFC 8785 form of {type: \"revocation-delta/1\", estate, sequence: 0}."
         },
         "at": {

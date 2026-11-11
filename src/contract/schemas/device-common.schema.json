@@ -39,8 +39,9 @@
       "description": "Open vocabulary. Known: healthy, degraded, offline, inactive, logging_disabled, tampered, never_installed, outdated. A reader shows an unknown state as it is."
     },
     "detail": {
+      "$comment": "Scope (CT-109): one line of free text with no path at all, so this pattern refuses the dash form after any character (my-users-list too). HOME_PATH (src/activity-rules.ts, whose Scope comment lists the rules it serves) refuses it only after a character that is not an ASCII letter or digit, and FAC-SEM-103 (src/proposal-rules.ts) has no dash form. Changing any of them is a decision.",
       "type": "string",
-      "pattern": "^(?!.*(?:(?:^|[\\s\"'`=(\\[{<,;:])[/\\\\~]|[A-Za-z]:[/\\\\]|%(?:25)?2[fF]|(?:^|[^A-Za-z0-9])(?:[Uu]sers|home)[/\\\\]|-(?:[Uu]sers|home)-[A-Za-z0-9]))[^\\r\\n]{1,200}$",
+      "pattern": "^(?![\\s\\S]*(?:(?:^|[\\s\"'`=(\\[{<,;:])[/\\\\~]|[A-Za-z]:[/\\\\]|%(?:25)?2[fF]|(?:^|[^A-Za-z0-9])(?:[Uu]sers|home)[/\\\\]|-(?:[Uu]sers|home)-[A-Za-z0-9]))[^\\r\\n]{1,200}$",
       "description": "One line of at most 200 characters with no path: no absolute path anywhere in it (a slash, backslash or tilde at the start of a word, or a drive letter), no URL-encoded slash, and no home directory in its slash or dash form (F-B-104). Never a username or content (DEC-0031)."
     },
     "canonicalValue": {
