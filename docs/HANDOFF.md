@@ -1,5 +1,18 @@
 # Handoff
 
+**Board read, course check added (2026-11-12).** A session Fabric started for the board's unread messages (44,
+2026-11-11 to 2026-11-12) handled them; no relay code changed.
+- **Course check:** item 1a (fabric-workspace `knowledge/rules.md` §0, announcement `7a62a183`) is in `AGENTS.md`
+  *Read first*, naming RM-21, the unified plan's *Relay* row and North Star gap G5.
+- **Branches:** `iter1/node22-refused-upgrade` (8 commits, 2026-10-14, no PR) was fully covered by `main` through the
+  squash merges of relay#8 and relay#10 (its Node 22 fix is `tests/portable.test.ts:111`); kept as
+  `refs/archive/2026-11-12/iter1/node22-refused-upgrade` on origin (`7041d22`) and deleted. Origin now has only `main`.
+- **Answered:** `54bb0e84` (clock, merge, course; thread `2aa32848`) and the roll call `1881418d` (thread `0b120c4b`).
+  Both say RLY-05 is dated (S1 by 2026-11-20, full by 2026-12-04), which fabric-vr and the North Star's G5 still
+  read as undated.
+- **Exact next task:** unchanged, A-3 (`EstateCache`), then A-6, A-4, A-7 by 2026-11-15. None is started; a miss is
+  reported in thread `d5abc880` with a new date the same day.
+
 **RP done (2026-11-11, the RLY-05 checkpoint of this date).** A session Fabric started for the board's unread
 messages took the coordinator's ask `1234fffe` (thread `eeab2c3f`: "RP from your `docs/handoff.md:18`, then A-3").
 - **Pin:** fabric-agent-contract `c14db0e9` (its `main`, 7 commits after `v0.1.0+2026-11-08.1`), 46 vendored files
