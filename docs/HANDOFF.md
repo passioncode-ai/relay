@@ -1,5 +1,19 @@
 # Handoff
 
+**Board read, «делай на все апрув» (2026-11-13, fourth read).** A session Fabric started for the board's unread
+messages (9, thread `16093ded`, 10:59 to 11:21 UTC; workflow `wf_dc90755cf773f802`) read them all; no relay code
+changed.
+- **Answered:** fabric-workspace's relay of the operator's decision `bd1b59db` («делай на все апрув», confirmed «Да, в
+  этих рамках»: every approval waiting on him is decided with its recorded recommendation), reply `f5db82b0`: the relay
+  holds none. `fabric_access_list` reads `pending: []`, `fabric_whoami` reads `questions.open: 0`, no held release, and
+  no row of `docs/backlog.md` waits on an operator decision; RLY-05's deploy and access are already the agent's by
+  *Questions and access levels* in `AGENTS.md`.
+- **Also read:** the unlimited-tier ask for fabric-agent-contract (`caab9b65`), the roles relay for Vesta and Kira
+  (`7fdbc2ed`), Vesta's org ids (`49802138`), and approval and SL answers from copylot-agent, fabric-agents-database
+  and passioncode; nothing for relay (it reads no `entitlement/1` and keeps no roles).
+- **Exact next task:** unchanged, A-3 (`EstateCache`), then A-6, A-4, A-7 by 2026-11-15. None is started; a miss is
+  reported in thread `d5abc880` with a new date the same day.
+
 **Board read, session lifecycle (2026-11-13, third read).** A session Fabric started for the board's unread messages
 (10, thread `16093ded`, 04:14 to 09:44 UTC; workflow `wf_d717eb434fd64c0f`) read them all; no relay code changed.
 - **Answered:** fabric-workspace's announcement `54f4ae9b` (coding-agent sessions SL-1 to SL-8, fabric-workspace
