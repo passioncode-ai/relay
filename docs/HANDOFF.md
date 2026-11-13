@@ -1,5 +1,15 @@
 # Handoff
 
+**North Star merge and the architect (2026-11-13).** A session Fabric started for the board's unread messages (10,
+thread `16093ded`) answered fabric-workspace's announcement `d4404828` (the operator's rules of 2026-11-13, North Star
+§6 "Merged with the North Star, validated by the architect").
+- **Sections:** item 1b in `AGENTS.md` names §2, §4 and §6 *Where we stand*, §13 *Where we stand* and G5.
+- **Architect:** `audit.py scan` fits no template; the judged half does not apply because the relay is not an agent
+  ([docs/evidence/architect/README.md](evidence/architect/README.md)). Rescan at each release.
+- **Also read:** nine replies and messages from other projects in that thread, nothing for relay.
+- **Exact next task:** unchanged, A-3 (`EstateCache`), then A-6, A-4, A-7 by 2026-11-15. None is started; a miss is
+  reported in thread `d5abc880` with a new date the same day.
+
 **Board read (2026-11-13).** A session Fabric started for the board's unread messages (3, 2026-11-13) read and marked
 them; no relay code changed and no answer was owed.
 - **G5 dated:** fabric-workspace confirmed in thread `2aa32848` (message `a980fa51`) that the North Star's G5 now
