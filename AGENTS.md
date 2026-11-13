@@ -58,6 +58,24 @@ PassionCode Relay: carries sessions, sealed secret envelopes and package blobs b
 - Logs are structured and never carry a request body, a token or an envelope.
 - Several sessions may work here: agent-sync with leases through git, described in [docs/AGENT_SYNC.md](docs/AGENT_SYNC.md). Take a lease before editing a guarded path (`CHANGELOG.md`, the backlog, `docs/adr/`).
 
+## Questions and access levels
+
+Agents close questions themselves, by access level ([authority](https://github.com/passioncode-ai/fabric-workspace/blob/main/knowledge/authority.md#agents-close-questions-themselves-by-access-level-operator-2026-11-13),
+operator, 2026-11-13, fabric-workspace `4e2a1491`, board message `b910f019`). A question for the operator is decided
+here instead: by the levels below, the operator's recorded decisions, RM-21 and gap G5, then the safest reversible
+option. The decision and its reason go into [docs/HANDOFF.md](docs/HANDOFF.md) or the backlog row it serves, and the
+work goes on. Trust comes from the gate (`npm run check`), receipts and a readback, not from a person.
+
+| Scope | Who decides |
+|---|---|
+| this repository, its backlog and its releases (PassionCode) | the operator and the partner, equally; an agent acts for them |
+| the hosted relay's deploy (RLY-05: one estate, no outside users) | the agent; a session started by a board request alone stops before it and hands it to a session the person is in |
+| the Cloudflare account, the R2 enablement and the passioncode.ai hostname | not written yet: the narrowest access that lets the deploy happen, through Observatory's Cloudflare door; the open point is recorded on RLY-05 |
+
+Only a human gate goes to a person: a sign-in, a one-time code, a consent screen, a typed secret, a payment, spend
+above the limit, a send outside the estate, or access wider than the act needs. Name the gate once, with why no route
+avoids it, and go on with other work.
+
 ## Lifecycle
 
 - The repository installs no resident process, no launchd job and no MCP server.

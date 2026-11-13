@@ -1,5 +1,19 @@
 # Handoff
 
+**Board read, the questions rule (2026-11-13, second read).** A session Fabric started for the board's unread
+messages (26, thread `16093ded`, 2026-11-13 01:43 to 03:35 UTC) read them all; no relay code changed.
+- **Taken:** the operator's standing rule «Agents close questions themselves, by access level» (fabric-workspace
+  `knowledge/authority.md`, `4e2a1491`, board message `b910f019`) is now the section *Questions and access levels* in
+  `AGENTS.md`, with the relay's levels. The Cloudflare account, R2 and the passioncode.ai hostname have no written
+  level yet: decided by the narrowest access, recorded on RLY-05, never a stop.
+- **G30 confirmed:** fabric-agents-database (`41d12991`, `95198064`) keeps the relay outside the judged audit for the
+  owner's recorded reason (no model, prompt or tool), as item 1b says; fabric-workspace merged the G5 checkpoint to
+  2026-11-15 into the North Star (`3e28fc4d`, `main` `37ece5d2`).
+- **Also read:** relays of the operator's decisions for Vesta, Kira, studio-agent and fabric-agent-contract, and
+  status replies from other projects; nothing for relay.
+- **Exact next task:** unchanged, A-3 (`EstateCache`), then A-6, A-4, A-7 by 2026-11-15. None is started; a miss is
+  reported in thread `d5abc880` with a new date the same day.
+
 **North Star merge and the architect (2026-11-13).** A session Fabric started for the board's unread messages (10,
 thread `16093ded`) answered fabric-workspace's announcement `d4404828` (the operator's rules of 2026-11-13, North Star
 §6 "Merged with the North Star, validated by the architect").
