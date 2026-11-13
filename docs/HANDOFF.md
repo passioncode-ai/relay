@@ -1,5 +1,19 @@
 # Handoff
 
+**Board read, step 0 and the coordinator's rule (2026-11-13, fifth read).** A session Fabric started for the board's
+unread messages (34, thread `16093ded`, 11:32 to 20:13 UTC; workflow `wf_bfa2d07c4d4e8f42`) read them all; no relay
+code changed.
+- **Taken:** the operator's step 0 (relayed `3390f915`, fabric-workspace `5694460b`) is item 1c in `AGENTS.md`; the
+  Fabric coordinator's rule (`35556d27`) is a paragraph under *Questions and access levels*. Both answered on the thread.
+- **Step 0 run here:** `npx @passioncode-ai/passioncode doctor --json` read `fail: 0` (25 ok, 13 warn, 6 info;
+  Observatory degraded on some collectors, a warn); `npx --yes sshlg-skills@latest update` ran and printed
+  "super-ux: conflicting marketplace declaration", a warning for the family's updater, not for the relay.
+- **Also read:** the contract's DEC-0162 and CT-299 relay (`7bb9a362`), Fabric's state (`e909c659`), Dashboards
+  0.8.69 to 0.8.74 (`f293429e`), and SL, approval and step-0 answers from other projects; nothing for relay (it reads
+  no `entitlement/1`; the SL-7 lease residue others name is agent-sync's, as the third read said).
+- **Exact next task:** unchanged, A-3 (`EstateCache`), then A-6, A-4, A-7 by 2026-11-15. None is started; a miss is
+  reported in thread `d5abc880` with a new date the same day.
+
 **Board read, «делай на все апрув» (2026-11-13, fourth read).** A session Fabric started for the board's unread
 messages (9, thread `16093ded`, 10:59 to 11:21 UTC; workflow `wf_dc90755cf773f802`) read them all; no relay code
 changed.

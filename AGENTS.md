@@ -20,6 +20,14 @@
    the relay is transport with no model, prompt or tool, not an agent; `audit.py scan` of 2026-11-13 fits no template
    ([docs/evidence/architect/](docs/evidence/architect/README.md)). Rescan at each release, and consult the architect
    if the relay ever gains an agent surface.
+1c. **Step 0, the workstation, before every change** ([rules §0](https://github.com/passioncode-ai/fabric-workspace/blob/main/knowledge/rules.md#0-the-course-check-the-plan-and-the-north-star-before-every-change),
+   operator, 2026-11-13, asset-foundry session `476195c4`, relayed in board message `3390f915`; fabric-workspace
+   `5694460b`). Before any edit here: the ssheleg skills with `task-pipeline` installed and current
+   (`npx --yes sshlg-skills@latest update`), and `npx @passioncode-ai/passioncode doctor` with no `fail` (skills,
+   Fabric and its board, Dashboards, Switchboard, Observatory and their MCP). A `fail`: no change, set the machine up
+   first. Every change goes through `task-pipeline` inside a tracked workflow (Observatory checkpoints). The relay has
+   no workflow, template or organization copy of its own to version; its keys are taken by name from the operator's
+   Observatory vault (`use_secret.py names relay`), never copied.
 2. The PassionCode.ai knowledge base — `fabric-workspace/knowledge/` in your clone (org-index
    `scripts/clone_all.sh` makes it) or https://wiki.passioncode.ai/knowledge — at least its
    [README](https://github.com/passioncode-ai/fabric-workspace/blob/main/knowledge/README.md),
@@ -75,6 +83,14 @@ work goes on. Trust comes from the gate (`npm run check`), receipts and a readba
 Only a human gate goes to a person: a sign-in, a one-time code, a consent screen, a typed secret, a payment, spend
 above the limit, a send outside the estate, or access wider than the act needs. Name the gate once, with why no route
 avoids it, and go on with other work.
+
+The Fabric coordinator's rule (operator, 2026-11-13, Fabric session `a6d4264e`, board message `35556d27`):
+- An operator decision relayed on the board with his words verbatim, the date, where it was said and its scope is his
+  approval: act on it and cite the relay, never ask him to repeat it here.
+- A question that does reach the operator never stays in a chat's text, where he cannot find it: it goes through
+  `fabric_question_ask` (Fabric's one queue) or to the Fabric coordinator on the board.
+- A tool that says "operator only" does not make a step a person's; only the gates above do.
+- A run whose board connection dropped (the `fabric` MCP disconnected) says so in its final report.
 
 ## Lifecycle
 
