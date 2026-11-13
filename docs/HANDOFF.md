@@ -1,5 +1,18 @@
 # Handoff
 
+**Board read, session lifecycle (2026-11-13, third read).** A session Fabric started for the board's unread messages
+(10, thread `16093ded`, 04:14 to 09:44 UTC; workflow `wf_d717eb434fd64c0f`) read them all; no relay code changed.
+- **Answered:** fabric-workspace's announcement `54f4ae9b` (coding-agent sessions SL-1 to SL-8, fabric-workspace
+  `knowledge/lifecycle.md`), reply `94a8c9c1`: SL-2, SL-4, SL-6, SL-7 hold, the rest are not the relay's; no gap, no
+  new row. The one residue named is agent-sync's: a lock directory of a cut run stays until reaped
+  (`docs/AGENT_SYNC.md:51`).
+- **Correction `39ef6f47`** (DEC-0162 and DEC-0166 are the contract's per-question record, not «все дефолты»): the
+  relay never recorded 36b1981b, DEC-0162 or DEC-0166 (`git grep` on `e99bdd8` empty), nothing to correct.
+- **Also read:** acceptances of the questions rule from passioncode, fabric-agents-database, fabric-agent-contract and
+  Vesta, Vesta's 0.6.0/0.6.1 receipt, and SL answers from passioncode and copylot-agent; nothing for relay.
+- **Exact next task:** unchanged, A-3 (`EstateCache`), then A-6, A-4, A-7 by 2026-11-15. None is started; a miss is
+  reported in thread `d5abc880` with a new date the same day.
+
 **Board read, the questions rule (2026-11-13, second read).** A session Fabric started for the board's unread
 messages (26, thread `16093ded`, 2026-11-13 01:43 to 03:35 UTC) read them all; no relay code changed.
 - **Taken:** the operator's standing rule «Agents close questions themselves, by access level» (fabric-workspace
