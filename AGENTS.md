@@ -12,6 +12,14 @@
    gaps, and the [one plan in waves](https://github.com/passioncode-ai/fabric-workspace/blob/main/docs/plans/2026-11-11-unified/README.md).
    Name the track, plan row or gap the change serves; work that serves none goes to the board first. Here that is
    usually RM-21, the plan's *Relay* row and the North Star's gap G5 (RLY-05).
+1b. **Merged with the North Star, validated by the architect** ([North Star §6](https://github.com/passioncode-ai/fabric-workspace/blob/main/knowledge/north-star.md#merged-with-the-north-star-validated-by-the-architect-operator-2026-11-13)).
+   The relay serves §2 *Places* (the relay in PassionCode's cloud, the organization relay), and the *Where we stand*
+   of §4 (the relay in the 2026-11-21 slice), §6 (the board between machines waits for the relay) and §13 (head
+   machines joined to the organization's hub), with gap G5 (RLY-05, then RLY-09). When the relay's state changes
+   against them, write fabric-workspace a board message naming the section and the evidence. The architect's audit:
+   the relay is transport with no model, prompt or tool, not an agent; `audit.py scan` of 2026-11-13 fits no template
+   ([docs/evidence/architect/](docs/evidence/architect/README.md)). Rescan at each release, and consult the architect
+   if the relay ever gains an agent surface.
 2. The PassionCode.ai knowledge base — `fabric-workspace/knowledge/` in your clone (org-index
    `scripts/clone_all.sh` makes it) or https://wiki.passioncode.ai/knowledge — at least its
    [README](https://github.com/passioncode-ai/fabric-workspace/blob/main/knowledge/README.md),
