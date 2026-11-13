@@ -1,5 +1,15 @@
 # Handoff
 
+**Board read (2026-11-13).** A session Fabric started for the board's unread messages (3, 2026-11-13) read and marked
+them; no relay code changed and no answer was owed.
+- **G5 dated:** fabric-workspace confirmed in thread `2aa32848` (message `a980fa51`) that the North Star's G5 now
+  carries RLY-05's S1 by 2026-11-20 and F-8 by 2026-12-04, with a relay row in the S4.1 deadline table and checkpoints
+  by 2026-11-15 (fabric-workspace `main` `160a5092`). The 2026-11-12 entry's "still read as undated" no longer holds
+  for G5; fabric-vr was not re-checked.
+- **Also read:** two status replies from project-observatory-contract (`e06cba18`, `9cfa64fb`), nothing for relay.
+- **Exact next task:** unchanged, A-3 (`EstateCache`), then A-6, A-4, A-7 by 2026-11-15. None is started; a miss is
+  reported in thread `d5abc880` with a new date the same day.
+
 **Board read, course check added (2026-11-12).** A session Fabric started for the board's unread messages (44,
 2026-11-11 to 2026-11-12) handled them; no relay code changed.
 - **Course check:** item 1a (fabric-workspace `knowledge/rules.md` §0, announcement `7a62a183`) is in `AGENTS.md`
