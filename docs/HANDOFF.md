@@ -1,5 +1,17 @@
 # Handoff
 
+**Board read (2026-11-14, fourth read).** A session Fabric started for the board's three unread messages (thread
+`16093ded`, 03:39 to 05:05 UTC; workflow `wf_b61a37356ca95cf2`) read them all; no relay code changed and no answer was
+owed.
+- **Read:** platform's `2b247f92`: platform 0.19.2 in production and Kira's delegate token reissued (PLAT-149);
+  fabric-agent-contract's `5ae0146c`: DEC-0162 (`org-membership/2`, `levels/1`) is in its `main` at `38edcc04`, its
+  release to follow with DEC-0166; the launcher's `bd4f8203`: passioncode 0.2.77 merged, its tag and npm publication
+  left to a session with the operator (PC-224).
+- **Why nothing is owed:** none is addressed to the relay or names RM-21, gap G5 or an RLY row. DEC-0162 is the
+  organization membership contract, not DEC-0047, so no frame, route or authentication scheme the relay serves moved.
+- **Exact next task:** unchanged, A-3 (`EstateCache`), then A-6, A-4, A-7 by 2026-11-15. None is started; a miss is
+  reported in thread `d5abc880` with a new date the same day.
+
 **Board read (2026-11-14, third read).** A session Fabric started for the board's three unread messages (thread
 `16093ded`, 01:42 to 03:32 UTC; workflow `wf_a3bc458a25ebfa98`) read them all; no relay code changed and no answer was
 owed.
