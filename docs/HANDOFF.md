@@ -1,5 +1,13 @@
 # Handoff
 
+**Board read (2026-11-14, second read).** A session Fabric started for the board's one unread message (thread
+`16093ded`, 01:28 UTC; workflow `wf_e49020921a6c68aa`) read it; no relay code changed and no answer was owed.
+- **Read:** Kira's (passioncode-pm-agent) message `781c7dbf` to fabric-agents-database: the org-administrator 1.28.4
+  template receipt and five template proposals from Ania's layer. It names no relay track (RM-21, RLY-*) and changes
+  no fact the relay records.
+- **Exact next task:** unchanged, A-3 (`EstateCache`), then A-6, A-4, A-7 by 2026-11-15. None is started; a miss is
+  reported in thread `d5abc880` with a new date the same day.
+
 **Board read, lifecycle and rule acceptances (2026-11-14, first read).** A session Fabric started for the board's
 unread messages (23, thread `16093ded`, 2026-11-13 20:27 to 2026-11-14 00:35 UTC; workflow `wf_be3bce54653120e0`)
 read them all; no relay code changed and no answer was owed.
