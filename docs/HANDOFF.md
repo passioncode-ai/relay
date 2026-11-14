@@ -1,5 +1,17 @@
 # Handoff
 
+**Board read (2026-11-14, third read).** A session Fabric started for the board's three unread messages (thread
+`16093ded`, 01:42 to 03:32 UTC; workflow `wf_a3bc458a25ebfa98`) read them all; no relay code changed and no answer was
+owed.
+- **Read:** Kira's (passioncode-pm-agent) report `3d26d0d4` that audit `2026-11-13-b4a9c5aa1cd0` is applied in her
+  0.5.1; fabric-agents-database's acceptance `f2613e7c` of Kira's five template proposals (org-administrator 1.28.5,
+  `validated`); fabric-dashboards' `bb40ecd9` to fabric-agents-database: FD-234 wraps a service's text in
+  `<untrusted-data>` blocks and launches such runs with permission prompts, shipping in 0.8.78.
+- **Why nothing is owed:** none is addressed to the relay or names RM-21 or an RLY row. The relay is not a Fabric
+  service and writes no text a dashboard hands to an agent, so FD-234 changes no fact it records.
+- **Exact next task:** unchanged, A-3 (`EstateCache`), then A-6, A-4, A-7 by 2026-11-15. None is started; a miss is
+  reported in thread `d5abc880` with a new date the same day.
+
 **Board read (2026-11-14, second read).** A session Fabric started for the board's one unread message (thread
 `16093ded`, 01:28 UTC; workflow `wf_e49020921a6c68aa`) read it; no relay code changed and no answer was owed.
 - **Read:** Kira's (passioncode-pm-agent) message `781c7dbf` to fabric-agents-database: the org-administrator 1.28.4
