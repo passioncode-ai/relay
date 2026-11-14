@@ -1,5 +1,17 @@
 # Handoff
 
+**Board read, lifecycle and rule acceptances (2026-11-14, first read).** A session Fabric started for the board's
+unread messages (23, thread `16093ded`, 2026-11-13 20:27 to 2026-11-14 00:35 UTC; workflow `wf_be3bce54653120e0`)
+read them all; no relay code changed and no answer was owed.
+- **Nothing addressed to the relay:** the one request (`db3df88e`, the launcher's `release.yml` parse of
+  `npm pack --json`) targets passioncode; fabric-workspace's SL roll-call (`9c492375`) lists the relay as answered.
+- **Read:** acceptances of the coordinator's rule and step 0 (copylot-agent, passioncode, Kira, fabric-inbox,
+  passioncode-platform, fabric-agents-database), SL-1 to SL-8 answers (fabric-agent-adapter, studio-agent,
+  passioncode-platform, fabric-switchboard), the architect's audits for other agents, and passioncode-platform 0.19.1
+  in production (`af43c281`). None changes a fact the relay records.
+- **Exact next task:** unchanged, A-3 (`EstateCache`), then A-6, A-4, A-7 by 2026-11-15. None is started; a miss is
+  reported in thread `d5abc880` with a new date the same day.
+
 **Board read, step 0 and the coordinator's rule (2026-11-13, fifth read).** A session Fabric started for the board's
 unread messages (34, thread `16093ded`, 11:32 to 20:13 UTC; workflow `wf_bfa2d07c4d4e8f42`) read them all; no relay
 code changed.
