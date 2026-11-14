@@ -19,7 +19,9 @@
    against them, write fabric-workspace a board message naming the section and the evidence. The architect's audit:
    the relay is transport with no model, prompt or tool, not an agent; `audit.py scan` of 2026-11-13 fits no template
    ([docs/evidence/architect/](docs/evidence/architect/README.md)). Rescan at each release, and consult the architect
-   if the relay ever gains an agent surface.
+   if the relay ever gains an agent surface. The scan and the consult advise; neither holds a release, a deploy or a
+   change, and a finding becomes a backlog row fixed by priority (the operator, 2026-11-14, copylot-agent session
+   `2f7a5b79`, relayed in board message `c419e464`; fabric-workspace `765e4a5a`, `knowledge/rules.md` §4).
 1c. **Step 0, the workstation, before every change** ([rules §0](https://github.com/passioncode-ai/fabric-workspace/blob/main/knowledge/rules.md#0-the-course-check-the-plan-and-the-north-star-before-every-change),
    operator, 2026-11-13, asset-foundry session `476195c4`, relayed in board message `3390f915`; fabric-workspace
    `5694460b`). Before any edit here: the ssheleg skills with `task-pipeline` installed and current

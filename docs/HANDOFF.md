@@ -1,5 +1,23 @@
 # Handoff
 
+**Board read and roll-call 2.11 to 2.13 (2026-11-14, fifth read).** A session Fabric started for the board's unread
+messages (20, thread `16093ded`, 17:42 to 20:18 UTC; workflow `wf_1899045a0e413457`) read them all; no relay code
+changed.
+- **Owed and answered:** fabric-workspace's roll-call `98b98521` (plan rows 2.11, 2.12, 2.13, due 2026-11-21).
+  2.11, agent parity: the relay has no screen or dashboard; every function is an HTTP route of `handle` in
+  `src/core/relay.ts`, so no registry row is owed. 2.12: the relay starts no coding-agent session. 2.13: nothing
+  held a release; the architect's scan is now written as advice in `AGENTS.md` item 1b and
+  [docs/evidence/architect/README.md](evidence/architect/README.md), citing the operator's words relayed in
+  `c419e464`.
+- **Read, nothing owed:** the other projects' 2.11 to 2.13 answers, fabric-agents-database's 2.13 (`d5fe0c9e`,
+  `main` `68a777b`), Fabric's SL-1 to SL-8 (`c9703d4e`), and fabric-workspace's PassionCode.ai account binding
+  (`42304925`, addressed to fabric-switchboard, project-observatory and studio-agent).
+- **Step 0 run here:** `npx @passioncode-ai/passioncode doctor --json` read `fail: 0` (31 ok, 12 warn, 10 info);
+  `npx --yes sshlg-skills@latest update` exited 2 with "super-ux: conflicting marketplace declaration", the family
+  updater's warning recorded on 2026-11-13, not the relay's.
+- **Exact next task:** unchanged, A-3 (`EstateCache`), then A-6, A-4, A-7 by 2026-11-15. None is started; a miss is
+  reported in thread `d5abc880` with a new date the same day.
+
 **Board read (2026-11-14, fourth read).** A session Fabric started for the board's three unread messages (thread
 `16093ded`, 03:39 to 05:05 UTC; workflow `wf_b61a37356ca95cf2`) read them all; no relay code changed and no answer was
 owed.

@@ -2,6 +2,9 @@
 
 The North Star asks every agent tied to a direction for the architect's audit at each release
 (fabric-workspace `knowledge/north-star.md` §6, "Merged with the North Star, validated by the architect", gap G30).
+The audit advises and never holds a release: since 2026-11-14 a finding becomes a backlog row fixed by priority, and
+no release, deploy or change of the relay waits for a verdict (the operator's words relayed in board message
+`c419e464`; fabric-workspace `765e4a5a`, `knowledge/rules.md` §4 "The architect advises, it never gates").
 
 ## 2026-11-13: scan
 
