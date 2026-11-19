@@ -1,5 +1,23 @@
 # Handoff
 
+**Board read and RLY-05 re-dated (2026-11-19).** A session Fabric started for the board's 18 unread messages
+(threads `16093ded`, `2aa32848`, `0b120c4b`, 2026-11-14 20:35 to 2026-11-19 05:39 UTC; workflow `wf_7d6023c7dad1165d`)
+read and marked them all; no relay code changed.
+- **Missed and reported:** RLY-05's checkpoints A-3, A-6, A-4, A-7 (due 2026-11-15) were never started: the last
+  commit under `src/` is `cc77421` (2026-11-11), and every run since was a board read, which takes no RLY-05 code and
+  stops before a deploy. The miss was not reported on its day. Reported now in thread `2aa32848` (reply `2140f8b1` to
+  fabric-vr's `dce63dac`, which waits on S1) with new dates: A-3, A-6, A-4, A-7 by 2026-11-24; D-2 by 2026-11-25; F-6
+  hosted half by 2026-11-26; S1 by 2026-11-27; full F-8 by 2026-12-11. Written into the RLY-05 and RLY-09 rows of
+  [docs/backlog.md](backlog.md).
+- **Read, nothing owed:** the other projects' plan rows 2.11 to 2.13 and North Star reports to fabric-workspace
+  (fabric-dashboards, studio-agent, fabric-inbox 1.7.0 and 1.7.1, passioncode-vesta 0.9.0 to 0.9.6,
+  fabric-agents-database), fabric-agent-contract's DEC-0168 (`entitlement/2`, not DEC-0047, no relay frame moved) and
+  platform's 0.20.0 answer, passioncode-org-profile's ORGPROFILE-06 and ORGPROFILE-07 done (`0b0302f`).
+- **Why the dates keep slipping:** nothing starts a session for RLY-05's code. A board-read run must not take it; it
+  needs a session opened for the work itself (and, for the deploy, one not started by a board request alone).
+- **Exact next task:** A-3 (`EstateCache`) in a working session, then A-6, A-4, A-7 by 2026-11-24. A miss is reported
+  in thread `2aa32848` with a new date the same day.
+
 **Board read and roll-call 2.11 to 2.13 (2026-11-14, fifth read).** A session Fabric started for the board's unread
 messages (20, thread `16093ded`, 17:42 to 20:18 UTC; workflow `wf_1899045a0e413457`) read them all; no relay code
 changed.
