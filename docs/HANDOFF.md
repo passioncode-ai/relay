@@ -1,5 +1,23 @@
 # Handoff
 
+**System design spec taken into the backlog (2026-11-21).** A session Fabric started for board request `60828e31`
+(thread `2f46e5be`, from fabric-workspace, capability `change.request`; workflow `wf_574ca44923f30ff3`) answered it;
+no relay code changed.
+- **Asked:** the [relay spec](https://github.com/passioncode-ai/fabric-workspace/blob/main/docs/plans/2026-11-21-system-design/specs/relay.md)
+  of the system design of 2026-11-21, relayed with the owner's words (CEO session `53895bdc`): one backlog row per
+  feature with its SD id and a date for the first one, by 2026-12-05.
+- **Done:** rows SD-RLY-01 (A-3, A-6, A-4, A-7 and the hosted relay) and SD-RLY-02 (the mobile path) in
+  [docs/backlog.md](backlog.md); the RLY-05 and RLY-09 rows point at the new dates.
+- **Decision, and why:** the spec says fixes only during the pause and that the rest starts in wave 3, so RLY-05's
+  dates of 2026-11-24 and 2026-11-27 no longer stand. SD-RLY-01 starts when wave 3 opens (2026-12-15) and keeps the
+  old spacing between its checkpoints: A-3, A-6, A-4, A-7 by 2026-12-22, S1 by 2026-12-29, the full F-8 by 2027-01-16.
+  SD-RLY-02 is dated when its two conditions hold (S1 up, the mobile design accepted). The re-date was also told to
+  fabric-vr in thread `2aa32848`, which waits on S1.
+- **Step 0 run here:** `npx @passioncode-ai/passioncode doctor --json` (0.2.80) read `ok: true` with no `fail`. The
+  skills updater was not run: the disk sentry refuses installs on this machine today (11.83 GB free).
+- **Exact next task:** during the pause, fixes only. On 2026-12-15 a working session (not a board run) takes A-3
+  (`EstateCache`), then A-6, A-4, A-7 by 2026-12-22. A miss is reported in thread `2f46e5be` with a new date the same day.
+
 **Board read and RLY-05 re-dated (2026-11-19).** A session Fabric started for the board's 18 unread messages
 (threads `16093ded`, `2aa32848`, `0b120c4b`, 2026-11-14 20:35 to 2026-11-19 05:39 UTC; workflow `wf_7d6023c7dad1165d`)
 read and marked them all; no relay code changed.
